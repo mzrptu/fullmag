@@ -616,6 +616,30 @@ export function buildFullmagModelTree(opts: {
   onPhysicsClick?: () => void;
   onSolverClick?: () => void;
   onResultsClick?: () => void;
+  /** When false, the Outputs/Results branch is hidden. */
+  showResultsSection?: boolean;
+  /** Result quantities available for spatial/field previews. */
+  resultsFieldQuantities?: Array<{
+    id: string;
+    label: string;
+    kind: string;
+    unit?: string | null;
+  }>;
+  /** Result quantities available as derived/global scalars. */
+  resultsScalarQuantities?: Array<{
+    id: string;
+    label: string;
+    kind: string;
+    unit?: string | null;
+  }>;
+  /** User-created/custom result analyses (added from ribbon and interactions). */
+  resultWorkspaceEntries?: Array<{
+    id: string;
+    label: string;
+    icon?: string;
+    badge?: string | null;
+    status?: NodeStatus;
+  }>;
   initialStatePath?: string | null;
   initialStateFormat?: string | null;
   geometries?: ScriptBuilderGeometryEntry[];
@@ -626,6 +650,8 @@ export function buildFullmagModelTree(opts: {
   /** Short summary labels for each computed eigenmode (e.g. "0 · 12.3 GHz · ip"). */
   eigenModeSummaries?: { index: number; label: string }[];
   eigenHasDispersion?: boolean;
+  /** Whether time-domain vortex data is available (scalarRows with mx/my/mz). */
+  hasVortexData?: boolean;
   visualizationProjectPresets?: VisualizationPreset[];
   visualizationLocalPresets?: VisualizationPreset[];
   activeVisualizationPresetRef?: VisualizationPresetRef | null;
@@ -715,6 +741,10 @@ export function buildFullmagModelTree(opts: {
   const activeVisualizationPresetRef = opts.activeVisualizationPresetRef ?? null;
   const studyStages = graph?.study.stages ?? [];
   const studyPipeline = graph?.study.study_pipeline ?? null;
+  const showResultsSection = opts.showResultsSection ?? true;
+  const resultFieldQuantities = opts.resultsFieldQuantities ?? [];
+  const resultScalarQuantities = opts.resultsScalarQuantities ?? [];
+  const resultWorkspaceEntries = opts.resultWorkspaceEntries ?? [];
   const showUniverse = Boolean(
     graphUniverse ||
       opts.showUniverse ||
@@ -868,6 +898,279 @@ export function buildFullmagModelTree(opts: {
       ? buildStudyPipelineTreeNodes(studyPipeline.nodes)
       : buildFlatStudyStageTreeNodes(studyStages);
   const authoringStageCount = studyPipeline?.nodes.length ?? studyStages.length;
+  const hasRunStage = studyStages.some((stage) => stage.kind === "run");
+  const hasRelaxStage = studyStages.some((stage) => stage.kind === "relax");
+  const hasEigenStage =
+    studyStages.some((stage) => stage.kind === "eigenmodes") ||
+    Boolean(opts.eigenModeCount && opts.eigenModeCount > 0);
+  const hasSaveStateStage = studyStages.some((stage) => stage.kind === "save_state");
+  const resultFieldChildren: TreeNodeData[] =
+    resultFieldQuantities.length > 0
+      ? resultFieldQuantities.map((quantity) => ({
+          id: `res-qty-${encodeURIComponent(quantity.id)}`,
+          label: quantity.label,
+          icon: "𝑓",
+          badge: quantity.unit ? `${quantity.kind} · ${quantity.unit}` : quantity.kind,
+          status: "ready",
+        }))
+      : [
+          {
+            id: "res-fields-empty",
+            label: "No field quantities yet",
+            icon: "◌",
+            status: "pending",
+          },
+        ];
+  const resultSolutionChildren: TreeNodeData[] = [
+    ...(hasRunStage || hasRelaxStage
+      ? [
+          {
+            id: "res-dataset-time-series",
+            label: "Time-Dependent Fields",
+            icon: "⏱",
+            badge: opts.scalarRowCount ? `${opts.scalarRowCount} samples` : "pending",
+            status: (opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending") as NodeStatus,
+          },
+          {
+            id: "res-dataset-final-state",
+            label: "Final State",
+            icon: "◉",
+            status: (opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending") as NodeStatus,
+          },
+        ]
+      : []),
+    ...(hasEigenStage
+      ? [
+          {
+            id: "res-dataset-eigen-spectrum",
+            label: "Eigen Spectrum",
+            icon: "≈",
+            status: (opts.eigenModeCount && opts.eigenModeCount > 0 ? "ready" : "pending") as NodeStatus,
+            badge: opts.eigenModeCount ? `${opts.eigenModeCount} modes` : "pending",
+          },
+          ...(opts.eigenHasDispersion
+            ? [
+                {
+                  id: "res-dataset-eigen-dispersion",
+                  label: "Eigen Dispersion",
+                  icon: "∿",
+                  status: "ready" as const,
+                },
+              ]
+            : []),
+        ]
+      : []),
+    ...(hasSaveStateStage
+      ? [
+          {
+            id: "res-dataset-checkpoints",
+            label: "Saved States",
+            icon: "💾",
+            status: "ready" as const,
+          },
+        ]
+      : []),
+  ];
+  const resultDatasetChildren: TreeNodeData[] = [
+    {
+      id: "res-dataset-study-1",
+      label: "Study 1",
+      icon: "Σ",
+      status: "ready" as const,
+      children: [
+        {
+          id: "res-dataset-solution-1",
+          label: "Solution 1",
+          icon: "◉",
+          badge: opts.scalarRowCount ? `${opts.scalarRowCount} samples` : "pending",
+          status:
+            opts.scalarRowCount && opts.scalarRowCount > 0
+              ? "ready"
+              : hasEigenStage
+                ? "ready"
+                : "pending" as NodeStatus,
+          children:
+            resultSolutionChildren.length > 0
+              ? resultSolutionChildren
+              : [
+                  {
+                    id: "res-dataset-empty",
+                    label: "No solution outputs yet",
+                    icon: "◌",
+                    status: "pending",
+                  },
+                ],
+        },
+      ],
+    },
+  ];
+  const resultScalarChildren: TreeNodeData[] =
+    resultScalarQuantities.length > 0
+      ? resultScalarQuantities.map((quantity) => ({
+          id: `res-qty-${encodeURIComponent(quantity.id)}`,
+          label: quantity.label,
+          icon: "Σ",
+          badge: quantity.unit ? `${quantity.kind} · ${quantity.unit}` : quantity.kind,
+          status: "ready",
+        }))
+      : [
+          {
+            id: "res-scalars-empty",
+            label: "No derived scalars yet",
+            icon: "◌",
+            status: "pending",
+          },
+        ];
+  const resultRootChildren: TreeNodeData[] = [
+    {
+      id: "res-overview",
+      label: "Overview",
+      icon: "🧭",
+      badge: opts.scalarRowCount ? `${opts.scalarRowCount} samples` : "pending",
+      status: opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending",
+    },
+    {
+      id: "res-datasets",
+      label: "Datasets",
+      icon: "🧱",
+      status: opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending",
+      children: resultDatasetChildren,
+    },
+    {
+      id: "res-fields",
+      label: "Field Quantities",
+      icon: "🗂",
+      status: resultFieldQuantities.length > 0 ? "ready" : "pending",
+      badge: resultFieldQuantities.length > 0 ? `${resultFieldQuantities.length}` : undefined,
+      children: resultFieldChildren,
+    },
+    {
+      id: "res-energy",
+      label: "Derived Scalars",
+      icon: "⚡",
+      status: resultScalarQuantities.length > 0 ? "ready" : "pending",
+      badge: resultScalarQuantities.length > 0 ? `${resultScalarQuantities.length}` : undefined,
+      children: resultScalarChildren,
+    },
+    {
+      id: "res-analyses",
+      label: "Analyses",
+      icon: "🧠",
+      status: resultWorkspaceEntries.length > 0 ? "ready" : "pending",
+      badge: resultWorkspaceEntries.length > 0 ? `${resultWorkspaceEntries.length}` : undefined,
+      children:
+        resultWorkspaceEntries.length > 0
+          ? resultWorkspaceEntries.map((entry) => ({
+              id: `res-analysis-${entry.id}`,
+              label: entry.label,
+              icon: entry.icon ?? "🧩",
+              badge: entry.badge ?? undefined,
+              status: entry.status ?? "ready",
+            }))
+          : [
+              {
+                id: "res-analyses-empty",
+                label: "No custom analyses yet",
+                icon: "◌",
+                status: "pending",
+              },
+            ],
+    },
+    { id: "res-state-io", label: "State I/O", icon: "💾" },
+    { id: "res-export", label: "Export", icon: "💾" },
+    ...(opts.eigenModeCount && opts.eigenModeCount > 0
+      ? [
+          {
+            id: "res-eigenmodes",
+            label: "Eigenmodes",
+            icon: "〜",
+            badge: `${opts.eigenModeCount} modes`,
+            status: "ready" as const,
+            defaultOpen: false,
+            children: [
+              {
+                id: "res-eigenmodes-spectrum",
+                label: "Spectrum",
+                icon: "📊",
+                status: "ready" as const,
+              },
+              ...(opts.eigenHasDispersion
+                ? [{
+                    id: "res-eigenmodes-dispersion",
+                    label: "Dispersion",
+                    icon: "≈",
+                    status: "ready" as const,
+                  }]
+                : []),
+              ...(opts.eigenModeSummaries ?? []).map((m) => ({
+                id: `res-eigenmode-${m.index}`,
+                label: m.label,
+                icon: "〜",
+                status: "ready" as const,
+              })),
+            ],
+          },
+        ]
+      : []),
+    ...(opts.hasVortexData
+      ? [
+          {
+            id: "res-vortex",
+            label: "Vortex / STNO",
+            icon: "🌀",
+            badge: opts.scalarRowCount ? `${opts.scalarRowCount} pts` : undefined,
+            status: "ready" as const,
+            defaultOpen: false,
+            children: [
+              {
+                id: "res-time-traces",
+                label: "Time Traces",
+                icon: "📈",
+                status: "ready" as const,
+                children: [
+                  {
+                    id: "res-time-trace-mx",
+                    label: "mₓ(t)",
+                    icon: "〰",
+                    status: "ready" as const,
+                  },
+                  {
+                    id: "res-time-trace-my",
+                    label: "m_y(t)",
+                    icon: "〰",
+                    status: "ready" as const,
+                  },
+                  {
+                    id: "res-time-trace-mz",
+                    label: "mᵤ(t)",
+                    icon: "〰",
+                    status: "ready" as const,
+                  },
+                ],
+              },
+              {
+                id: "res-vortex-frequency",
+                label: "FFT / PSD",
+                icon: "📊",
+                status: "ready" as const,
+              },
+              {
+                id: "res-vortex-trajectory",
+                label: "Trajectory (mₓ vs m_y)",
+                icon: "◎",
+                status: "ready" as const,
+              },
+              {
+                id: "res-vortex-orbit",
+                label: "Orbit Amplitude",
+                icon: "◉",
+                status: "ready" as const,
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
 
   studyChildren.push(
     {
@@ -949,55 +1252,20 @@ export function buildFullmagModelTree(opts: {
         },
       ],
     },
-    {
-      id: "results",
-      label: "Outputs",
-      icon: "📈",
-      status: opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending",
-      badge: opts.scalarRowCount ? `${opts.scalarRowCount} pts` : undefined,
-      defaultOpen: false,
-      onClick: opts.onResultsClick,
-      children: [
-        { id: "res-fields", label: "Field Data", icon: "🗂" },
-        { id: "res-energy", label: "Energy", icon: "⚡" },
-        { id: "res-state-io", label: "State I/O", icon: "💾" },
-        { id: "res-export", label: "Export", icon: "💾" },
-        ...(opts.eigenModeCount && opts.eigenModeCount > 0
-          ? [
-              {
-                id: "res-eigenmodes",
-                label: "Eigenmodes",
-                icon: "〜",
-                badge: `${opts.eigenModeCount} modes`,
-                status: "ready" as const,
-                defaultOpen: false,
-                children: [
-                  {
-                    id: "res-eigenmodes-spectrum",
-                    label: "Spectrum",
-                    icon: "📊",
-                    status: "ready" as const,
-                  },
-                  ...(opts.eigenHasDispersion
-                    ? [{
-                        id: "res-eigenmodes-dispersion",
-                        label: "Dispersion",
-                        icon: "≈",
-                        status: "ready" as const,
-                      }]
-                    : []),
-                  ...(opts.eigenModeSummaries ?? []).map((m) => ({
-                    id: `res-eigenmode-${m.index}`,
-                    label: m.label,
-                    icon: "〜",
-                    status: "ready" as const,
-                  })),
-                ],
-              },
-            ]
-          : []),
-      ],
-    },
+    ...(showResultsSection
+      ? [
+          {
+            id: "results",
+            label: "Outputs",
+            icon: "📈",
+            status: (opts.scalarRowCount && opts.scalarRowCount > 0 ? "ready" : "pending") as NodeStatus,
+            badge: opts.scalarRowCount ? `${opts.scalarRowCount} pts` : undefined,
+            defaultOpen: false,
+            onClick: opts.onResultsClick,
+            children: resultRootChildren,
+          },
+        ]
+      : []),
   );
 
   const visualizationChildren: TreeNodeData[] = [

@@ -17,9 +17,9 @@
  * reference sphere must swap Y/Z when sampling the HSL map for FEM/FDM.
  */
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { Text, Billboard, Line } from "@react-three/drei";
 import { magnetizationHslColor } from "./magnetizationColor";
 import { cn } from "@/lib/utils";
@@ -73,19 +73,47 @@ function AxisLabel({ text, color, position }: {
 function CameraSync({
   mainCameraRef,
 }: {
-  mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera } | null>;
+  mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera; controls?: any } | null>;
 }) {
-  const { camera } = useThree();
-
-  useFrame(() => {
+  const { camera, invalidate } = useThree();
+  const syncCamera = useCallback(() => {
     const main = mainCameraRef.current;
-    if (!main) return;
-
-    // Copy only the rotation from the main camera
+    if (!main) {
+      return;
+    }
+    // Copy only the rotation from the main camera.
     camera.quaternion.copy(main.camera.quaternion);
     camera.position.set(0, 0, 3).applyQuaternion(camera.quaternion);
     camera.lookAt(0, 0, 0);
-  });
+    invalidate();
+  }, [camera, invalidate, mainCameraRef]);
+
+  useEffect(() => {
+    let frameId: number | null = null;
+    let boundControls: {
+      addEventListener?: (type: string, listener: () => void) => void;
+      removeEventListener?: (type: string, listener: () => void) => void;
+    } | null = null;
+
+    const attachToControls = () => {
+      const controls = mainCameraRef.current?.controls;
+      if (!controls || typeof controls.addEventListener !== "function") {
+        frameId = requestAnimationFrame(attachToControls);
+        return;
+      }
+      boundControls = controls;
+      controls.addEventListener("change", syncCamera);
+      syncCamera();
+    };
+
+    attachToControls();
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      boundControls?.removeEventListener?.("change", syncCamera);
+    };
+  }, [mainCameraRef, syncCamera]);
 
   return null;
 }
@@ -113,6 +141,7 @@ export default function HslSphere({
       style={{ width: sphereSize, height: sphereSize }}
     >
       <Canvas
+        frameloop="demand"
         orthographic
         camera={{
           left: -1.4,

@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 
 import DispersionBranchPlot from "@/components/analyze/DispersionBranchPlot";
 import EigenAnalyzeWorkbench from "@/components/analyze/EigenAnalyzeWorkbench";
 import EigenModeInspector from "@/components/analyze/EigenModeInspector";
 import ModeSpectrumPlot from "@/components/analyze/ModeSpectrumPlot";
+import VortexAnalyzeWorkbench from "@/components/analyze/VortexAnalyzeWorkbench";
+import type { VortexTimeSample } from "@/components/analyze/vortexTypes";
 import EmptyState from "@/components/ui/EmptyState";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import AnalyzeDiagnosticsPanel from "./AnalyzeDiagnosticsPanel";
 import AnalyzeRuntimeBadges from "./AnalyzeRuntimeBadges";
-import { useCommand, useModel } from "./ControlRoomContext";
+import { useCommand, useModel, useTransport } from "./ControlRoomContext";
 import { useAnalyzeWorkspaceState } from "./useAnalyzeWorkspaceState";
 import { useAnalyzeRuntimeDiagnostics } from "./useAnalyzeRuntimeDiagnostics";
 
@@ -52,6 +54,22 @@ function compactList(values: string[] | undefined): string | null {
 export default function AnalyzeViewport() {
   const model = useModel();
   const cmd = useCommand();
+  const tp = useTransport();
+
+  /* ── Vortex time-domain samples from scalar rows ── */
+  const vortexSamples = useMemo<VortexTimeSample[]>(() => {
+    if (!tp.scalarRows || tp.scalarRows.length === 0) return [];
+    return tp.scalarRows.map((r) => ({
+      time: r.time,
+      mx: r.mx,
+      my: r.my,
+      mz: r.mz,
+    }));
+  }, [tp.scalarRows]);
+
+  const hasVortexData = vortexSamples.length > 4;
+  const analyzeDomain = model.analyzeSelection.domain ?? "eigenmodes";
+
   const setSelectedModeIndex = useCallback(
     (index: number | null) =>
       model.setAnalyzeSelection((prev) => ({ ...prev, selectedModeIndex: index })),
@@ -118,6 +136,33 @@ export default function AnalyzeViewport() {
     return () => window.removeEventListener("keydown", handler);
   }, [model.analyzeSelection.selectedModeIndex, selectMode, spectrum]);
 
+  /* ── Vortex domain ── */
+  if (analyzeDomain === "vortex") {
+    if (!hasVortexData) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <EmptyState
+            title="No time-domain data"
+            description="Run a TimeEvolution study with mx/my/mz scalar outputs to use Vortex analysis."
+            tone="info"
+            compact
+          />
+        </div>
+      );
+    }
+    return (
+      <VortexAnalyzeWorkbench
+        samples={vortexSamples}
+        activeTab={model.analyzeSelection.tab}
+        onTabChange={(tab) => model.selectAnalyzeTab(tab)}
+        selectedChannel={
+          (model.analyzeSelection.selectedChannel as "mx" | "my" | "mz") ?? undefined
+        }
+      />
+    );
+  }
+
+  /* ── Eigenmodes domain ── */
   if (loadState === "loading") {
     return (
       <div className="flex h-full items-center justify-center">
@@ -145,11 +190,24 @@ export default function AnalyzeViewport() {
   }
 
   if (!hasEigenArtifacts || !spectrum) {
+    // Fall through to vortex if we have time-domain data
+    if (hasVortexData) {
+      return (
+        <VortexAnalyzeWorkbench
+          samples={vortexSamples}
+          activeTab={model.analyzeSelection.tab}
+          onTabChange={(tab) => model.selectAnalyzeTab(tab)}
+          selectedChannel={
+            (model.analyzeSelection.selectedChannel as "mx" | "my" | "mz") ?? undefined
+          }
+        />
+      );
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <EmptyState
-          title="No eigen artifacts"
-          description="Run a FEM Eigenmodes study with saved spectrum or mode outputs to unlock Analyze."
+          title="No analysis data"
+          description="Run a FEM Eigenmodes study or a TimeEvolution study with scalar outputs to unlock Analyze."
           tone="info"
           compact
         />

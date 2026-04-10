@@ -214,10 +214,7 @@ export function createPrimitiveNode(kind: StudyPrimitiveStageKind): StudyPipelin
 }
 
 export function createMacroNode(
-  kind: Extract<
-    StudyMacroStageKind,
-    "hysteresis_loop" | "field_sweep_relax" | "field_sweep_relax_snapshot" | "relax_run" | "relax_eigenmodes" | "parameter_sweep"
-  >,
+  kind: StudyMacroStageKind,
 ): StudyPipelineNode {
   const label =
     kind === "hysteresis_loop"
@@ -228,6 +225,10 @@ export function createMacroNode(
           ? "Field Sweep + Relax + Snapshot"
         : kind === "parameter_sweep"
           ? "Parameter Sweep"
+        : kind === "current_sweep_run"
+          ? "Current Sweep + Run"
+        : kind === "dc_bias_plus_rf_probe"
+          ? "DC Bias + RF Probe"
         : kind === "relax_run"
           ? "Relax -> Run"
           : "Relax -> Eigenmodes";
@@ -258,7 +259,7 @@ export function createMacroNode(
               relax_each: true,
               save_point_state: true,
             }
-          : kind === "parameter_sweep"
+        : kind === "parameter_sweep"
             ? {
                 parameter: "b_ext",
                 axis: "z",
@@ -269,6 +270,24 @@ export function createMacroNode(
                 run_until_seconds: "1e-12",
                 save_point_state: false,
               }
+        : kind === "current_sweep_run"
+          ? {
+              parameter: "current_density",
+              direction: "x",
+              start: "1e9",
+              stop: "2e11",
+              steps: 11,
+              run_until_seconds: "1e-9",
+              save_point_state: false,
+            }
+        : kind === "dc_bias_plus_rf_probe"
+          ? {
+              dc_field_mT: 30,
+              rf_current_a: 0.01,
+              rf_frequency_hz: 5e9,
+              run_until_seconds: "1e-9",
+              export_psd: true,
+            }
         : kind === "field_sweep_relax"
           ? { start_mT: -100, stop_mT: 100, steps: 11, axis: "z", relax_each: true }
           : kind === "relax_run"

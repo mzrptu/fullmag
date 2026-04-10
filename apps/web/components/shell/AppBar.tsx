@@ -42,6 +42,7 @@ export interface AppBarProps {
   scriptSyncBusy?: boolean;
   onSyncScriptBuilder?: () => void;
   workspaceMode: WorkspaceMode;
+  resultsAvailable?: boolean;
   onPerspectiveChange?: (mode: WorkspaceMode) => void;
   onSimAction?: (action: string) => void;
 }
@@ -168,19 +169,30 @@ export default function AppBar(props: AppBarProps) {
 
       <div className="mx-auto hidden items-center gap-1 rounded-lg border border-border/35 bg-card/30 p-1 md:flex">
         {([
-          { id: "build" as const, label: "Modeling" },
-          { id: "study" as const, label: "Solving" },
-          { id: "analyze" as const, label: "Results" },
-        ] satisfies Array<{ id: WorkspaceMode; label: string }>).map((entry) => (
+          { id: "build" as const, label: "Model" },
+          { id: "study" as const, label: "Study" },
+          {
+            id: "analyze" as const,
+            label: "Results",
+            disabled: props.resultsAvailable === false,
+          },
+        ] satisfies Array<{ id: WorkspaceMode; label: string; disabled?: boolean }>).map((entry) => (
           <button
             key={entry.id}
             type="button"
             onClick={() => props.onPerspectiveChange?.(entry.id)}
+            disabled={entry.disabled}
+            title={
+              entry.id === "analyze" && entry.disabled
+                ? "Results become available after the first completed solve."
+                : undefined
+            }
             className={cn(
               "rounded-md px-2.5 py-1 text-[0.67rem] font-semibold tracking-wide transition-colors",
               props.workspaceMode === entry.id
                 ? "bg-primary/15 text-primary border border-primary/30"
                 : "text-muted-foreground border border-transparent hover:bg-muted/40 hover:text-foreground",
+              entry.disabled && "opacity-45 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground",
             )}
           >
             {entry.label}

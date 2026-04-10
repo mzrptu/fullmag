@@ -43,7 +43,9 @@ export interface RibbonCommandContext {
       | "field_sweep_relax_snapshot"
       | "relax_run"
       | "relax_eigenmodes"
-      | "parameter_sweep",
+      | "parameter_sweep"
+      | "current_sweep_run"
+      | "dc_bias_plus_rf_probe",
     placement: "append" | "before" | "after",
   ) => void;
   onStudyDuplicateSelected?: () => void;
@@ -87,7 +89,9 @@ export type RibbonCommand =
         | "field_sweep_relax_snapshot"
         | "relax_run"
         | "relax_eigenmodes"
-        | "parameter_sweep";
+        | "parameter_sweep"
+        | "current_sweep_run"
+        | "dc_bias_plus_rf_probe";
       placement: "append" | "before" | "after";
     }
   | { id: "study.duplicate-selected" }

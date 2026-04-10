@@ -149,6 +149,45 @@ export default function RunSidebar() {
       })) ?? [],
     [analyzeArtifacts.spectrum],
   );
+  const resultQuantityTree = useMemo(() => {
+    const available = (cmd.quantities ?? []).filter((quantity) => quantity.available);
+    const asTreeNode = (quantity: (typeof available)[number]) => ({
+      id: quantity.id,
+      label: quantity.label,
+      kind: quantity.kind,
+      unit: quantity.unit,
+    });
+    const field = available
+      .filter((quantity) => quantity.kind !== "global_scalar")
+      .map(asTreeNode);
+    const scalar = available
+      .filter((quantity) => quantity.kind === "global_scalar")
+      .map(asTreeNode);
+    return { field, scalar };
+  }, [cmd.quantities]);
+  const hasResultsSection = useMemo(() => {
+    const hasEigen = Boolean(analyzeArtifacts.spectrum);
+    const hasDispersion = analyzeArtifacts.dispersionRows.length > 0;
+    const hasScalarRows = tp.scalarRows.length > 0;
+    const hasRuntimeSteps = (cmd.run?.total_steps ?? 0) > 0;
+    return (
+      hasEigen ||
+      hasDispersion ||
+      hasScalarRows ||
+      hasRuntimeSteps ||
+      model.resultWorkspaceEntries.length > 0 ||
+      resultQuantityTree.field.length > 0 ||
+      resultQuantityTree.scalar.length > 0
+    );
+  }, [
+    analyzeArtifacts.dispersionRows.length,
+    analyzeArtifacts.spectrum,
+    cmd.run?.total_steps,
+    model.resultWorkspaceEntries.length,
+    resultQuantityTree.field.length,
+    resultQuantityTree.scalar.length,
+    tp.scalarRows.length,
+  ]);
 
   /* ── Build model tree nodes ── */
   const modelTreeNodes = useMemo(
@@ -193,9 +232,20 @@ export default function RunSidebar() {
               ? "active"
               : undefined,
         scalarRowCount: tp.scalarRows.length,
+        showResultsSection: hasResultsSection,
+        resultsFieldQuantities: resultQuantityTree.field,
+        resultsScalarQuantities: resultQuantityTree.scalar,
+        resultWorkspaceEntries: model.resultWorkspaceEntries.map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          icon: entry.icon,
+          badge: entry.badge,
+          status: model.activeResultWorkspaceId === entry.id ? "active" : "ready",
+        })),
         eigenModeCount,
         eigenModeSummaries,
         eigenHasDispersion: analyzeArtifacts.dispersionRows.length > 0,
+        hasVortexData: tp.scalarRows.length > 4,
         visualizationProjectPresets: model.visualizationProjectPresets,
         visualizationLocalPresets: model.visualizationLocalPresets,
         activeVisualizationPresetRef: model.activeVisualizationPresetRef,
@@ -206,7 +256,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm, model.solverSettings.torqueTolerance,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
-      universeRole, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length,
+      universeRole, hasResultsSection, resultQuantityTree.field, resultQuantityTree.scalar, model.resultWorkspaceEntries, model.activeResultWorkspaceId, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length,
       launchIntent?.displayName, model.airPart?.element_count, model.airPart?.node_count,
       model.visualizationProjectPresets, model.visualizationLocalPresets, model.activeVisualizationPresetRef,
     ],
@@ -300,7 +350,15 @@ export default function RunSidebar() {
     const analyzeTarget = parseAnalyzeTreeNode(id);
     if (analyzeTarget) {
       model.setSelectedSidebarNodeId(id);
+      vp.setWorkspaceMode("analyze");
       model.openAnalyze(analyzeTarget);
+      return;
+    }
+    if (id.startsWith("res-analysis-")) {
+      model.setSelectedSidebarNodeId(id);
+      model.setSelectedObjectId(null);
+      model.setSelectedEntityId(null);
+      model.setFocusedEntityId(null);
       return;
     }
     const objectId = resolveSelectedObjectId(id, model.sceneDocument ?? model.modelBuilderGraph);
@@ -329,12 +387,38 @@ export default function RunSidebar() {
     }
     model.setSelectedEntityId(null);
     model.setFocusedEntityId(null);
-  }, [model]);
+  }, [model, vp]);
 
   /* ── Tree click handler ── */
   const handleTreeClick = useCallback((id: string) => {
     selectModelNode(id);
     if (parseAnalyzeTreeNode(id)) {
+      return;
+    }
+    if (id.startsWith("res-analysis-")) {
+      model.openResultWorkspaceEntry(id.replace("res-analysis-", ""));
+      vp.setWorkspaceMode("analyze");
+      return;
+    }
+    if (id === "res-dataset-eigen-spectrum") {
+      model.openAnalyze({ tab: "spectrum", selectedModeIndex: null });
+      return;
+    }
+    if (id === "res-dataset-eigen-dispersion") {
+      model.openAnalyze({ tab: "dispersion", selectedModeIndex: null });
+      return;
+    }
+    if (id === "res-dataset-time-series" || id === "res-dataset-final-state") {
+      const defaultFieldQuantity =
+        vp.quickPreviewTargets.find((target) => target.id === "m" && target.available)?.id ??
+        vp.quickPreviewTargets.find((target) => target.available)?.id ??
+        null;
+      if (defaultFieldQuantity) {
+        vp.requestPreviewQuantity(defaultFieldQuantity);
+      }
+      if (cmd.isFemBackend && vp.effectiveViewMode === "Mesh") {
+        vp.setViewMode("3D");
+      }
       return;
     }
     const visualizationPresetNode = parseVisualizationPresetNodeId(id);

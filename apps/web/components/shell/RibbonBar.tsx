@@ -137,11 +137,25 @@ interface RibbonBarProps {
       | "field_sweep_relax_snapshot"
       | "relax_run"
       | "relax_eigenmodes"
-      | "parameter_sweep",
+      | "parameter_sweep"
+      | "current_sweep_run"
+      | "dc_bias_plus_rf_probe",
     placement: "append" | "before" | "after",
   ) => void;
   onStudyDuplicateSelected?: () => void;
   onStudyToggleSelectedEnabled?: () => void;
+  onAddResultAnalysis?: (
+    kind:
+      | "spectrum"
+      | "dispersion"
+      | "modes"
+      | "time-traces"
+      | "vortex-frequency"
+      | "vortex-trajectory"
+      | "vortex-orbit"
+      | "quantity"
+      | "table",
+  ) => void;
   onObjectAddInteraction?: (
     objectId: string,
     kind: ScriptBuilderMagneticInteractionKind,
@@ -694,6 +708,36 @@ function buildPhysicsGroups(p: RibbonBarProps): RibbonGroup[] {
         },
       ],
     },
+    {
+      id: "physics-drive",
+      title: "Drive / STT",
+      actions: [
+        {
+          id: "physics-oersted",
+          icon: <RadioTower size={20} />,
+          label: "Oersted",
+          tooltip: "Configure Oersted field from current-carrying pillar",
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "physics" }),
+          iconColor: "text-amber-400",
+        },
+        {
+          id: "physics-stt",
+          icon: <Zap size={20} />,
+          label: "Spin Torque",
+          tooltip: "Configure spin-transfer torque (Slonczewski or Zhang–Li)",
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "physics" }),
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "physics-thermal",
+          icon: <FlaskConical size={20} />,
+          label: "Thermal",
+          tooltip: "Enable Brown thermal noise at given temperature",
+          action: () => runCommand(p, { id: "navigation.select-node", nodeId: "physics" }),
+          iconColor: "text-orange-400",
+        },
+      ],
+    },
     buildViewGroup(p),
   ];
 }
@@ -874,6 +918,15 @@ function buildStudyBuilderGroups(
           disabled: !canCommand(p, { id: "study.add-macro", kind: "parameter_sweep", placement }),
           action: () => runCommand(p, { id: "study.add-macro", kind: "parameter_sweep", placement }),
         },
+        {
+          id: "study-add-current-sweep",
+          icon: <Zap size={20} />,
+          label: "Current Sweep",
+          tooltip: hasStageSelection ? "Insert current-density sweep + time evolution after the selected stage" : "Append current sweep to study",
+          iconColor: "text-emerald-400",
+          disabled: !canCommand(p, { id: "study.add-macro", kind: "current_sweep_run", placement }),
+          action: () => runCommand(p, { id: "study.add-macro", kind: "current_sweep_run", placement }),
+        },
       ],
     },
     {
@@ -1010,6 +1063,109 @@ function buildResultsGroups(p: RibbonBarProps): RibbonGroup[] {
           active: p.viewMode === "Analyze",
           action: () => runCommand(p, { id: "viewport.set-mode", mode: "Analyze" }),
           iconColor: "text-violet-400",
+        },
+        {
+          id: "analyze-vortex",
+          icon: <Target size={20} />,
+          label: "Vortex",
+          tooltip: "Vortex / STNO analysis: time traces, FFT, trajectory, orbit",
+          action: () => {
+            p.onSelectModelNode?.("res-vortex");
+          },
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "analyze-add-spectrum",
+          icon: <Plus size={20} />,
+          label: "Add Spectrum",
+          tooltip: "Add spectrum workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("spectrum"),
+          iconColor: "text-cyan-400",
+        },
+        {
+          id: "analyze-add-dispersion",
+          icon: <Plus size={20} />,
+          label: "Add Dispersion",
+          tooltip: "Add dispersion workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("dispersion"),
+          iconColor: "text-fuchsia-400",
+        },
+        {
+          id: "analyze-add-modes",
+          icon: <Plus size={20} />,
+          label: "Add Modes",
+          tooltip: "Add mode inspector workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("modes"),
+          iconColor: "text-indigo-400",
+        },
+      ],
+    },
+    {
+      id: "results-vortex",
+      title: "Vortex",
+      actions: [
+        {
+          id: "vortex-add-time-traces",
+          icon: <Plus size={20} />,
+          label: "Add Time Traces",
+          tooltip: "Add vortex time traces workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("time-traces"),
+          iconColor: "text-cyan-400",
+        },
+        {
+          id: "vortex-add-frequency",
+          icon: <Plus size={20} />,
+          label: "Add FFT / PSD",
+          tooltip: "Add vortex FFT/PSD workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("vortex-frequency"),
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "vortex-add-trajectory",
+          icon: <Plus size={20} />,
+          label: "Add Trajectory",
+          tooltip: "Add vortex trajectory workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("vortex-trajectory"),
+          iconColor: "text-violet-400",
+        },
+        {
+          id: "vortex-add-orbit",
+          icon: <Plus size={20} />,
+          label: "Add Orbit",
+          tooltip: "Add vortex orbit workspace entry to Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("vortex-orbit"),
+          iconColor: "text-amber-400",
+        },
+      ],
+    },
+    {
+      id: "results-workspaces",
+      title: "Workspaces",
+      actions: [
+        {
+          id: "results-add-quantity",
+          icon: <Plus size={20} />,
+          label: "Add Quantity",
+          tooltip: "Pin current quantity view in Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("quantity"),
+          iconColor: "text-emerald-400",
+        },
+        {
+          id: "results-add-table",
+          icon: <Plus size={20} />,
+          label: "Add Table",
+          tooltip: "Add table analysis entry in Results tree",
+          disabled: !p.onAddResultAnalysis,
+          action: () => p.onAddResultAnalysis?.("table"),
+          iconColor: "text-amber-400",
         },
       ],
     },

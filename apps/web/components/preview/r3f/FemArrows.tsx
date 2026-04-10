@@ -276,6 +276,7 @@ export function FemArrows({
 
   const sampledNodes = useMemo(() => {
     if (!visible) return [] as number[];
+    if (!meshData.fieldData) return [] as number[];
     if (meshData.quantityDomain === "magnetic_only" && !effectiveNodeMask) {
       return [] as number[];
     }
@@ -290,6 +291,7 @@ export function FemArrows({
     boundaryCandidateNodes,
     effectiveNodeMask,
     filteredBoundaryCandidateNodes,
+    meshData.fieldData,
     meshData.nodes,
     meshData.quantityDomain,
     visible,

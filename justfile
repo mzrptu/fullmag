@@ -124,6 +124,12 @@ run-nanoflower-interactive:
     just build fullmag-dev
     PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/nanoflower_fem.py
 
+run-stno-interactive:
+    just ensure-python
+    just build fullmag-dev
+    PATH="{{local_bin}}:$PATH" FULLMAG_PYTHON="{{repo_python}}" fullmag --dev -i examples/stno_vortex_mtj_workflow.py
+
+
 run-nanoflower-interactive-quadro:
     just ensure-python
     just build fullmag-dev

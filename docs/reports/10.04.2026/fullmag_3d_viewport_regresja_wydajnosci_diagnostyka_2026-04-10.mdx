@@ -1,0 +1,164 @@
+---
+title: "Fullmag 3D viewport — raport diagnostyczny regresu wydajności"
+date: "2026-04-10"
+format: "mdx"
+head_commit: "2d45b76"
+worktree_dirty: true
+---
+
+# Fullmag 3D viewport — raport diagnostyczny regresu wydajności
+
+## TL;DR
+
+Zidentyfikowałem błędy, które realnie mogą zabić wydajność nawet przy małych scenach:
+
+1. **P0:** topologia `FemGeometry` jest przebudowywana przy tickach danych pola (`fieldData`), mimo że topologia się nie zmienia.
+2. **P0:** `dynamicGeomCenter` liczy bounding geometrii od nowa przy zmianach `meshData` (w tym przy update pola), a wynik (nowy `Vector3`) dalej invaliduje geometrię.
+3. **P0 (lokalne, niecommitowane):** strzałki FEM zostały odblokowane nawet bez `fieldData`; pipeline strzałek robi kosztowne sample mimo że nic nie może narysować.
+4. **P1:** pomocnicze pętle renderujące (`HslSphere`, `ViewCube`) pracują stale niezależnie od głównego `frameloop="demand"`.
+5. **P1:** kolorowanie jest liczone osobno per-warstwa (`FemGeometry`), co mnoży koszt CPU przez liczbę widocznych warstw.
+
+---
+
+## Zakres i metoda
+
+Analiza statyczna kodu FE (bez uruchamiania GUI/profilera):
+
+- `apps/web/components/runs/control-room/ControlRoomContext.tsx`
+- `apps/web/components/preview/FemMeshView3D.tsx`
+- `apps/web/components/preview/fem/FemViewportScene.tsx`
+- `apps/web/components/preview/r3f/FemGeometry.tsx`
+- `apps/web/components/preview/r3f/FemArrows.tsx`
+- `apps/web/components/preview/shared/ScientificViewportShell.tsx`
+- `apps/web/components/preview/HslSphere.tsx`
+- `apps/web/components/preview/ViewCube.tsx`
+
+Stan repo podczas analizy:
+
+- `HEAD: 2d45b76`
+- dirty worktree:
+  - `apps/web/components/preview/FemMeshView3D.tsx`
+  - `apps/web/components/runs/control-room/ControlRoomContext.tsx`
+
+---
+
+## Znalezione błędy (priorytety)
+
+## P0-1: Przebudowa topologii geometrii FEM przy update pola
+
+### Dowody w kodzie
+
+- `ControlRoomContext` aktualizuje `femFieldData` przy każdym ticku `selectedVectors`:
+  - `apps/web/components/runs/control-room/ControlRoomContext.tsx:3141`
+- `femMeshData` jest tworzony ponownie, gdy zmienia się `femFieldData`:
+  - `apps/web/components/runs/control-room/ControlRoomContext.tsx:3164`
+- `FemViewportScene` przekazuje ten `meshData` do **każdego** `FemGeometry`:
+  - `apps/web/components/preview/fem/FemViewportScene.tsx:242`
+  - `apps/web/components/preview/fem/FemViewportScene.tsx:245`
+- Topologiczny `useMemo` w `FemGeometry` zależy od całego `meshData`:
+  - `apps/web/components/preview/r3f/FemGeometry.tsx:526`
+- W tym `useMemo` budowane są od nowa ciężkie obiekty (`BufferGeometry`, `WireframeGeometry`, normals, indeksy):
+  - `apps/web/components/preview/r3f/FemGeometry.tsx:430`
+  - `apps/web/components/preview/r3f/FemGeometry.tsx:439`
+  - `apps/web/components/preview/r3f/FemGeometry.tsx:500`
+
+### Dlaczego to zabija FPS
+
+Każdy update pola uruchamia ścieżkę topologiczną (`O(nNodes + nElements + nFaces)`), która powinna odpalać się tylko przy zmianie siatki. Jeśli masz kilka `visibleLayers`, koszt mnoży się przez liczbę warstw.
+
+---
+
+## P0-2: Przeliczanie bounds/centra całej geometrii przy update pola + wtórne invalidacje
+
+### Dowody w kodzie
+
+- `dynamicGeomCenter/dynamicGeomSize` skanuje geometrię (pętle po faces/nodes):
+  - `apps/web/components/preview/FemMeshView3D.tsx:1383`
+- `useMemo` zależy od całego `meshData`:
+  - `apps/web/components/preview/FemMeshView3D.tsx:1434`
+- zwracany jest nowy `THREE.Vector3`:
+  - `apps/web/components/preview/FemMeshView3D.tsx:1430`
+- ten `globalCenter` trafia do `FemGeometry` i jest jego zależnością topologiczną:
+  - `apps/web/components/preview/fem/FemViewportScene.tsx:260`
+  - `apps/web/components/preview/r3f/FemGeometry.tsx:524`
+
+### Dlaczego to zabija FPS
+
+Nawet gdy topologia siatki jest stała, aktualizacja pola uruchamia kosztowne przeliczenie bounds, a następnie przekazuje nowy obiekt `globalCenter`, co wspiera dalsze przebudowy w `FemGeometry`.
+
+---
+
+## P0-3 (lokalna regresja w worktree): Strzałki FEM aktywne bez danych pola
+
+### Dowody w kodzie
+
+- W aktualnym dirty worktree:
+  - `apps/web/components/runs/control-room/ControlRoomContext.tsx:3180`
+- `git blame` dla tej linii: `Not Committed Yet`.
+- Pipeline `FemArrows` wykonuje sampling kandydatów przed sprawdzeniem `fieldData`:
+  - sampling: `apps/web/components/preview/r3f/FemArrows.tsx:277`
+  - dopiero potem `if (!fld) return empty`: `apps/web/components/preview/r3f/FemArrows.tsx:307`
+
+### Dlaczego to zabija FPS
+
+Przy włączonych strzałkach i braku danych pola jest wykonywana ciężka praca CPU bez wartości renderowej.
+
+---
+
+## P1-1: Pomocnicze pętle renderujące działają stale
+
+### Dowody w kodzie
+
+- `HslSphere` ma własny `Canvas` i `useFrame` bez trybu demand:
+  - `apps/web/components/preview/HslSphere.tsx:80`
+  - `apps/web/components/preview/HslSphere.tsx:115`
+- `ViewCube` ma własną pętlę `requestAnimationFrame` + polling timeout:
+  - `apps/web/components/preview/ViewCube.tsx:95`
+  - `apps/web/components/preview/ViewCube.tsx:110`
+  - `apps/web/components/preview/ViewCube.tsx:112`
+
+### Wpływ
+
+To nie jest główny killer jak P0-1/P0-2, ale zwiększa baseline CPU/GPU i skaluje się z liczbą otwartych viewportów.
+
+---
+
+## P1-2: Duplikacja kosztu kolorowania per warstwa
+
+### Dowody w kodzie
+
+- `FemGeometry` liczy `baseColors` per komponent/per warstwa:
+  - `apps/web/components/preview/r3f/FemGeometry.tsx:531`
+- Przy `hasMeshParts` render idzie przez mapę warstw:
+  - `apps/web/components/preview/fem/FemViewportScene.tsx:242`
+
+### Wpływ
+
+Przy kilku warstwach podobne pętle po nodach są powielane, co zwiększa koszt CPU i GC.
+
+---
+
+## Łańcuch przyczynowy regresu (najbardziej prawdopodobny)
+
+1. Tick solvera zmienia `selectedVectors`.
+2. `ControlRoomContext` przepisuje całe pole do `x/y/z` i tworzy nowe `femMeshData`.
+3. `FemMeshView3D` przelicza `dynamicGeomCenter` na bazie całej geometrii (bo zależy od `meshData`).
+4. `FemViewportScene` przekazuje nowy `meshData` + nowy `globalCenter` do wszystkich `FemGeometry`.
+5. `FemGeometry` odpala topologiczny `useMemo` (ciężkie buforowanie + normals/wireframe).
+6. Dla wielu warstw dzieje się to równolegle xN.
+7. Main thread wchodzi w długie bloki CPU/GC, a wizualnie dostajesz "klatkę co kilka sekund".
+
+---
+
+## Najpilniejsze działania diagnostyczne (krótkie A/B)
+
+1. **A/B #1:** zablokować topologiczny rebuild `FemGeometry` na tickach pola (klucz tylko od topologii/clip/shrink, nie od `fieldData`).
+2. **A/B #2:** usunąć zależność `meshData` z `dynamicGeomCenter` i przepiąć ją na stabilne topologiczne referencje (`nodes`, `boundaryFaces`, `visibleLayers` semantycznie).
+3. **A/B #3:** przywrócić warunek `femHasFieldData` dla `femShouldShowArrows` (lokalna zmiana w worktree).
+4. **A/B #4:** tymczasowo wyłączyć `HslSphere`/`ViewCube` i porównać frametime.
+
+---
+
+## Wniosek końcowy
+
+Regres wydajności nie wygląda na pojedynczy "wolny shader". To przede wszystkim **błędny podział odpowiedzialności między update pola a update topologii** i przez to nadmiarowe przebudowy geometrii po stronie CPU. Najbardziej krytyczne są P0-1 i P0-2; lokalna zmiana P0-3 może dodatkowo pogłębiać problem.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
@@ -39,6 +39,7 @@ import {
   fmtStepValue,
   materializationProgressFromMessage,
 } from "./control-room/shared";
+import { parseAnalyzeTreeNode } from "./control-room/analyzeSelection";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import BackendErrorNotice from "./control-room/BackendErrorNotice";
 import MeshBuildModal from "./control-room/MeshBuildModal";
@@ -263,13 +264,41 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
   const handleSelectModelNode = useCallback((nodeId: string) => {
     ctx.setSelectedSidebarNodeId(nodeId);
     ctx.setSelectedObjectId(resolveSelectedObjectId(nodeId, ctx.modelBuilderGraph));
+    const analyzeTarget = parseAnalyzeTreeNode(nodeId);
+    if (analyzeTarget) {
+      ctx.setWorkspaceMode("analyze");
+      setActiveCoreTab("Results");
+      setActiveContextualTab(null);
+      ctx.openAnalyze(analyzeTarget);
+      if (pathname !== "/analyze") {
+        router.push("/analyze");
+      }
+      return;
+    }
+    if (nodeId.startsWith("res-analysis-")) {
+      ctx.setWorkspaceMode("analyze");
+      setActiveCoreTab("Results");
+      setActiveContextualTab(null);
+      ctx.openResultWorkspaceEntry(nodeId.replace("res-analysis-", ""));
+      if (pathname !== "/analyze") {
+        router.push("/analyze");
+      }
+      return;
+    }
     if (ctx.sidebarCollapsed) {
       ctx.setSidebarCollapsed(false);
     }
     if (nodeId === "antennas" || nodeId.startsWith("ant-")) {
       maybePreviewAntennaField();
     }
-  }, [ctx, maybePreviewAntennaField]);
+  }, [
+    ctx,
+    maybePreviewAntennaField,
+    pathname,
+    router,
+    setActiveContextualTab,
+    setActiveCoreTab,
+  ]);
 
   const handleAddAntenna = useCallback((kind: "MicrostripAntenna" | "CPWAntenna") => {
     const nextModule = makeRibbonAntenna(kind, ctx.scriptBuilderCurrentModules);
@@ -441,7 +470,9 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       | "field_sweep_relax_snapshot"
       | "relax_run"
       | "relax_eigenmodes"
-      | "parameter_sweep",
+      | "parameter_sweep"
+      | "current_sweep_run"
+      | "dc_bias_plus_rf_probe",
     placement: "append" | "before" | "after",
   ) => {
     const nextNode = createMacroNode(kind);
@@ -706,6 +737,107 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     openMeshNode(hasSharedAirboxDomain ? "mesh-pipeline" : "universe-mesh-pipeline");
     ctx.handleViewModeChange("Mesh");
   }, [ctx, hasSharedAirboxDomain, openMeshNode]);
+  const handleAddResultAnalysis = useCallback(
+    (
+      kind:
+        | "spectrum"
+        | "dispersion"
+        | "modes"
+        | "time-traces"
+        | "vortex-frequency"
+        | "vortex-trajectory"
+        | "vortex-orbit"
+        | "quantity"
+        | "table",
+    ) => {
+      const now = Date.now();
+      const quantityId = ctx.requestedPreviewQuantity;
+      const quantityLabel = ctx.quantityDescriptor?.label ?? quantityId;
+      const quantityBadge = ctx.quantityDescriptor?.unit ?? null;
+      const id =
+        kind === "spectrum"
+          ? ctx.addResultWorkspaceEntry({
+              key: `user:spectrum:${now}`,
+              kind: "spectrum",
+              label: "Eigen Spectrum",
+              badge: "manual",
+              openAfterCreate: true,
+            })
+          : kind === "dispersion"
+            ? ctx.addResultWorkspaceEntry({
+                key: `user:dispersion:${now}`,
+                kind: "dispersion",
+                label: "Eigen Dispersion",
+                badge: "manual",
+                openAfterCreate: true,
+              })
+            : kind === "modes"
+              ? ctx.addResultWorkspaceEntry({
+                  key: `user:modes:${now}`,
+                  kind: "modes",
+                  label: "Mode Inspector",
+                  badge: "manual",
+                  openAfterCreate: true,
+                })
+              : kind === "time-traces"
+                ? ctx.addResultWorkspaceEntry({
+                    key: `user:vortex:time-traces:${now}`,
+                    kind: "time-traces",
+                    label: "Vortex Time Traces",
+                    badge: "manual",
+                    openAfterCreate: true,
+                  })
+                : kind === "vortex-frequency"
+                  ? ctx.addResultWorkspaceEntry({
+                      key: `user:vortex:frequency:${now}`,
+                      kind: "vortex-frequency",
+                      label: "Vortex FFT / PSD",
+                      badge: "manual",
+                      openAfterCreate: true,
+                    })
+                  : kind === "vortex-trajectory"
+                    ? ctx.addResultWorkspaceEntry({
+                        key: `user:vortex:trajectory:${now}`,
+                        kind: "vortex-trajectory",
+                        label: "Vortex Trajectory",
+                        badge: "manual",
+                        openAfterCreate: true,
+                      })
+                    : kind === "vortex-orbit"
+                      ? ctx.addResultWorkspaceEntry({
+                          key: `user:vortex:orbit:${now}`,
+                          kind: "vortex-orbit",
+                          label: "Vortex Orbit Amplitude",
+                          badge: "manual",
+                          openAfterCreate: true,
+                        })
+            : kind === "table"
+              ? ctx.addResultWorkspaceEntry({
+                  key: `user:table:${now}`,
+                  kind: "table",
+                  label: "Results Table",
+                  badge: quantityLabel,
+                  openAfterCreate: true,
+                })
+              : ctx.addResultWorkspaceEntry({
+                  key: `user:quantity:${quantityId}:${now}`,
+                  kind: "quantity",
+                  label: quantityLabel,
+                  quantityId,
+                  badge: quantityBadge,
+                  openAfterCreate: true,
+                });
+      ctx.openResultWorkspaceEntry(id);
+      ctx.setSelectedSidebarNodeId(`res-analysis-${id}`);
+      ctx.setWorkspaceMode("analyze");
+      setActiveCoreTab("Results");
+      setActiveContextualTab(null);
+      if (pathname !== "/analyze") {
+        router.push("/analyze");
+      }
+    },
+    [ctx, pathname, router, setActiveContextualTab, setActiveCoreTab],
+  );
 
   const handleBackgroundMeshBuild = useCallback(() => {
     setMeshBuildDialogOpen(false);
@@ -730,6 +862,57 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       router.push(targetPath as Route);
     }
   }, [ctx, pathname, router, setActiveContextualTab, setActiveCoreTab]);
+
+  const hasEigenArtifacts = useMemo(
+    () =>
+      ctx.artifacts.some(
+        (artifact) =>
+          artifact.path === "eigen/spectrum.json" ||
+          artifact.path === "eigen/metadata/eigen_summary.json" ||
+          artifact.path.startsWith("eigen/modes/"),
+      ),
+    [ctx.artifacts],
+  );
+  const hasResultsAvailable = useMemo(() => {
+    const hasScalarRows = ctx.scalarRows.length > 0;
+    const hasRuntimeSteps = (ctx.run?.total_steps ?? 0) > 0;
+    return hasScalarRows || hasRuntimeSteps || hasEigenArtifacts;
+  }, [ctx.run?.total_steps, ctx.scalarRows.length, hasEigenArtifacts]);
+  const autoResultsEntryKeyRef = useRef<string | null>(null);
+  const currentResultsEntryKey = `${ctx.session?.session_id ?? "none"}:${ctx.run?.run_id ?? ctx.session?.run_id ?? "none"}`;
+
+  useEffect(() => {
+    const solveFinished =
+      ctx.workspaceStatus === "awaiting_command" || ctx.workspaceStatus === "completed";
+    if (!solveFinished || !hasResultsAvailable) {
+      return;
+    }
+    if (autoResultsEntryKeyRef.current === currentResultsEntryKey) {
+      return;
+    }
+    autoResultsEntryKeyRef.current = currentResultsEntryKey;
+    ctx.setWorkspaceMode("analyze");
+    setActiveCoreTab("Results");
+    setActiveContextualTab(null);
+    if (!ctx.selectedSidebarNodeId || !ctx.selectedSidebarNodeId.startsWith("res-")) {
+      ctx.setSelectedSidebarNodeId(hasEigenArtifacts ? "res-eigenmodes" : "results");
+    }
+    if (hasEigenArtifacts) {
+      ctx.openAnalyze({ tab: "spectrum", selectedModeIndex: null });
+    }
+    if (pathname !== "/analyze") {
+      router.push("/analyze");
+    }
+  }, [
+    ctx,
+    currentResultsEntryKey,
+    hasEigenArtifacts,
+    hasResultsAvailable,
+    pathname,
+    router,
+    setActiveContextualTab,
+    setActiveCoreTab,
+  ]);
 
   /* ── Loading state ── */
   if (!ctx.session) {
@@ -809,6 +992,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         scriptSyncBusy={ctx.scriptSyncBusy}
         onSyncScriptBuilder={() => void ctx.syncScriptBuilder()}
         workspaceMode={ctx.workspaceMode}
+        resultsAvailable={hasResultsAvailable}
         onPerspectiveChange={handleStageChange}
         onSimAction={ctx.handleSimulationAction}
       />
@@ -864,6 +1048,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         onStudyAddMacro={handleStudyAddMacro}
         onStudyDuplicateSelected={handleStudyDuplicateSelected}
         onStudyToggleSelectedEnabled={handleStudyToggleSelectedEnabled}
+        onAddResultAnalysis={handleAddResultAnalysis}
         onObjectAddInteraction={handleObjectAddInteraction}
         onAssignMagnetizationPreset={handleAssignMagnetizationPreset}
         onSetTextureTransformMode={handleSetTextureTransformMode}

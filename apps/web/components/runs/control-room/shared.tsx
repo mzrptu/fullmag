@@ -240,6 +240,14 @@ export function findTreeNodeById(nodes: TreeNodeData[], id: string | null): Tree
 }
 
 export function previewQuantityForTreeNode(id: string): string | null {
+  if (id.startsWith("res-qty-")) {
+    try {
+      const quantityId = decodeURIComponent(id.slice("res-qty-".length));
+      return quantityId.length > 0 ? quantityId : null;
+    } catch {
+      return null;
+    }
+  }
   if (id === "antennas" || id.startsWith("ant-")) {
     return "H_ant";
   }

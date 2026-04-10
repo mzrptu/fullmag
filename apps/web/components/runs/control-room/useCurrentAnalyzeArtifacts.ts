@@ -74,18 +74,20 @@ export function useCurrentAnalyzeArtifacts(
 
       try {
         const base = resolveApiBase();
-        const bootstrap = await fetchJson<BootstrapLite>(`${base}/v1/live/current/bootstrap`);
+        const [bootstrap, liveArtifacts] = await Promise.all([
+          fetchJson<BootstrapLite>(`${base}/v1/live/current/bootstrap`),
+          fetchJson<Array<{ path: string; kind?: string }>>(
+            `${base}/v1/live/current/artifacts`,
+          ).catch(() => []),
+        ]);
         if (cancelled) return;
 
-        const artifacts = Array.isArray(bootstrap.artifacts) ? bootstrap.artifacts : [];
-        const hasSpectrum = artifacts.some(
-          (a) =>
-            a.path === "eigen/spectrum.json" ||
-            a.path === "eigen/metadata/eigen_summary.json",
-        );
-        const hasDispersion = artifacts.some(
-          (a) => a.path === "eigen/dispersion/branch_table.csv",
-        );
+        const bootstrapArtifacts = Array.isArray(bootstrap.artifacts)
+          ? bootstrap.artifacts
+          : [];
+        // Prefer live artifact listing (fresh filesystem scan). Bootstrap can be stale.
+        const artifacts =
+          liveArtifacts.length > 0 ? liveArtifacts : bootstrapArtifacts;
 
         const nextModeArtifactMap = new Map<number, string>();
         for (const a of artifacts) {
@@ -95,22 +97,16 @@ export function useCurrentAnalyzeArtifacts(
           }
         }
 
-        const hasBranches = artifacts.some(
-          (a) => a.path === "eigen/branches.json",
-        );
-
         const [nextSpectrum, nextDispersion, nextBranches] = await Promise.all([
-          hasSpectrum
-            ? fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`)
-            : Promise.resolve(null),
-          hasDispersion
-            ? fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`)
-            : Promise.resolve(null),
-          hasBranches
-            ? fetchJson<EigenBranchesArtifact>(`${base}/v1/live/current/eigen/branches`).catch(
-                () => null,
-              )
-            : Promise.resolve(null),
+          fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`).catch(
+            () => null,
+          ),
+          fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`).catch(
+            () => null,
+          ),
+          fetchJson<EigenBranchesArtifact>(`${base}/v1/live/current/eigen/branches`).catch(
+            () => null,
+          ),
         ]);
 
         if (cancelled) return;

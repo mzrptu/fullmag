@@ -175,6 +175,30 @@ function parseOptionalFiniteNumberText(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function resultWorkspaceIcon(kind: ResultWorkspaceKind): string {
+  switch (kind) {
+    case "spectrum":
+      return "📊";
+    case "dispersion":
+      return "≈";
+    case "modes":
+      return "〜";
+    case "time-traces":
+      return "〰";
+    case "vortex-frequency":
+      return "🌀";
+    case "vortex-trajectory":
+      return "◎";
+    case "vortex-orbit":
+      return "◉";
+    case "table":
+      return "📋";
+    case "quantity":
+    default:
+      return "𝑓";
+  }
+}
+
 function normalizePersistedObjectViewMode(
   value: SceneDocument["editor"]["object_view_mode"],
 ): ObjectViewMode {
@@ -362,6 +386,8 @@ export type {
   ModelContextValue,
   ControlRoomContextValue,
   WorkspaceMode,
+  ResultWorkspaceEntry,
+  ResultWorkspaceKind,
 } from "./context-hooks";
 import {
   TransportCtx,
@@ -375,6 +401,8 @@ import type {
   CommandContextValue,
   ModelContextValue,
   WorkspaceMode,
+  ResultWorkspaceEntry,
+  ResultWorkspaceKind,
 } from "./context-hooks";
 
 /* ── Provider ── */
@@ -423,6 +451,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [selectedSidebarNodeId, setSelectedSidebarNodeId] = useState<string | null>(null);
   const [analyzeSelection, setAnalyzeSelection] =
     useState<AnalyzeSelectionState>(DEFAULT_ANALYZE_SELECTION);
+  const [resultWorkspaceEntries, setResultWorkspaceEntries] = useState<ResultWorkspaceEntry[]>([]);
+  const [activeResultWorkspaceId, setActiveResultWorkspaceId] = useState<string | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [viewportScope, setViewportScope] = useState<ViewportScope>("universe");
   const [focusObjectRequest, setFocusObjectRequest] = useState<FocusObjectRequest | null>(null);
@@ -516,6 +546,43 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const refreshAnalyze = useCallback(() => {
     setAnalyzeSelection((prev) => nextAnalyzeRefresh(prev));
   }, []);
+  const addResultWorkspaceEntry = useCallback(
+    (entry: {
+      key?: string | null;
+      kind: ResultWorkspaceKind;
+      label: string;
+      quantityId?: string | null;
+      icon?: string;
+      badge?: string | null;
+      openAfterCreate?: boolean;
+    }) => {
+      const key = entry.key?.trim().length ? entry.key.trim() : `${entry.kind}:${entry.label}`;
+      const existing = resultWorkspaceEntries.find((candidate) => candidate.key === key);
+      if (existing) {
+        if (entry.openAfterCreate) {
+          setActiveResultWorkspaceId(existing.id);
+        }
+        return existing.id;
+      }
+      const now = Date.now();
+      const created: ResultWorkspaceEntry = {
+        id: `${entry.kind}-${now}-${Math.floor(Math.random() * 10000)}`,
+        key,
+        kind: entry.kind,
+        label: entry.label,
+        quantityId: entry.quantityId ?? null,
+        icon: entry.icon ?? resultWorkspaceIcon(entry.kind),
+        badge: entry.badge ?? null,
+        createdAtUnixMs: now,
+      };
+      setResultWorkspaceEntries((prev) => [...prev, created]);
+      if (entry.openAfterCreate) {
+        setActiveResultWorkspaceId(created.id);
+      }
+      return created.id;
+    },
+    [resultWorkspaceEntries],
+  );
   const run = state?.run ?? null;
   const liveState = state?.live_state ?? null;
   const displaySelection = state?.display_selection ?? null;
@@ -635,6 +702,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setSelectedSidebarNodeId(null);
     setAnalyzeSelection(DEFAULT_ANALYZE_SELECTION);
+    setResultWorkspaceEntries([]);
+    setActiveResultWorkspaceId(null);
     setSelectedObjectId(null);
     setViewportScope("universe");
     setFocusObjectRequest(null);
@@ -2955,6 +3024,72 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       void updatePreview("/quantity", { quantity: nextQuantity });
     }
   }, [effectiveViewMode, isFemBackend, previewControlsActive, updatePreview]);
+  const openResultWorkspaceEntry = useCallback(
+    (id: string) => {
+      setActiveResultWorkspaceId(id);
+      setSelectedSidebarNodeId(`res-analysis-${id}`);
+      const entry = resultWorkspaceEntries.find((candidate) => candidate.id === id);
+      if (!entry) {
+        return;
+      }
+      if (entry.kind === "spectrum") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ tab: "spectrum", selectedModeIndex: null });
+        return;
+      }
+      if (entry.kind === "dispersion") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ tab: "dispersion", selectedModeIndex: null });
+        return;
+      }
+      if (entry.kind === "modes") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ tab: "modes" });
+        return;
+      }
+      if (entry.kind === "time-traces") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ domain: "vortex", tab: "time-traces" });
+        return;
+      }
+      if (entry.kind === "vortex-frequency") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ domain: "vortex", tab: "vortex-frequency" });
+        return;
+      }
+      if (entry.kind === "vortex-trajectory") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ domain: "vortex", tab: "vortex-trajectory" });
+        return;
+      }
+      if (entry.kind === "vortex-orbit") {
+        setWorkspaceMode("analyze");
+        openAnalyze({ domain: "vortex", tab: "vortex-orbit" });
+        return;
+      }
+      if (entry.kind === "table") {
+        setWorkspaceMode("analyze");
+        startTransition(() => {
+          setViewMode("Analyze");
+        });
+        return;
+      }
+      if (entry.quantityId) {
+        requestPreviewQuantity(entry.quantityId);
+      }
+      if (isFemBackend && effectiveViewMode === "Mesh") {
+        setViewMode("3D");
+      }
+    },
+    [
+      effectiveViewMode,
+      isFemBackend,
+      openAnalyze,
+      requestPreviewQuantity,
+      resultWorkspaceEntries,
+      setWorkspaceMode,
+    ],
+  );
 
   /* Keyboard shortcuts */
   useEffect(() => {
@@ -3054,6 +3189,91 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [globalScalarPreview]);
   const selectedQuantityLabel = quantityDescriptor?.label ?? requestedPreviewQuantity;
   const selectedQuantityUnit = quantityDescriptor?.unit ?? null;
+
+  useEffect(() => {
+    if (!requestedPreviewQuantity) {
+      return;
+    }
+    const badge = selectedQuantityUnit ?? null;
+    addResultWorkspaceEntry({
+      key: `auto:quantity:${requestedPreviewQuantity}`,
+      kind: "quantity",
+      label: selectedQuantityLabel,
+      quantityId: requestedPreviewQuantity,
+      badge,
+      openAfterCreate: false,
+    });
+  }, [
+    addResultWorkspaceEntry,
+    requestedPreviewQuantity,
+    selectedQuantityLabel,
+    selectedQuantityUnit,
+  ]);
+
+  useEffect(() => {
+    if (!requestedPreviewQuantity) {
+      return;
+    }
+    const activeQuantityEntry = resultWorkspaceEntries.find(
+      (entry) => entry.kind === "quantity" && entry.quantityId === requestedPreviewQuantity,
+    );
+    if (activeQuantityEntry && activeResultWorkspaceId !== activeQuantityEntry.id) {
+      setActiveResultWorkspaceId(activeQuantityEntry.id);
+    }
+  }, [activeResultWorkspaceId, requestedPreviewQuantity, resultWorkspaceEntries]);
+
+  useEffect(() => {
+    const hasSpectrumArtifact = artifactsArr.some(
+      (artifact) =>
+        artifact.path === "eigen/spectrum.json" ||
+        artifact.path === "eigen/metadata/eigen_summary.json",
+    );
+    if (!hasSpectrumArtifact) {
+      return;
+    }
+    addResultWorkspaceEntry({
+      key: "auto:eigen:spectrum",
+      kind: "spectrum",
+      label: "Eigen Spectrum",
+      badge: "auto",
+      openAfterCreate: false,
+    });
+  }, [addResultWorkspaceEntry, artifactsArr]);
+
+  useEffect(() => {
+    if (viewMode !== "Analyze") {
+      return;
+    }
+    const descriptor =
+      analyzeSelection.domain === "vortex"
+        ? (analyzeSelection.tab === "time-traces"
+            ? { key: "auto:vortex:time-traces", kind: "time-traces", label: "Vortex Time Traces" }
+            : analyzeSelection.tab === "vortex-frequency"
+              ? { key: "auto:vortex:frequency", kind: "vortex-frequency", label: "Vortex FFT / PSD" }
+              : analyzeSelection.tab === "vortex-orbit"
+                ? { key: "auto:vortex:orbit", kind: "vortex-orbit", label: "Vortex Orbit Amplitude" }
+                : { key: "auto:vortex:trajectory", kind: "vortex-trajectory", label: "Vortex Trajectory" })
+        : (analyzeSelection.tab === "dispersion"
+            ? { key: "auto:eigen:dispersion", kind: "dispersion", label: "Eigen Dispersion" }
+            : analyzeSelection.tab === "modes"
+              ? { key: "auto:eigen:modes", kind: "modes", label: "Mode Inspector" }
+              : { key: "auto:eigen:spectrum", kind: "spectrum", label: "Eigen Spectrum" });
+    const id = addResultWorkspaceEntry({
+      key: descriptor.key,
+      kind: descriptor.kind as ResultWorkspaceKind,
+      label: descriptor.label,
+      openAfterCreate: false,
+    });
+    if (activeResultWorkspaceId !== id) {
+      setActiveResultWorkspaceId(id);
+    }
+  }, [
+    activeResultWorkspaceId,
+    addResultWorkspaceEntry,
+    analyzeSelection.domain,
+    analyzeSelection.tab,
+    viewMode,
+  ]);
 
   /* FEM mesh data */
   const effectiveFemMesh = useMemo(
@@ -3177,7 +3397,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   const femHasFieldData = Boolean(femMeshData?.fieldData);
   const femMagnetization3DActive = isFemBackend && effectiveViewMode === "3D" && activeQuantityId === "m" && femHasFieldData;
-  const femShouldShowArrows = isFemBackend && effectiveViewMode === "3D" && femHasFieldData ? meshShowArrows : false;
+  const femShouldShowArrows =
+    isFemBackend && effectiveViewMode === "3D" && femHasFieldData
+      ? meshShowArrows
+      : false;
 
   const femTopologyKey = useMemo(() => {
     if (!effectiveFemMesh) return null;
@@ -3615,10 +3838,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     airPart,
     interfaceParts,
     analyzeSelection,
+    resultWorkspaceEntries,
+    activeResultWorkspaceId,
     setSolverSettings, setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setFemArrowColorMode, setFemArrowMonoColor, setFemArrowAlpha, setFemArrowLengthScale, setFemArrowThickness, setFdmVisualizationSettings, setMeshSelection, setMeshOptions, setFemDockTab,
     setFemVectorDomainFilter, setFemFerromagnetVisibilityMode,
-    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
+    setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, addResultWorkspaceEntry, openResultWorkspaceEntry, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
     createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
@@ -3634,9 +3859,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder, liveMeshName,
     domainFrame, worldExtent, worldCenter, worldExtentSource, meshHmax, mesherBackend, mesherSourceKind, mesherCurrentSettings,
     meshWorkspacePreset,
-    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, requestFocusObject,
+    selectedSidebarNodeId, selectedObjectId, viewportScope, focusObjectRequest, objectViewMode, airMeshVisible, airMeshOpacity, meshEntityViewState, selectedEntityId, focusedEntityId, meshParts, visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart, magneticParts, airPart, interfaceParts, analyzeSelection, resultWorkspaceEntries, activeResultWorkspaceId, requestFocusObject,
     setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
-    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze,
+    handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, addResultWorkspaceEntry, openResultWorkspaceEntry,
     applyAntennaTranslation, applyGeometryTranslation, setMeshOptions, setSolverSettings, activeTransformScope,
   ]);
 

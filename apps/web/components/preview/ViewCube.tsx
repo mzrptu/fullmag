@@ -64,13 +64,14 @@ const faces: { cssTransform: string; zones: FaceZone[][] }[] = [
   { cssTransform: "vcFaceLeft", zones: buildZones([-1, 0, 0], [0, 0, 1], [0, 1, 0], "-X") },
   { cssTransform: "vcFaceFront", zones: buildZones([0, 0, 1], [0, 1, 0], [1, 0, 0], "+Z") },
   { cssTransform: "vcFaceBack", zones: buildZones([0, 0, -1], [0, -1, 0], [1, 0, 0], "-Z") },
-];export default function ViewCube({
+];
+
+export default function ViewCube({
   sceneRef,
   onRotate,
   onReset,
   className,
 }: ViewCubeProps & { className?: string }) {
-  const rafRef = useRef<number | null>(null);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, hasDragged: false });
   const cubeSceneRef = useRef<HTMLDivElement | null>(null);
   const axisSceneRef = useRef<HTMLDivElement | null>(null);
@@ -88,39 +89,42 @@ const faces: { cssTransform: string; zones: FaceZone[][] }[] = [
     return `matrix3d(${e[0]},${e[1]},${e[2]},0,${e[4]},${e[5]},${e[6]},0,${e[8]},${e[9]},${e[10]},0,0,0,0,1)`;
   }, [sceneRef]);
 
-  // ─── Sync loop (only updates when camera matrix changes) ──────────
+  // ─── Sync transform on camera/control changes ─────────────────────
   const lastTransformRef = useRef<string>("");
-  const idleCounterRef = useRef(0);
-  
-  useEffect(() => {
-    let active = true;
-    function loop() {
-      if (!active) return;
-      const transform = getCameraMatrix();
-      if (transform !== lastTransformRef.current) {
-        lastTransformRef.current = transform;
-        idleCounterRef.current = 0;
-        if (cubeSceneRef.current) cubeSceneRef.current.style.transform = transform;
-        if (axisSceneRef.current) axisSceneRef.current.style.transform = transform;
-      } else {
-        idleCounterRef.current++;
-      }
-      // After 120 idle frames (~2s at 60fps), slow down to 4fps polling
-      if (idleCounterRef.current < 120) {
-        rafRef.current = requestAnimationFrame(loop);
-      } else {
-        rafRef.current = window.setTimeout(loop, 250) as unknown as number;
-      }
+  const syncTransform = useCallback(() => {
+    const transform = getCameraMatrix();
+    if (transform === lastTransformRef.current) {
+      return;
     }
-    rafRef.current = requestAnimationFrame(loop);
-    return () => {
-      active = false;
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        clearTimeout(rafRef.current);
-      }
-    };
+    lastTransformRef.current = transform;
+    if (cubeSceneRef.current) cubeSceneRef.current.style.transform = transform;
+    if (axisSceneRef.current) axisSceneRef.current.style.transform = transform;
   }, [getCameraMatrix]);
+
+  useEffect(() => {
+    let frameId: number | null = null;
+    let boundControls: any = null;
+
+    const onControlsChange = () => syncTransform();
+    const attachToControls = () => {
+      const controls = sceneRef?.current?.controls as any;
+      if (!controls || typeof controls.addEventListener !== "function") {
+        frameId = requestAnimationFrame(attachToControls);
+        return;
+      }
+      boundControls = controls;
+      (controls as any).addEventListener("change", onControlsChange);
+      syncTransform();
+    };
+
+    attachToControls();
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      boundControls?.removeEventListener?.("change", onControlsChange);
+    };
+  }, [sceneRef, syncTransform]);
 
   // ─── Click face → snap camera ────────────────────────────────────
   const handleZoneClick = useCallback(

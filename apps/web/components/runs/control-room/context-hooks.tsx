@@ -110,6 +110,27 @@ export interface TransportContextValue {
 
 /* ── Viewport: user-driven UI state ── */
 export type WorkspaceMode = "build" | "study" | "analyze";
+export type ResultWorkspaceKind =
+  | "spectrum"
+  | "dispersion"
+  | "modes"
+  | "time-traces"
+  | "vortex-frequency"
+  | "vortex-trajectory"
+  | "vortex-orbit"
+  | "quantity"
+  | "table";
+
+export interface ResultWorkspaceEntry {
+  id: string;
+  key: string;
+  kind: ResultWorkspaceKind;
+  label: string;
+  quantityId: string | null;
+  icon: string;
+  badge: string | null;
+  createdAtUnixMs: number;
+}
 
 export interface ViewportContextValue {
   workspaceMode: WorkspaceMode;
@@ -328,6 +349,8 @@ export interface ModelContextValue {
   airPart: FemMeshPart | null;
   interfaceParts: FemMeshPart[];
   analyzeSelection: AnalyzeSelectionState;
+  resultWorkspaceEntries: ResultWorkspaceEntry[];
+  activeResultWorkspaceId: string | null;
   /* Actions */
   setSolverSettings: React.Dispatch<React.SetStateAction<SolverSettingsState>>;
   setSceneDocument: React.Dispatch<React.SetStateAction<SceneDocument | null>>;
@@ -388,6 +411,16 @@ export interface ModelContextValue {
   selectAnalyzeTab: (tab: AnalyzeTab) => void;
   selectAnalyzeMode: (index: number | null) => void;
   refreshAnalyze: () => void;
+  addResultWorkspaceEntry: (entry: {
+    key?: string | null;
+    kind: ResultWorkspaceKind;
+    label: string;
+    quantityId?: string | null;
+    icon?: string;
+    badge?: string | null;
+    openAfterCreate?: boolean;
+  }) => string;
+  openResultWorkspaceEntry: (id: string) => void;
   requestFocusObject: (objectId: string) => void;
   handleStudyDomainMeshGenerate: (meshReason?: string) => Promise<void>;
   handleAirboxMeshGenerate: () => Promise<void>;

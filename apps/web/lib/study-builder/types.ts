@@ -16,7 +16,9 @@ export type StudyMacroStageKind =
   | "field_sweep_relax_snapshot"
   | "relax_run"
   | "relax_eigenmodes"
-  | "parameter_sweep";
+  | "parameter_sweep"
+  | "current_sweep_run"
+  | "dc_bias_plus_rf_probe";
 
 interface StudyPipelineNodeBase {
   id: string;

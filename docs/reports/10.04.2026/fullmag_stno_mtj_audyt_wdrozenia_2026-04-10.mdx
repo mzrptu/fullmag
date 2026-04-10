@@ -1,0 +1,484 @@
+---
+title: Audyt wdrożenia Fullmag pod STNO/MTJ
+generated_at: 2026-04-10
+repo: MateuszZelent/fullmag
+format: diagnostic-report
+---
+
+# Audyt wdrożenia Fullmag pod STNO/MTJ
+
+## Werdykt
+
+Nie. Wdrożenie jest **częściowe** i **nie jest jeszcze poprawnie domknięte end-to-end** dla publicznego workflow użytkownika.
+
+W praktyce oznacza to:
+
+- **backend obliczeniowy** jest już w dużej mierze przygotowany do STT/Oersted/temperatury,
+- **publiczny Python API** nadal nie wystawia pełnej ścieżki `Problem(...) -> to_ir() -> planner -> runner`,
+- **dokumentacja** jest już krok dalej niż działający kod i pokazuje przykłady, których obecna implementacja `Problem` nie obsługuje,
+- **GUI** nie wygląda jeszcze na gotowe do pełnej analizy STNO/MTJ.
+
+## Ocena skrócona
+
+| Obszar | Status | Ocena |
+|---|---:|---|
+| IR / planner / runner | częściowo gotowe | dobre podstawy, realna obsługa STT/Oersted/temperature istnieje |
+| Python DSL: `spin_torque.py` | wdrożone | klasy pomocnicze są sensowne i dobrze opisane |
+| Python DSL: `Problem(...)` | **niepełne** | brak pól `spin_torque` i `temperature`, brak serializacji top-level pól STT |
+| `ThermalNoise` w DSL | **niespójne** | obiekt publiczny istnieje, ale ścieżka IR/planner nie wygląda na domkniętą |
+| eksport publiczny API | częściowo niepełny | klasy STT nie są poprawnie wystawione w publicznych `__all__` |
+| dokumentacja | **niespójna z kodem** | przykłady wyprzedzają rzeczywistą implementację |
+| GUI | **niegotowe** | brak wyraźnej integracji STT/Oersted/thermal/PSD/FFT w sprawdzonych warstwach |
+| przykłady i testy E2E | niewystarczające | brak pełnego przykładu STNO/MTJ i brak wyraźnego smoke testu publicznego API |
+
+## Co wygląda na wdrożone poprawnie
+
+### 1. Backend IR ma już pola potrzebne dla STT i temperatury
+
+W warstwie IR są dostępne top-level pola potrzebne do pchania STT i temperatury dalej do planera / runnera, m.in.:
+
+- `current_density`
+- `stt_degree`
+- `stt_beta`
+- `stt_spin_polarization`
+- `stt_lambda`
+- `stt_epsilon_prime`
+- `temperature`
+
+To jest dobry znak: rdzeń obliczeniowy nie jest już „ślepy” na ten problem.
+
+### 2. Planner FDM przenosi STT, temperaturę i OerstedCylinder
+
+W planowaniu FDM widać mapowanie z `ProblemIR` do planu wykonawczego dla:
+
+- parametrów STT,
+- `temperature`,
+- `OerstedCylinder`,
+- obwiedni czasowych (`Constant`, `Sinusoidal`, `Pulse`).
+
+To znaczy, że architektura backendowa jest już sensownie przygotowana pod pobudzenia DC/AC i sprzężenie spin-torque.
+
+### 3. Runner CPU i natywny backend widzą STT/Oersted/temperature
+
+W runnerze są obecne ścieżki budowy:
+
+- `Zhang-Li STT`,
+- `Slonczewski STT`,
+- temperatury / thermal handling,
+- parametrów Oersteda w deskryptorze planu.
+
+To jest najważniejszy pozytywny wynik całego audytu: **silnik od strony wykonawczej jest znacznie bliżej gotowości niż warstwa publicznego API**.
+
+### 4. W Python DSL pojawił się już osobny moduł `spin_torque.py`
+
+To jest sensowne wdrożenie po stronie modelu domenowego. Są klasy:
+
+- `SlonczewskiSTT`
+- `ZhangLiSTT`
+- klasa bazowa / protokół `SpinTorque`
+
+Dodatkowo implementacje zwracają poprawnie ustrukturyzowane pola IR (`to_ir_fields()`), więc kierunek architektoniczny jest dobry.
+
+### 5. W Python DSL są już `OerstedCylinder` i obwiednie czasowe
+
+W `energy.py` są obecne:
+
+- `OerstedCylinder`
+- `Constant`
+- `Sinusoidal`
+- `Pulse`
+
+To daje dobrą bazę do modelowania pobudzenia prądowego DC i AC wokół nanokropki.
+
+## Co NIE jest wdrożone poprawnie
+
+### 1. `Problem(...)` nadal nie przyjmuje `spin_torque` ani `temperature`
+
+To jest obecnie główny błąd blokujący publiczne użycie tej funkcjonalności.
+
+W aktualnej definicji `Problem` są m.in. pola:
+
+- `name`
+- `magnets`
+- `energy`
+- `study`
+- `dynamics`
+- `outputs`
+- `discretization`
+- `runtime`
+- `current_modules`
+- `excitation_analysis`
+
+ale **nie ma** pól:
+
+- `spin_torque`
+- `temperature`
+
+Skutek praktyczny:
+
+- kod z dokumentacji w stylu `Problem(..., spin_torque=..., temperature=300.0)` nie zadziała,
+- użytkownik publicznego API nie ma poprawnej ścieżki do wstrzyknięcia tych danych przez `Problem`.
+
+### 2. `Problem.to_ir()` nie emituje top-level pól STT ani temperatury
+
+To jest drugi główny błąd blokujący.
+
+Aktualna implementacja `Problem.to_ir()` buduje słownik z polami takimi jak:
+
+- `geometry`
+- `regions`
+- `materials`
+- `magnets`
+- `energy_terms`
+- `current_modules`
+- `study`
+- `backend_policy`
+
+ale nie dodaje top-level pól wymaganych przez backend dla STT/temperature.
+
+To znaczy, że nawet jeśli pomocnicze klasy STT istnieją, **`Problem` nie serializuje ich do formatu, który backend potrafi już zużyć**.
+
+### 3. Dokumentacja jest obecnie niespójna z implementacją
+
+Plik `docs/physics/stt_sign_conventions.md` pokazuje już użycie:
+
+```python
+stt = SlonczewskiSTT(...)
+problem = Problem(
+    ...,
+    spin_torque=stt,
+    temperature=300.0,
+)
+```
+
+To wygląda jak docelowy interfejs, ale bieżący `Problem` go jeszcze nie obsługuje.
+
+Wniosek: dokumentacja opisuje **stan planowany / częściowo wdrożony**, a nie w pełni działający stan publicznego API.
+
+### 4. `ThermalNoise` w Python DSL jest publiczne, ale ścieżka IR/planner wygląda na niedomkniętą
+
+W `energy.py` jest publiczna klasa `ThermalNoise`, która emituje:
+
+```python
+{"kind": "thermal_noise", "temperature": ..., "seed": ...}
+```
+
+Jednocześnie w sprawdzonej warstwie IR nie widać wariantu `thermal_noise` w `EnergyTermIR`, a planner FDM przenosi temperaturę z pola top-level `problem.temperature`, nie z energy termu tego typu.
+
+To jest bardzo ważna niespójność.
+
+Interpretacja robocza:
+
+- albo `ThermalNoise` jest półproduktem i nie powinno jeszcze być wystawione użytkownikowi,
+- albo trzeba dodać pełne wsparcie `thermal_noise` w IR/planner,
+- albo najprościej: w Pythonie zmapować `ThermalNoise` na top-level `temperature` i nie wysyłać go jako energy termu.
+
+Na dziś ten fragment wygląda na **nieukończony**.
+
+### 5. Eksport publicznego API jest niepełny
+
+W `packages/fullmag-py/src/fullmag/model/__init__.py` klasy STT są importowane, ale nie są dodane do `__all__`.
+
+W `packages/fullmag-py/src/fullmag/__init__.py` nie widać ich poprawnego wystawienia jako elementów top-level API.
+
+Skutek praktyczny:
+
+- nawet jeśli klasa istnieje, import publiczny może być nieintuicyjny lub niespójny,
+- ergonomia API nadal nie odpowiada dokumentacji.
+
+### 6. GUI nie wygląda jeszcze na gotowe do pełnego workflow STNO/MTJ
+
+W sprawdzonych warstwach GUI / study-builder nie znalazłem jawnej, domkniętej integracji dla:
+
+- parametrów STT,
+- top-level temperatury / thermal,
+- `OerstedCylinder`,
+- sterowania AC/DC pod STNO,
+- analizy typu FFT / PSD,
+- śledzenia orbity vortex core,
+- workflow specyficznego dla autooscylatora spin-torque.
+
+Kluczowe warstwy (`study-builder/types.ts`, `materialize.ts`, `capability-contract.ts`) nadal wyglądają na ogólne i nieskrojone pod taki przypadek.
+
+To nie znaczy, że nic nie da się zrobić w GUI, ale znaczy, że **pełny, wygodny workflow STNO nadal nie jest tam doprowadzony do końca**.
+
+### 7. Brakuje publicznego przykładu end-to-end i testu regresyjnego dla STNO/MTJ
+
+W repo nadal nie widać oczywistego, kompletnego przykładu:
+
+- nanokropka ~400 nm,
+- vortex jako stan relaksowany,
+- pobudzenie DC lub AC,
+- STT / Oersted,
+- zapis czasówek,
+- FFT / PSD,
+- identyfikacja trybu gyracyjnego i fal spinowych.
+
+Bez takiego przykładu bardzo trudno uznać wdrożenie za gotowe produkcyjnie.
+
+## Najważniejsze poprawki konieczne
+
+## 1. Domknąć publiczny interfejs `Problem`
+
+Minimalny kierunek zmian:
+
+```python
+# packages/fullmag-py/src/fullmag/model/problem.py
+
+from .spin_torque import SpinTorque
+
+@dataclass(frozen=True, slots=True)
+class Problem:
+    name: str
+    magnets: Sequence[Ferromagnet]
+    energy: Sequence[EnergyTerm]
+    study: TimeEvolution | Relaxation | Eigenmodes | None = None
+    dynamics: LLG | None = None
+    outputs: Sequence[LegacyOutputSpec] | None = None
+    discretization: DiscretizationHints | None = None
+    description: str | None = None
+    runtime: RuntimeSelection = field(default_factory=RuntimeSelection)
+    runtime_metadata: dict[str, object] = field(default_factory=dict)
+    current_modules: Sequence[CurrentModule] = ()
+    excitation_analysis: SpinWaveExcitationAnalysis | None = None
+
+    # NOWE
+    spin_torque: SpinTorque | None = None
+    temperature: float | None = None
+
+    geometry_asset_cache: dict[str, dict[str, Any] | None] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+```
+
+Dodatkowo w `__post_init__()` warto dodać walidację:
+
+```python
+if self.temperature is not None and self.temperature < 0:
+    raise ValueError("temperature must be >= 0")
+```
+
+## 2. Dodać serializację STT i temperatury w `Problem.to_ir()`
+
+Minimalna poprawka:
+
+```python
+def to_ir(...):
+    ir = {
+        "ir_version": IR_VERSION,
+        "problem_meta": {...},
+        "geometry": {"entries": [geometry.to_ir() for geometry in geometries]},
+        "geometry_assets": geometry_assets,
+        "regions": [region.to_ir() for region in regions],
+        "materials": [material.to_ir() for material in materials],
+        "magnets": magnets_ir,
+        "energy_terms": [term.to_ir() for term in self.energy],
+        "current_modules": [module.to_ir() for module in self.current_modules],
+        "excitation_analysis": self.excitation_analysis.to_ir()
+            if self.excitation_analysis is not None else None,
+        "study": self.study.to_ir(),
+        "backend_policy": {...},
+        "validation_profile": {...},
+        "elastic_materials": [em.to_ir() for em in self.elastic_materials],
+        "elastic_bodies": [eb.to_ir() for eb in self.elastic_bodies],
+        "magnetostriction_laws": [ml.to_ir() for ml in self.magnetostriction_laws],
+        "mechanical_bcs": [bc.to_ir() for bc in self.mechanical_bcs],
+        "mechanical_loads": [ml.to_ir() for ml in self.mechanical_loads],
+    }
+
+    if self.spin_torque is not None:
+        ir.update(self.spin_torque.to_ir_fields())
+
+    if self.temperature is not None:
+        ir["temperature"] = float(self.temperature)
+
+    return ir
+```
+
+To jest najważniejszy brakujący most między istniejącym backendem a publicznym API.
+
+## 3. Naprawić `ThermalNoise`
+
+Tu są sensownie dwie ścieżki.
+
+### Opcja A — szybka i praktyczna
+
+Potraktować `ThermalNoise` jako skrót składniowy i podczas serializacji **nie** wysyłać go jako energy termu, tylko przerzucać do top-level `temperature`.
+
+Przykład:
+
+```python
+thermal_terms = [term for term in self.energy if isinstance(term, ThermalNoise)]
+if len(thermal_terms) > 1:
+    raise ValueError("Only one ThermalNoise term is allowed")
+
+energy_terms = [term for term in self.energy if not isinstance(term, ThermalNoise)]
+
+if thermal_terms and self.temperature is not None:
+    raise ValueError("Use either Problem.temperature or ThermalNoise, not both")
+
+if thermal_terms:
+    ir["temperature"] = float(thermal_terms[0].temperature)
+```
+
+To pozwoli bardzo szybko odblokować publiczny workflow.
+
+### Opcja B — pełne wsparcie semantyczne
+
+Dodać wariant `thermal_noise` do `EnergyTermIR` i pełne mapowanie w plannerze / runnerze.
+
+Ta opcja jest czystsza architektonicznie, ale cięższa i mniej pilna, jeśli celem jest szybkie uruchomienie STNO.
+
+## 4. Naprawić eksporty publicznego API
+
+W `packages/fullmag-py/src/fullmag/model/__init__.py` trzeba dodać do `__all__`:
+
+```python
+"SpinTorque",
+"SlonczewskiSTT",
+"ZhangLiSTT",
+```
+
+W `packages/fullmag-py/src/fullmag/__init__.py` trzeba je także wystawić top-level, aby działało:
+
+```python
+from fullmag import SlonczewskiSTT, ZhangLiSTT
+```
+
+bez schodzenia do ścieżek wewnętrznych.
+
+## 5. Zsynchronizować dokumentację z kodem
+
+Dopóki `Problem(..., spin_torque=..., temperature=...)` nie działa naprawdę, dokumentacja nie powinna udawać, że działa.
+
+Są dwa wyjścia:
+
+- albo natychmiast domknąć implementację,
+- albo tymczasowo oznaczyć dokumentację jako `planned / in progress`.
+
+Obecny stan jest mylący dla użytkownika.
+
+## 6. Dodać smoke test i przykład end-to-end
+
+Minimalny test akceptacyjny:
+
+```python
+from fullmag import (
+    Problem, Material, Ferromagnet, Region, Cylinder,
+    Exchange, Demag, Relaxation, TimeEvolution, LLG,
+    DiscretizationHints, FDM, SlonczewskiSTT
+)
+
+mat = Material(name="Py", msat=800e3, aex=13e-12, alpha=0.01)
+geom = Cylinder(radius=200e-9, height=8e-9)
+reg = Region(name="free", geometry=geom)
+mag = Ferromagnet(name="free", region=reg, material=mat)
+
+problem = Problem(
+    name="stt_smoke",
+    magnets=[mag],
+    energy=[Exchange(), Demag()],
+    study=TimeEvolution(total_time=20e-9, dt=1e-12),
+    dynamics=LLG(alpha=0.01),
+    discretization=DiscretizationHints(fdm=FDM(default_cell=(4e-9, 4e-9, 4e-9))),
+    spin_torque=SlonczewskiSTT(
+        current_density=(0.0, 0.0, 8e10),
+        polarization=(0.0, 0.0, 1.0),
+        degree=1.0,
+        lambda_asymmetry=1.0,
+        epsilon_prime=0.0,
+    ),
+    temperature=300.0,
+)
+
+ir = problem.to_ir()
+assert "current_density" in ir
+assert "stt_degree" in ir
+assert ir["temperature"] == 300.0
+```
+
+Następnie warto dodać drugi test z `ZhangLiSTT` oraz trzeci test z `OerstedCylinder + Sinusoidal`.
+
+## 7. GUI: minimalny zakres konieczny
+
+Aby GUI było rzeczywiście użyteczne dla STNO/MTJ, trzeba dodać co najmniej:
+
+- edycję parametrów STT:
+  - typ (`Slonczewski` / `Zhang-Li`),
+  - `current_density`,
+  - `degree`,
+  - `polarization`,
+  - `lambda_asymmetry`,
+  - `epsilon_prime`,
+  - `beta`,
+- temperaturę,
+- `OerstedCylinder` z obwiedniami `Constant/Sinusoidal/Pulse`,
+- tryb czasowy z **fixed dt** pod FFT/PSD,
+- sygnały do zapisu:
+  - `m_avg(t)`,
+  - lokalne `m(r,t)`,
+  - ewentualnie pozycja rdzenia vortexu,
+- analitykę:
+  - FFT,
+  - PSD,
+  - mapa częstotliwość–amplituda,
+  - analiza zależności od prądu DC,
+  - analiza lockingu przy AC drive.
+
+Bez tego GUI pozostaje raczej ogólnym interfejsem study-builder, a nie stanowiskiem do STNO.
+
+## Rekomendacja wdrożeniowa
+
+### Priorytet P0 — blokery
+
+1. Dodać `spin_torque` i `temperature` do `Problem`.
+2. Dodać serializację tych pól w `Problem.to_ir()`.
+3. Naprawić `ThermalNoise`.
+4. Naprawić eksporty `__all__` i top-level API.
+5. Zsynchronizować dokumentację z realnym stanem kodu.
+
+### Priorytet P1 — używalność
+
+1. Dodać przykład STNO/MTJ end-to-end.
+2. Dodać smoke tests i test regresyjny.
+3. Dodać minimalne GUI dla STT/Oersted/temperature.
+
+### Priorytet P2 — pełna analiza STNO
+
+1. Dodać workflow FFT/PSD.
+2. Dodać sweep po prądzie i częstotliwości AC.
+3. Dodać śledzenie vortex core i diagnostykę orbity.
+4. Dodać eksport charakterystyk `f(I)`, linewidth, locking range.
+
+## Ocena końcowa dla Twojego celu
+
+Dla celu: **STNO (MTJ), vortex w nanokropce ~400 nm, CoFeB/NiFe, pobudzenie prądem DC lub AC, analiza modu gyracyjnego i fal spinowych** — obecny stan repo oceniam tak:
+
+- **silnik / backend**: blisko użyteczności,
+- **publiczny Python workflow**: jeszcze niedomknięty,
+- **GUI workflow**: jeszcze niegotowy,
+- **wdrożenie jako całość**: **nie, nie jest jeszcze poprawnie ukończone**.
+
+Najkrótsza uczciwa diagnoza brzmi:
+
+> Rdzeń fizyczny i wykonawczy jest już w dużej mierze przygotowany, ale warstwa publicznego API i GUI nadal nie domyka tego w pełni działający produkt do STNO/MTJ.
+
+## Sprawdzone pliki
+
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+- `packages/fullmag-py/src/fullmag/model/spin_torque.py`
+- `packages/fullmag-py/src/fullmag/model/energy.py`
+- `packages/fullmag-py/src/fullmag/model/__init__.py`
+- `packages/fullmag-py/src/fullmag/__init__.py`
+- `docs/physics/stt_sign_conventions.md`
+- `crates/fullmag-ir/src/lib.rs`
+- `crates/fullmag-plan/src/fdm.rs`
+- `crates/fullmag-runner/src/native_fdm.rs`
+- `crates/fullmag-runner/src/cpu_reference.rs`
+- `apps/web/lib/study-builder/types.ts`
+- `apps/web/lib/study-builder/materialize.ts`
+- `apps/web/lib/workspace/capability-contract.ts`
+- `examples/dw_track.py`
+

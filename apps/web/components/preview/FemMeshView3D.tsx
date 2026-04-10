@@ -1161,6 +1161,16 @@ function FemMeshView3DInner({
     airSegmentVisible &&
     airSegmentIds.size > 0 &&
     hasAirDisplayContent;
+  const baseViewStateByPartId = useMemo(() => {
+    const next = new Map<string, MeshEntityViewState>();
+    if (!hasMeshParts) {
+      return next;
+    }
+    for (const part of meshParts) {
+      next.set(part.id, meshEntityViewState[part.id] ?? defaultMeshEntityViewState(part));
+    }
+    return next;
+  }, [hasMeshParts, meshEntityViewState, meshParts]);
   
   const topologySignature = topologyKey ?? `${meshData.nNodes}:${meshData.nElements}:${meshData.boundaryFaces.length}`;
   const toolbarStylePartIds = useMemo(() => {
@@ -1172,6 +1182,10 @@ function FemMeshView3DInner({
     // for render/color controls in context mode.
     return visibleLayers.map((layer) => layer.part.id);
   }, [hasMeshParts, visibleLayers]);
+  const toolbarStylePartIdSet = useMemo(
+    () => new Set(toolbarStylePartIds),
+    [toolbarStylePartIds],
+  );
   const toolbarColorPartIds = useMemo(() => {
     if (!hasMeshParts) {
       return [] as string[];
@@ -1179,46 +1193,67 @@ function FemMeshView3DInner({
     const magneticIds = visibleLayers
       .filter(
         (layer) =>
-          toolbarStylePartIds.includes(layer.part.id) && layer.part.role === "magnetic_object",
+          toolbarStylePartIdSet.has(layer.part.id) && layer.part.role === "magnetic_object",
       )
       .map((layer) => layer.part.id);
     if (magneticIds.length > 0) {
       return magneticIds;
     }
     const nonAirIds = visibleLayers
-      .filter((layer) => toolbarStylePartIds.includes(layer.part.id) && layer.part.role !== "air")
+      .filter((layer) => toolbarStylePartIdSet.has(layer.part.id) && layer.part.role !== "air")
       .map((layer) => layer.part.id);
     return nonAirIds.length > 0 ? nonAirIds : toolbarStylePartIds;
-  }, [hasMeshParts, toolbarStylePartIds, visibleLayers]);
+  }, [hasMeshParts, toolbarStylePartIdSet, toolbarStylePartIds, visibleLayers]);
   const toolbarRenderMode = useMemo(() => {
     if (!hasMeshParts || toolbarStylePartIds.length === 0) {
       return renderMode;
     }
-    const targetLayers = visibleLayers.filter((layer) => toolbarStylePartIds.includes(layer.part.id));
-    const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.renderMode)));
+    const values = Array.from(
+      new Set(
+        toolbarStylePartIds
+          .map((partId) => baseViewStateByPartId.get(partId)?.renderMode)
+          .filter((value): value is RenderMode => Boolean(value)),
+      ),
+    );
     if (values.length === 1) {
       return values[0] ?? renderMode;
     }
     return renderMode;
-  }, [hasMeshParts, renderMode, toolbarStylePartIds, visibleLayers]);
-  const toolbarOpacity = useMemo(() => {
+  }, [baseViewStateByPartId, hasMeshParts, renderMode, toolbarStylePartIds]);
+  const toolbarRepresentativePartId = useMemo(() => {
     if (!hasMeshParts || toolbarStylePartIds.length === 0) {
+      return null;
+    }
+    const targetLayers = visibleLayers.filter((layer) => toolbarStylePartIdSet.has(layer.part.id));
+    const magneticId = targetLayers.find((layer) => layer.part.role === "magnetic_object")?.part.id;
+    if (magneticId) {
+      return magneticId;
+    }
+    const nonAirId = targetLayers.find((layer) => layer.part.role !== "air")?.part.id;
+    return nonAirId ?? targetLayers[0]?.part.id ?? null;
+  }, [hasMeshParts, toolbarStylePartIdSet, toolbarStylePartIds.length, visibleLayers]);
+  const toolbarOpacity = useMemo(() => {
+    if (!hasMeshParts || !toolbarRepresentativePartId) {
       return opacity;
     }
-    const targetLayer = visibleLayers.find((layer) => toolbarStylePartIds.includes(layer.part.id));
-    return targetLayer?.viewState.opacity ?? opacity;
-  }, [hasMeshParts, opacity, toolbarStylePartIds, visibleLayers]);
+    return baseViewStateByPartId.get(toolbarRepresentativePartId)?.opacity ?? opacity;
+  }, [baseViewStateByPartId, hasMeshParts, opacity, toolbarRepresentativePartId]);
   const toolbarColorField = useMemo(() => {
     if (!hasMeshParts || toolbarColorPartIds.length === 0) {
       return field;
     }
-    const targetLayers = visibleLayers.filter((layer) => toolbarColorPartIds.includes(layer.part.id));
-    const values = Array.from(new Set(targetLayers.map((layer) => layer.viewState.colorField)));
+    const values = Array.from(
+      new Set(
+        toolbarColorPartIds
+          .map((partId) => baseViewStateByPartId.get(partId)?.colorField)
+          .filter((value): value is FemColorField => Boolean(value)),
+      ),
+    );
     if (values.length === 1) {
       return values[0] ?? field;
     }
     return field;
-  }, [field, hasMeshParts, toolbarColorPartIds, visibleLayers]);
+  }, [baseViewStateByPartId, field, hasMeshParts, toolbarColorPartIds]);
   const prominentQuantityOptions = useMemo(
     () => quantityOptions.filter((option) => option.available),
     [quantityOptions],
@@ -1231,9 +1266,23 @@ function FemMeshView3DInner({
         ? (arrowColorMode as FemColorField)
         : "orientation";
   const legendField = hasMeshParts
-    ? (visibleLayers.find((layer) => layer.isSelected)?.viewState.colorField
-      ?? visibleLayers.find((layer) => layer.isMagnetic)?.viewState.colorField
-      ?? toolbarColorField)
+    ? (() => {
+      const selectedPartId = visibleLayers.find((layer) => layer.isSelected)?.part.id ?? null;
+      if (selectedPartId) {
+        const selectedField = baseViewStateByPartId.get(selectedPartId)?.colorField;
+        if (selectedField) {
+          return selectedField;
+        }
+      }
+      const magneticPartId = visibleLayers.find((layer) => layer.isMagnetic)?.part.id ?? null;
+      if (magneticPartId) {
+        const magneticField = baseViewStateByPartId.get(magneticPartId)?.colorField;
+        if (magneticField) {
+          return magneticField;
+        }
+      }
+      return toolbarColorField;
+    })()
     : toolbarColorField;
   const effectiveShowArrows =
     showArrows &&
@@ -1382,7 +1431,16 @@ function FemMeshView3DInner({
       dynamicGeomSize: [sx, sy, sz] as [number, number, number],
       dynamicMaxDim: Math.max(sx, sy, sz)
     };
-  }, [hasMeshParts, visibleLayers, shouldRenderAirGeometry, shouldRenderMagneticGeometryResolved, airBoundaryFaceIndices, magneticBoundaryFaceIndices, meshData]);
+  }, [
+    airBoundaryFaceIndices,
+    hasMeshParts,
+    magneticBoundaryFaceIndices,
+    meshData.boundaryFaces,
+    meshData.nodes,
+    shouldRenderAirGeometry,
+    shouldRenderMagneticGeometryResolved,
+    visibleLayers,
+  ]);
 
   const resolvedWorldTextureTransform = useMemo(() => {
     if (!activeTextureTransform) {
