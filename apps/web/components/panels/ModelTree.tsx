@@ -1301,10 +1301,16 @@ function _buildObjectNode(objectNode: {
       _buildObjectPhysicsNode(geo, objectNode.name),
       {
         id: `mag-${objectNode.name}`,
-        label: "Magnetization",
+        label:
+          geo.magnetization.kind === "preset_texture"
+            ? `Magnetization — ${_magnetizationLabel(geo.magnetization)}`
+            : "Magnetization",
         icon: "🧭",
         status: "ready",
-        badge: geo.magnetization.kind,
+        badge:
+          geo.magnetization.kind === "preset_texture"
+            ? geo.magnetization.preset_kind ?? "preset"
+            : geo.magnetization.kind,
         children: [
           {
             id: `mag-${objectNode.name}-kind`,
@@ -1469,7 +1475,10 @@ function _buildRegionNode(
         id: `${regionId}-item`,
         label: regionName,
         icon: "◫",
-        badge: geo.magnetization.kind,
+        badge:
+          geo.magnetization.kind === "preset_texture"
+            ? geo.magnetization.preset_kind ?? "preset"
+            : geo.magnetization.kind,
         status: "ready",
         children: [
           {
@@ -1478,6 +1487,16 @@ function _buildRegionNode(
             icon: "🧭",
             status: "ready",
           },
+          ...(geo.magnetization.kind === "preset_texture"
+            ? [
+                {
+                  id: `${regionId}-texture-transform`,
+                  label: "Texture Transform",
+                  icon: "⟳",
+                  status: "ready" as const,
+                },
+              ]
+            : []),
         ],
       },
     ],
@@ -1543,6 +1562,9 @@ function _buildMaterialNode(
 function _magnetizationLabel(
   mag: ScriptBuilderMagnetizationEntry,
 ): string {
+  if (mag.kind === "preset_texture") {
+    return mag.ui_label ?? mag.preset_kind ?? "preset_texture";
+  }
   if (mag.kind === "uniform" && mag.value) {
     return `(${mag.value.map((v) => v.toFixed(2)).join(", ")})`;
   }

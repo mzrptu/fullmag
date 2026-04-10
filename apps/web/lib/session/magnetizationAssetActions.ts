@@ -25,13 +25,47 @@ export function patchMagnetizationAsset(
 export function assignMagneticPreset(
   scene: SceneDocument,
   assetId: string,
-  descriptor: MagneticPresetDescriptor
+  descriptor: MagneticPresetDescriptor,
+  options?: {
+    objectId?: string;
+    fitToObjectOnFirstAssign?: boolean;
+  },
 ): SceneDocument {
-  return patchMagnetizationAsset(scene, assetId, {
+  const existing = scene.magnetization_assets.find((asset) => asset.id === assetId);
+  let next = patchMagnetizationAsset(scene, assetId, {
+    kind: "preset_texture",
+    value: null,
+    seed: null,
+    source_path: null,
+    source_format: null,
+    dataset: null,
+    sample_index: null,
     preset_kind: descriptor.kind,
     preset_params: descriptor.defaultParams ? structuredClone(descriptor.defaultParams) : {},
+    preset_version: 1,
+    mapping: existing?.mapping ?? {
+      space: "object",
+      projection: "object_local",
+      clamp_mode: "clamp",
+    },
+    texture_transform: existing?.texture_transform ?? {
+      translation: [0, 0, 0],
+      rotation_quat: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+      pivot: [0, 0, 0],
+    },
     ui_label: descriptor.label,
   });
+
+  const shouldFit =
+    options?.fitToObjectOnFirstAssign !== false &&
+    Boolean(options?.objectId) &&
+    descriptor.kind !== "uniform" &&
+    existing?.kind !== "preset_texture";
+  if (shouldFit) {
+    next = fitTextureToObject(next, options!.objectId!, assetId);
+  }
+  return next;
 }
 
 export function resetMagneticPresetParams(

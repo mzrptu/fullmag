@@ -8,6 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::util::{generate_random_unit_vectors, study_universe_metadata, StudyUniverseMetadata};
+use crate::magnetization_textures::{sample_preset_texture, TextureSamplePoint};
 
 pub(crate) const AIR_OBJECT_SEGMENT_ID: &str = "__air__";
 
@@ -130,6 +131,8 @@ pub(crate) fn initial_vectors_for_magnet(
     mesh_name: &str,
     initial: Option<&InitialMagnetizationIR>,
     n_nodes: usize,
+    sample_points_world: Option<&[[f64; 3]]>,
+    sample_points_object: Option<&[[f64; 3]]>,
 ) -> Result<Vec<[f64; 3]>, String> {
     Ok(match initial {
         Some(InitialMagnetizationIR::Uniform { value }) => vec![*value; n_nodes],
@@ -148,11 +151,49 @@ pub(crate) fn initial_vectors_for_magnet(
             }
             values.clone()
         }
-        Some(InitialMagnetizationIR::PresetTexture { preset_kind, .. }) => {
-            return Err(format!(
-                "magnet '{}' uses preset_texture '{}' but FEM planner still requires runtime pre-sampling to sampled_field vectors for mesh '{}'",
-                magnet_name, preset_kind, mesh_name
-            ));
+        Some(InitialMagnetizationIR::PresetTexture {
+            preset_kind,
+            params,
+            mapping,
+            texture_transform,
+        }) => {
+            let world = sample_points_world.ok_or_else(|| {
+                format!(
+                    "magnet '{}' uses preset_texture '{}' but planner was not given sample points for mesh '{}'",
+                    magnet_name, preset_kind, mesh_name
+                )
+            })?;
+            if world.len() != n_nodes {
+                return Err(format!(
+                    "magnet '{}' preset_texture '{}' expected {} sample points for mesh '{}', got {}",
+                    magnet_name,
+                    preset_kind,
+                    n_nodes,
+                    mesh_name,
+                    world.len()
+                ));
+            }
+            let object = sample_points_object.unwrap_or(world);
+            if object.len() != n_nodes {
+                return Err(format!(
+                    "magnet '{}' preset_texture '{}' expected {} object-space points for mesh '{}', got {}",
+                    magnet_name,
+                    preset_kind,
+                    n_nodes,
+                    mesh_name,
+                    object.len()
+                ));
+            }
+            let points = world
+                .iter()
+                .zip(object.iter())
+                .map(|(w, o)| TextureSamplePoint {
+                    position_world: *w,
+                    position_object: *o,
+                    active: true,
+                })
+                .collect::<Vec<_>>();
+            sample_preset_texture(preset_kind, params, mapping, texture_transform, &points)?
         }
         None => vec![[1.0, 0.0, 0.0]; n_nodes],
     })

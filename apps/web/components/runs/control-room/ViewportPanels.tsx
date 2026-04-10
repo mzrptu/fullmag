@@ -734,6 +734,8 @@ export function ViewportCanvasArea() {
         arrowAlpha={ctx.femArrowAlpha}
         arrowLengthScale={ctx.femArrowLengthScale}
         arrowThickness={ctx.femArrowThickness}
+        vectorDomainFilter={ctx.femVectorDomainFilter}
+        ferromagnetVisibilityMode={ctx.femFerromagnetVisibilityMode}
         previewMaxPoints={ctx.requestedPreviewMaxPoints}
         onRenderModeChange={ctx.setMeshRenderMode}
         onOpacityChange={ctx.setMeshOpacity}
@@ -746,6 +748,8 @@ export function ViewportCanvasArea() {
         onArrowAlphaChange={ctx.setFemArrowAlpha}
         onArrowLengthScaleChange={ctx.setFemArrowLengthScale}
         onArrowThicknessChange={ctx.setFemArrowThickness}
+        onVectorDomainFilterChange={ctx.setFemVectorDomainFilter}
+        onFerromagnetVisibilityModeChange={ctx.setFemFerromagnetVisibilityMode}
         onPreviewMaxPointsChange={(nextMaxPoints) =>
           void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints })
         }

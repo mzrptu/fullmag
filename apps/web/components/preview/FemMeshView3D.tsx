@@ -73,6 +73,8 @@ export type FemColorField = "orientation" | "x" | "y" | "z" | "magnitude" | "qua
 export type FemArrowColorMode = "orientation" | "x" | "y" | "z" | "magnitude" | "monochrome";
 export type RenderMode = "surface" | "surface+edges" | "wireframe" | "points";
 export type ClipAxis = "x" | "y" | "z";
+export type FemVectorDomainFilter = "auto" | "magnetic_only" | "full_domain" | "airbox_only";
+export type FemFerromagnetVisibilityMode = "hide" | "ghost";
 
 /* ── Opacity constants (extracted from hardcoded values) ── */
 const DIMMED_MIN_MAGNETIC = 14;
@@ -105,6 +107,8 @@ interface Props {
   arrowAlpha?: number;
   arrowLengthScale?: number;
   arrowThickness?: number;
+  vectorDomainFilter?: FemVectorDomainFilter;
+  ferromagnetVisibilityMode?: FemFerromagnetVisibilityMode;
   previewMaxPoints?: number;
   showOrientationLegend?: boolean;
   qualityPerFace?: number[] | null;
@@ -120,6 +124,8 @@ interface Props {
   onArrowAlphaChange?: (value: number) => void;
   onArrowLengthScaleChange?: (value: number) => void;
   onArrowThicknessChange?: (value: number) => void;
+  onVectorDomainFilterChange?: (value: FemVectorDomainFilter) => void;
+  onFerromagnetVisibilityModeChange?: (value: FemFerromagnetVisibilityMode) => void;
   onPreviewMaxPointsChange?: (maxPoints: number) => void;
   onShrinkFactorChange?: (value: number) => void;
   onSelectionChange?: (selection: MeshSelectionSnapshot) => void;
@@ -494,6 +500,8 @@ function FemMeshView3DInner({
   arrowAlpha: controlledArrowAlpha,
   arrowLengthScale: controlledArrowLengthScale,
   arrowThickness: controlledArrowThickness,
+  vectorDomainFilter: controlledVectorDomainFilter,
+  ferromagnetVisibilityMode: controlledFerromagnetVisibilityMode,
   previewMaxPoints,
   showOrientationLegend = false,
   qualityPerFace,
@@ -510,6 +518,8 @@ function FemMeshView3DInner({
   onArrowAlphaChange,
   onArrowLengthScaleChange,
   onArrowThicknessChange,
+  onVectorDomainFilterChange,
+  onFerromagnetVisibilityModeChange,
   onPreviewMaxPointsChange,
   onShrinkFactorChange,
   onSelectionChange,
@@ -553,6 +563,10 @@ function FemMeshView3DInner({
   const [internalArrowAlpha, setInternalArrowAlpha] = useState(1);
   const [internalArrowLengthScale, setInternalArrowLengthScale] = useState(1);
   const [internalArrowThickness, setInternalArrowThickness] = useState(1);
+  const [internalVectorDomainFilter, setInternalVectorDomainFilter] =
+    useState<FemVectorDomainFilter>("auto");
+  const [internalFerromagnetVisibilityMode, setInternalFerromagnetVisibilityMode] =
+    useState<FemFerromagnetVisibilityMode>("hide");
   const [internalOpacity, setInternalOpacity] = useState(100);
   const [internalClipEnabled, setInternalClipEnabled] = useState(false);
   const [internalClipAxis, setInternalClipAxis] = useState<ClipAxis>("x");
@@ -600,6 +614,9 @@ function FemMeshView3DInner({
   const arrowAlpha = controlledArrowAlpha ?? internalArrowAlpha;
   const arrowLengthScale = controlledArrowLengthScale ?? internalArrowLengthScale;
   const arrowThickness = controlledArrowThickness ?? internalArrowThickness;
+  const vectorDomainFilter = controlledVectorDomainFilter ?? internalVectorDomainFilter;
+  const ferromagnetVisibilityMode =
+    controlledFerromagnetVisibilityMode ?? internalFerromagnetVisibilityMode;
   const resolvedPreviewMaxPoints = previewMaxPoints ?? internalPreviewMaxPoints;
   const shrinkFactor = controlledShrinkFactor ?? internalShrinkFactor;
   const updateSharedPreviewMaxPoints = useCallback((nextMaxPoints: number) => {
@@ -627,6 +644,11 @@ function FemMeshView3DInner({
         : new Set<string>(),
     [airSegmentVisible],
   );
+  const supportsAirboxOnlyVectors = meshData.quantityDomain === "full_domain";
+  const effectiveVectorDomainFilter: FemVectorDomainFilter =
+    vectorDomainFilter === "airbox_only" && !supportsAirboxOnlyVectors
+      ? "auto"
+      : vectorDomainFilter;
   const partRenderDataById = useMemo(() => {
     const cache = new Map<
       string,
@@ -692,6 +714,11 @@ function FemMeshView3DInner({
             ? Math.max(baseViewState.opacity, part.role === "air" ? SELECTED_LIFT_AIR : SELECTED_LIFT_MAGNETIC)
             : baseViewState.opacity,
       };
+      const isAirboxOnly = effectiveVectorDomainFilter === "airbox_only";
+      const magneticHiddenInAirboxOnly =
+        isAirboxOnly &&
+        part.role === "magnetic_object" &&
+        ferromagnetVisibilityMode === "hide";
       // Selection should force-show the part when explicitly selected,
       // including air/boundary — but the "Show Airbox Mesh" toggle is respected
       // when the selection comes indirectly from selecting a magnetic object.
@@ -706,13 +733,24 @@ function FemMeshView3DInner({
         objectViewMode === "isolate" && hasSelection
           ? isSelected && (viewState.visible || selectionKeepsVisible)
           : (viewState.visible || selectionKeepsVisible);
-      if (!visibleForMode) {
+      if (!visibleForMode || magneticHiddenInAirboxOnly) {
         continue;
       }
+      const resolvedViewState: MeshEntityViewState =
+        isAirboxOnly &&
+        part.role === "magnetic_object" &&
+        ferromagnetVisibilityMode === "ghost"
+          ? {
+              ...viewState,
+              opacity: Math.min(viewState.opacity, 22),
+              renderMode: viewState.renderMode === "points" ? "wireframe" : viewState.renderMode,
+              colorField: "none",
+            }
+          : viewState;
       const partRenderData = partRenderDataById.get(part.id);
       layers.push({
         part,
-        viewState,
+        viewState: resolvedViewState,
         boundaryFaceIndices: partRenderData?.boundaryFaceIndices ?? null,
         elementIndices: partRenderData?.elementIndices ?? null,
         nodeMask: partRenderData?.nodeMask ?? null,
@@ -723,8 +761,14 @@ function FemMeshView3DInner({
         isMagnetic: part.role === "magnetic_object",
         isSelected,
         isDimmed,
-        meshColor: partMeshTint(part),
-        edgeColor: partEdgeTint(part, isSelected, isDimmed),
+        meshColor:
+          isAirboxOnly && part.role === "magnetic_object" && ferromagnetVisibilityMode === "ghost"
+            ? "#94a3b8"
+            : partMeshTint(part),
+        edgeColor:
+          isAirboxOnly && part.role === "magnetic_object" && ferromagnetVisibilityMode === "ghost"
+            ? "#cbd5e1"
+            : partEdgeTint(part, isSelected, isDimmed),
       });
     }
     if (layers.length > 0 && !layers.some((layer) => layer.isPrimaryForCamera)) {
@@ -733,6 +777,8 @@ function FemMeshView3DInner({
     return layers;
   }, [
     airSegmentVisible,
+    effectiveVectorDomainFilter,
+    ferromagnetVisibilityMode,
     focusedEntityId,
     hasMeshParts,
     meshEntityViewState,
@@ -959,12 +1005,57 @@ function FemMeshView3DInner({
     }
     return sawExplicitMask ? combined : new Array<boolean>(meshData.nNodes).fill(true);
   }, [hasMeshParts, meshData.nNodes, meshData.quantityDomain, visibleLayers]);
-  const arrowActiveNodeMask =
-    meshData.quantityDomain === "full_domain"
-      ? fullDomainArrowNodeMask
-      : magneticArrowNodeMask;
-  const arrowBoundaryFaceIndices =
-    meshData.quantityDomain === "full_domain" ? null : magneticBoundaryFaceIndices;
+  const airArrowNodeMask = useMemo(() => {
+    if (hasMeshParts) {
+      const airLayers = visibleLayers.filter((layer) => layer.part.role === "air");
+      if (airLayers.length === 0) {
+        return new Array<boolean>(meshData.nNodes).fill(false);
+      }
+      const combined = new Array<boolean>(meshData.nNodes).fill(false);
+      for (const layer of airLayers) {
+        const nodeMask = layer.nodeMask;
+        if (!nodeMask) {
+          continue;
+        }
+        for (let index = 0; index < nodeMask.length; index += 1) {
+          combined[index] = combined[index] || nodeMask[index];
+        }
+      }
+      return combined;
+    }
+    const nodeMask = collectSegmentNodeMask(objectSegments, meshData.nNodes, airSegmentIds);
+    return nodeMask ?? new Array<boolean>(meshData.nNodes).fill(false);
+  }, [airSegmentIds, hasMeshParts, meshData.nNodes, objectSegments, visibleLayers]);
+  const resolvedVectorDomain: "magnetic_only" | "full_domain" | "airbox_only" = useMemo(() => {
+    if (effectiveVectorDomainFilter === "airbox_only") {
+      return "airbox_only";
+    }
+    if (effectiveVectorDomainFilter === "full_domain") {
+      return "full_domain";
+    }
+    if (effectiveVectorDomainFilter === "magnetic_only") {
+      return "magnetic_only";
+    }
+    return meshData.quantityDomain === "full_domain" ? "full_domain" : "magnetic_only";
+  }, [effectiveVectorDomainFilter, meshData.quantityDomain]);
+  const arrowActiveNodeMask = useMemo(() => {
+    if (resolvedVectorDomain === "full_domain") {
+      return fullDomainArrowNodeMask;
+    }
+    if (resolvedVectorDomain === "airbox_only") {
+      return airArrowNodeMask;
+    }
+    return magneticArrowNodeMask;
+  }, [airArrowNodeMask, fullDomainArrowNodeMask, magneticArrowNodeMask, resolvedVectorDomain]);
+  const arrowBoundaryFaceIndices = useMemo(() => {
+    if (resolvedVectorDomain === "full_domain") {
+      return null;
+    }
+    if (resolvedVectorDomain === "airbox_only") {
+      return airBoundaryFaceIndices;
+    }
+    return magneticBoundaryFaceIndices;
+  }, [airBoundaryFaceIndices, magneticBoundaryFaceIndices, resolvedVectorDomain]);
   const baseArrowDensity = useMemo(
     () => maxPointsToGlyphBudget(resolvedPreviewMaxPoints),
     [resolvedPreviewMaxPoints],
@@ -973,7 +1064,7 @@ function FemMeshView3DInner({
     if (meshData.nNodes <= 0) {
       return 0;
     }
-    if (meshData.quantityDomain === "full_domain") {
+    if (resolvedVectorDomain === "full_domain") {
       return meshData.nNodes;
     }
     if (meshData.activeMask && meshData.activeMask.length === meshData.nNodes) {
@@ -981,7 +1072,7 @@ function FemMeshView3DInner({
       return count > 0 ? count : meshData.nNodes;
     }
     return meshData.nNodes;
-  }, [meshData.activeMask, meshData.nNodes, meshData.quantityDomain]);
+  }, [meshData.activeMask, meshData.nNodes, resolvedVectorDomain]);
   const visibleArrowNodeCount = useMemo(() => {
     if (
       arrowActiveNodeMask &&
@@ -1058,9 +1149,15 @@ function FemMeshView3DInner({
     !missingExactScopeSegment &&
     (selectedObjectId != null || visibleMagneticIds.size > 0) &&
     hasMagneticDisplayContent;
+  const shouldRenderMagneticGeometryResolved =
+    shouldRenderMagneticGeometry &&
+    !(
+      effectiveVectorDomainFilter === "airbox_only" &&
+      ferromagnetVisibilityMode === "hide"
+    );
   const shouldRenderAirGeometry =
     !hasMeshParts &&
-    !selectedObjectId &&
+    (!selectedObjectId || effectiveVectorDomainFilter === "airbox_only") &&
     airSegmentVisible &&
     airSegmentIds.size > 0 &&
     hasAirDisplayContent;
@@ -1141,9 +1238,7 @@ function FemMeshView3DInner({
   const effectiveShowArrows =
     showArrows &&
     !missingMagneticMask &&
-    (hasMeshParts
-      ? visibleLayers.some((layer) => layer.isMagnetic)
-      : shouldRenderMagneticGeometry);
+    visibleArrowNodeCount > 0;
   const fieldMagnitudeStats = useMemo(() => {
     if ((legendField === "quality" || legendField === "sicn") && qualityPerFace && qualityPerFace.length > 0) {
       const values = qualityPerFace.filter((value) => Number.isFinite(value));
@@ -1275,7 +1370,7 @@ function FemMeshView3DInner({
       }
     } else {
       if (shouldRenderAirGeometry) tryAddFaceIndices(airBoundaryFaceIndices);
-      if (shouldRenderMagneticGeometry) tryAddFaceIndices(magneticBoundaryFaceIndices);
+      if (shouldRenderMagneticGeometryResolved) tryAddFaceIndices(magneticBoundaryFaceIndices);
     }
     
     if (minX === Infinity) {
@@ -1287,7 +1382,7 @@ function FemMeshView3DInner({
       dynamicGeomSize: [sx, sy, sz] as [number, number, number],
       dynamicMaxDim: Math.max(sx, sy, sz)
     };
-  }, [hasMeshParts, visibleLayers, shouldRenderAirGeometry, shouldRenderMagneticGeometry, airBoundaryFaceIndices, magneticBoundaryFaceIndices, meshData]);
+  }, [hasMeshParts, visibleLayers, shouldRenderAirGeometry, shouldRenderMagneticGeometryResolved, airBoundaryFaceIndices, magneticBoundaryFaceIndices, meshData]);
 
   const resolvedWorldTextureTransform = useMemo(() => {
     if (!activeTextureTransform) {
@@ -1557,6 +1652,9 @@ function FemMeshView3DInner({
             arrowsVisible={showArrows}
             arrowDensity={baseArrowDensity}
             effectiveArrowDensity={effectiveArrowDensity}
+            vectorDomainFilter={effectiveVectorDomainFilter}
+            supportsAirboxOnlyVectors={supportsAirboxOnlyVectors}
+            ferromagnetVisibilityMode={ferromagnetVisibilityMode}
             opacity={toolbarOpacity}
             shrinkFactor={shrinkFactor}
             showShrink={meshData.elements.length >= 4}
@@ -1639,6 +1737,20 @@ function FemMeshView3DInner({
             }}
             onArrowDensityChange={(nextBudget) => {
               updateSharedPreviewMaxPoints(glyphBudgetToMaxPoints(nextBudget));
+            }}
+            onVectorDomainFilterChange={(next) => {
+              if (onVectorDomainFilterChange) {
+                onVectorDomainFilterChange(next);
+              } else {
+                setInternalVectorDomainFilter(next);
+              }
+            }}
+            onFerromagnetVisibilityModeChange={(next) => {
+              if (onFerromagnetVisibilityModeChange) {
+                onFerromagnetVisibilityModeChange(next);
+              } else {
+                setInternalFerromagnetVisibilityMode(next);
+              }
             }}
             onOpacityChange={applyToolbarOpacity}
             onShrinkFactorChange={(v) => {
@@ -1882,11 +1994,13 @@ function FemMeshView3DInner({
     onArrowLengthScaleChange,
     onArrowMonoColorChange,
     onArrowThicknessChange,
+    onFerromagnetVisibilityModeChange,
     onEntityFocus,
     onQuantityChange,
     onRefine,
     onShowArrowsChange,
     onShrinkFactorChange,
+    onVectorDomainFilterChange,
     openPopover,
     partExplorerGroups,
     partExplorerOpen,
@@ -1902,11 +2016,14 @@ function FemMeshView3DInner({
     setCameraPreset,
     shrinkFactor,
     showArrows,
+    supportsAirboxOnlyVectors,
     takeScreenshot,
     toolbarColorField,
     toolbarMode,
     toolbarOpacity,
     toolbarRenderMode,
+    effectiveVectorDomainFilter,
+    ferromagnetVisibilityMode,
     updateSharedPreviewMaxPoints,
     viewCubeSceneRef,
     visibleLayers.length,
@@ -1948,7 +2065,12 @@ function FemMeshView3DInner({
             airBoundaryFaceIndices={airBoundaryFaceIndices}
             airElementIndices={airElementIndices}
             airSegmentOpacity={airSegmentOpacity}
-            shouldRenderMagneticGeometry={shouldRenderMagneticGeometry}
+            shouldRenderMagneticGeometry={shouldRenderMagneticGeometryResolved}
+            magneticVisibilityMode={
+              effectiveVectorDomainFilter === "airbox_only"
+                ? ferromagnetVisibilityMode
+                : "ghost"
+            }
             field={field}
             renderMode={runtimeRenderMode}
             effectiveOpacity={effectiveOpacity}

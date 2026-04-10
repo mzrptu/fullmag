@@ -858,6 +858,12 @@ export type VisualizationArrowColorMode =
   | "z"
   | "magnitude"
   | "monochrome";
+export type FemVectorDomainFilter =
+  | "auto"
+  | "magnetic_only"
+  | "full_domain"
+  | "airbox_only";
+export type FemFerromagnetVisibilityMode = "hide" | "ghost";
 
 export interface VisualizationCameraState {
   projection: "perspective" | "orthographic" | null;
@@ -879,6 +885,8 @@ export interface VisualizationPresetFemState {
   arrow_length_scale: number;
   arrow_thickness: number;
   object_view_mode: "context" | "isolate";
+  vector_domain_filter: FemVectorDomainFilter;
+  ferromagnet_visibility_mode: FemFerromagnetVisibilityMode;
   air_mesh_visible: boolean;
   air_mesh_opacity: number;
   mesh_entity_view_state: Record<string, SceneEditorMeshEntityViewState>;
@@ -930,6 +938,8 @@ export interface SceneEditorState {
   selected_entity_id: string | null;
   focused_entity_id: string | null;
   object_view_mode: "context" | "isolate" | null;
+  vector_domain_filter: FemVectorDomainFilter | null;
+  ferromagnet_visibility_mode: FemFerromagnetVisibilityMode | null;
   air_mesh_visible: boolean | null;
   air_mesh_opacity: number | null;
   mesh_entity_view_state: Record<string, SceneEditorMeshEntityViewState>;

@@ -44,6 +44,9 @@ export interface FemViewportToolbarProps {
   arrowsVisible: boolean;
   arrowDensity: number;
   effectiveArrowDensity?: number;
+  vectorDomainFilter: "auto" | "magnetic_only" | "full_domain" | "airbox_only";
+  supportsAirboxOnlyVectors: boolean;
+  ferromagnetVisibilityMode: "hide" | "ghost";
   opacity: number;
   shrinkFactor: number;
   showShrink: boolean;
@@ -71,6 +74,10 @@ export interface FemViewportToolbarProps {
   onClipPosChange: (value: number) => void;
   onArrowsVisibleChange: (value: boolean) => void;
   onArrowDensityChange: (value: number) => void;
+  onVectorDomainFilterChange: (
+    value: "auto" | "magnetic_only" | "full_domain" | "airbox_only",
+  ) => void;
+  onFerromagnetVisibilityModeChange: (value: "hide" | "ghost") => void;
   onOpacityChange: (value: number) => void;
   onShrinkFactorChange: (value: number) => void;
   onLabeledModeChange: (value: boolean) => void;
@@ -139,6 +146,9 @@ export function FemViewportToolbar({
   arrowsVisible,
   arrowDensity,
   effectiveArrowDensity,
+  vectorDomainFilter,
+  supportsAirboxOnlyVectors,
+  ferromagnetVisibilityMode,
   opacity,
   shrinkFactor,
   showShrink,
@@ -166,6 +176,8 @@ export function FemViewportToolbar({
   onClipPosChange,
   onArrowsVisibleChange,
   onArrowDensityChange,
+  onVectorDomainFilterChange,
+  onFerromagnetVisibilityModeChange,
   onOpacityChange,
   onShrinkFactorChange,
   onLabeledModeChange,
@@ -458,6 +470,64 @@ export function FemViewportToolbar({
                   onChange={(e) => onArrowDensityChange(Number(e.target.value))}
                 />
               </ViewportPopoverRow>
+              <ViewportPopoverRow label="Domain">
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    className={POPOVER_OPTION_CLASSNAME}
+                    data-active={vectorDomainFilter === "auto"}
+                    onClick={() => onVectorDomainFilterChange("auto")}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    className={POPOVER_OPTION_CLASSNAME}
+                    data-active={vectorDomainFilter === "magnetic_only"}
+                    onClick={() => onVectorDomainFilterChange("magnetic_only")}
+                  >
+                    Magnetic
+                  </button>
+                  <button
+                    className={POPOVER_OPTION_CLASSNAME}
+                    data-active={vectorDomainFilter === "full_domain"}
+                    onClick={() => onVectorDomainFilterChange("full_domain")}
+                  >
+                    Full
+                  </button>
+                  <button
+                    className={POPOVER_OPTION_CLASSNAME}
+                    data-active={vectorDomainFilter === "airbox_only"}
+                    onClick={() => onVectorDomainFilterChange("airbox_only")}
+                    disabled={!supportsAirboxOnlyVectors}
+                    title={
+                      supportsAirboxOnlyVectors
+                        ? "Render vectors only in airbox nodes"
+                        : "Unavailable for magnetic-only quantities"
+                    }
+                  >
+                    Airbox
+                  </button>
+                </div>
+              </ViewportPopoverRow>
+              {vectorDomainFilter === "airbox_only" ? (
+                <ViewportPopoverRow label="Ferro">
+                  <div className="flex gap-1">
+                    <button
+                      className={POPOVER_OPTION_CLASSNAME}
+                      data-active={ferromagnetVisibilityMode === "hide"}
+                      onClick={() => onFerromagnetVisibilityModeChange("hide")}
+                    >
+                      Hide
+                    </button>
+                    <button
+                      className={POPOVER_OPTION_CLASSNAME}
+                      data-active={ferromagnetVisibilityMode === "ghost"}
+                      onClick={() => onFerromagnetVisibilityModeChange("ghost")}
+                    >
+                      Ghost
+                    </button>
+                  </div>
+                </ViewportPopoverRow>
+              ) : null}
               {arrowColorMode === "monochrome" ? (
                 <ViewportPopoverRow label="Color">
                   <div className="flex items-center gap-2">

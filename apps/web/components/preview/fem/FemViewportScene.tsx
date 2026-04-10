@@ -137,6 +137,7 @@ export function FemViewportScene({
   airElementIndices,
   airSegmentOpacity,
   shouldRenderMagneticGeometry,
+  magneticVisibilityMode,
   field,
   renderMode,
   effectiveOpacity,
@@ -183,6 +184,7 @@ export function FemViewportScene({
   airElementIndices: number[] | null;
   airSegmentOpacity: number;
   shouldRenderMagneticGeometry: boolean;
+  magneticVisibilityMode: "hide" | "ghost";
   field: FemColorField;
   renderMode: RenderMode;
   effectiveOpacity: number;
@@ -288,9 +290,11 @@ export function FemViewportScene({
       {!hasMeshParts && shouldRenderMagneticGeometry ? (
         <FemGeometry
           meshData={meshData}
-          field={field}
+          field={magneticVisibilityMode === "ghost" ? "none" : field}
           renderMode={renderMode}
-          opacity={effectiveOpacity}
+          opacity={magneticVisibilityMode === "ghost" ? Math.min(effectiveOpacity, 22) : effectiveOpacity}
+          uniformColor={magneticVisibilityMode === "ghost" ? "#94a3b8" : undefined}
+          edgeColor={magneticVisibilityMode === "ghost" ? "#cbd5e1" : undefined}
           displayBoundaryFaceIndices={magneticBoundaryFaceIndices}
           displayElementIndices={magneticElementIndices}
           qualityPerFace={qualityPerFace}

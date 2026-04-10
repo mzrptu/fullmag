@@ -269,6 +269,8 @@ export interface ModelContextValue {
   femArrowAlpha: number;
   femArrowLengthScale: number;
   femArrowThickness: number;
+  femVectorDomainFilter: "auto" | "magnetic_only" | "full_domain" | "airbox_only";
+  femFerromagnetVisibilityMode: "hide" | "ghost";
   fdmVisualizationSettings: VisualizationPresetFdmState;
   visualizationProjectPresets: VisualizationPreset[];
   visualizationLocalPresets: VisualizationPreset[];
@@ -361,6 +363,10 @@ export interface ModelContextValue {
   setFemArrowAlpha: React.Dispatch<React.SetStateAction<number>>;
   setFemArrowLengthScale: React.Dispatch<React.SetStateAction<number>>;
   setFemArrowThickness: React.Dispatch<React.SetStateAction<number>>;
+  setFemVectorDomainFilter: React.Dispatch<
+    React.SetStateAction<"auto" | "magnetic_only" | "full_domain" | "airbox_only">
+  >;
+  setFemFerromagnetVisibilityMode: React.Dispatch<React.SetStateAction<"hide" | "ghost">>;
   setFdmVisualizationSettings: React.Dispatch<
     React.SetStateAction<VisualizationPresetFdmState>
   >;

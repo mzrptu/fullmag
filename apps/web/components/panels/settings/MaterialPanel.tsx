@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import MagneticTextureLibraryPanel from "../MagneticTextureLibraryPanel";
 import {
@@ -73,6 +73,72 @@ function fallbackMagnetization(name: string): MagnetizationAsset {
     preset_version: null,
     ui_label: null,
   };
+}
+
+type NumericTransformMode = "translate" | "rotate" | "scale";
+
+function clampFinite(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function multiplyQuat(
+  a: [number, number, number, number],
+  b: [number, number, number, number],
+): [number, number, number, number] {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+
+function normalizeQuat(
+  q: [number, number, number, number],
+): [number, number, number, number] {
+  const n = Math.hypot(q[0], q[1], q[2], q[3]);
+  if (n <= 1e-30) return [0, 0, 0, 1];
+  return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
+}
+
+function quatFromEulerDeg(
+  eulerDeg: [number, number, number],
+): [number, number, number, number] {
+  const ex = (eulerDeg[0] * Math.PI) / 180;
+  const ey = (eulerDeg[1] * Math.PI) / 180;
+  const ez = (eulerDeg[2] * Math.PI) / 180;
+  const cx = Math.cos(ex * 0.5);
+  const sx = Math.sin(ex * 0.5);
+  const cy = Math.cos(ey * 0.5);
+  const sy = Math.sin(ey * 0.5);
+  const cz = Math.cos(ez * 0.5);
+  const sz = Math.sin(ez * 0.5);
+  const q: [number, number, number, number] = [
+    sx * cy * cz + cx * sy * sz,
+    cx * sy * cz - sx * cy * sz,
+    cx * cy * sz + sx * sy * cz,
+    cx * cy * cz - sx * sy * sz,
+  ];
+  return normalizeQuat(q);
+}
+
+function eulerDegFromQuat(
+  q: [number, number, number, number],
+): [number, number, number] {
+  const nq = normalizeQuat(q);
+  const [x, y, z, w] = nq;
+  const sinrCosp = 2 * (w * x + y * z);
+  const cosrCosp = 1 - 2 * (x * x + y * y);
+  const roll = Math.atan2(sinrCosp, cosrCosp);
+  const sinp = 2 * (w * y - z * x);
+  const pitch =
+    Math.abs(sinp) >= 1 ? Math.sign(sinp) * (Math.PI / 2) : Math.asin(sinp);
+  const sinyCosp = 2 * (w * z + x * y);
+  const cosyCosp = 1 - 2 * (y * y + z * z);
+  const yaw = Math.atan2(sinyCosp, cosyCosp);
+  return [(roll * 180) / Math.PI, (pitch * 180) / Math.PI, (yaw * 180) / Math.PI];
 }
 
 export default function MaterialPanel({
@@ -419,6 +485,83 @@ export default function MaterialPanel({
     scale: [1, 1, 1] as [number, number, number],
     pivot: [0, 0, 0] as [number, number, number],
   };
+  const textureMapping = mag.mapping ?? {
+    space: "object",
+    projection: "object_local",
+    clamp_mode: "clamp",
+  };
+  const activeTextureMode = model.sceneDocument?.editor.gizmo_mode ?? "translate";
+  const [numericTransformOpen, setNumericTransformOpen] = useState(false);
+  const [numericMode, setNumericMode] = useState<NumericTransformMode>("translate");
+  const [numericAbsolute, setNumericAbsolute] = useState<[number, number, number]>([0, 0, 0]);
+  const [numericOffset, setNumericOffset] = useState<[number, number, number]>([0, 0, 0]);
+
+  const openNumericTransform = useCallback(
+    (mode: NumericTransformMode) => {
+      setNumericMode(mode);
+      if (mode === "rotate") {
+        setNumericAbsolute(eulerDegFromQuat(textureTransform.rotation_quat));
+      } else if (mode === "scale") {
+        setNumericAbsolute([...textureTransform.scale] as [number, number, number]);
+      } else {
+        setNumericAbsolute([...textureTransform.translation] as [number, number, number]);
+      }
+      setNumericOffset([0, 0, 0]);
+      setNumericTransformOpen(true);
+    },
+    [textureTransform.rotation_quat, textureTransform.scale, textureTransform.translation],
+  );
+
+  const applyNumericTransform = useCallback(() => {
+    updateMagnetization((asset) => {
+      const currentTransform = asset.texture_transform ?? {
+        translation: [0, 0, 0],
+        rotation_quat: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+        pivot: [0, 0, 0],
+      };
+      const next = {
+        ...currentTransform,
+      };
+      if (numericMode === "translate") {
+        next.translation = [
+          clampFinite(numericAbsolute[0], currentTransform.translation[0]) +
+            clampFinite(numericOffset[0], 0),
+          clampFinite(numericAbsolute[1], currentTransform.translation[1]) +
+            clampFinite(numericOffset[1], 0),
+          clampFinite(numericAbsolute[2], currentTransform.translation[2]) +
+            clampFinite(numericOffset[2], 0),
+        ];
+      } else if (numericMode === "scale") {
+        next.scale = [
+          Math.max(
+            1e-12,
+            clampFinite(numericAbsolute[0], currentTransform.scale[0]) +
+              clampFinite(numericOffset[0], 0),
+          ),
+          Math.max(
+            1e-12,
+            clampFinite(numericAbsolute[1], currentTransform.scale[1]) +
+              clampFinite(numericOffset[1], 0),
+          ),
+          Math.max(
+            1e-12,
+            clampFinite(numericAbsolute[2], currentTransform.scale[2]) +
+              clampFinite(numericOffset[2], 0),
+          ),
+        ];
+      } else {
+        const base = quatFromEulerDeg(numericAbsolute);
+        const delta = quatFromEulerDeg(numericOffset);
+        next.rotation_quat = normalizeQuat(multiplyQuat(delta, base));
+      }
+      return {
+        ...asset,
+        texture_transform: next,
+      };
+    });
+    setNumericTransformOpen(false);
+  }, [numericAbsolute, numericMode, numericOffset, updateMagnetization]);
   const hasDmi = hasObjectInteraction(physicsStack, "interfacial_dmi");
   const hasUniaxial = hasObjectInteraction(physicsStack, "uniaxial_anisotropy");
   const uniaxial = physicsStack.find((entry) => entry.kind === "uniaxial_anisotropy");
@@ -737,19 +880,104 @@ export default function MaterialPanel({
                     <Button size="sm" variant="outline" type="button" onClick={handleResetTextureTransform}>
                       Reset
                     </Button>
-                    <Button size="sm" variant="outline" type="button" onClick={() => setTextureGizmoMode("translate")}>
+                    <Button
+                      size="sm"
+                      variant={activeTextureMode === "translate" ? "default" : "outline"}
+                      type="button"
+                      onClick={() => setTextureGizmoMode("translate")}
+                    >
                       Move
                     </Button>
-                    <Button size="sm" variant="outline" type="button" onClick={() => setTextureGizmoMode("rotate")}>
+                    <Button
+                      size="sm"
+                      variant={activeTextureMode === "rotate" ? "default" : "outline"}
+                      type="button"
+                      onClick={() => setTextureGizmoMode("rotate")}
+                    >
                       Rotate
                     </Button>
-                    <Button size="sm" variant="outline" type="button" onClick={() => setTextureGizmoMode("scale")}>
+                    <Button
+                      size="sm"
+                      variant={activeTextureMode === "scale" ? "default" : "outline"}
+                      type="button"
+                      onClick={() => setTextureGizmoMode("scale")}
+                    >
                       Scale
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => openNumericTransform(activeTextureMode as NumericTransformMode)}
+                    >
+                      Numeric
                     </Button>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-1 gap-2 rounded-lg border border-border/25 bg-background/30 p-2.5">
+                    <div className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Mapping
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <SelectField
+                        label="Space"
+                        value={textureMapping.space}
+                        onchange={(value) =>
+                          updateMagnetization((asset) => ({
+                            ...asset,
+                            mapping: {
+                              ...(asset.mapping ?? textureMapping),
+                              space: value,
+                            },
+                          }))
+                        }
+                        options={[
+                          { label: "Object", value: "object" },
+                          { label: "World", value: "world" },
+                        ]}
+                      />
+                      <SelectField
+                        label="Projection"
+                        value={textureMapping.projection}
+                        onchange={(value) =>
+                          updateMagnetization((asset) => ({
+                            ...asset,
+                            mapping: {
+                              ...(asset.mapping ?? textureMapping),
+                              projection: value,
+                            },
+                          }))
+                        }
+                        options={[
+                          { label: "Object Local", value: "object_local" },
+                          { label: "Planar XY", value: "planar_xy" },
+                          { label: "Planar XZ", value: "planar_xz" },
+                          { label: "Planar YZ", value: "planar_yz" },
+                        ]}
+                      />
+                      <SelectField
+                        label="Clamp"
+                        value={textureMapping.clamp_mode}
+                        onchange={(value) =>
+                          updateMagnetization((asset) => ({
+                            ...asset,
+                            mapping: {
+                              ...(asset.mapping ?? textureMapping),
+                              clamp_mode: value,
+                            },
+                          }))
+                        }
+                        options={[
+                          { label: "Clamp", value: "clamp" },
+                          { label: "Repeat", value: "repeat" },
+                          { label: "Mirror", value: "mirror" },
+                        ]}
+                      />
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-3 gap-2">
                     {[0, 1, 2].map((axis) => (
                       <TextField
@@ -811,6 +1039,126 @@ export default function MaterialPanel({
           )}
         </div>
       </SidebarSection>
+      {numericTransformOpen ? (
+        <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/65 px-6 py-8 backdrop-blur-sm">
+          <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/12 bg-[linear-gradient(180deg,rgba(20,26,42,0.98),rgba(10,14,24,0.99))] shadow-[0_24px_120px_rgba(0,0,0,0.58)]">
+            <div className="border-b border-white/10 px-5 py-3.5">
+              <div className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+                Transform Type-In
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-3">
+                <div className="text-lg font-semibold text-white">Texture {numericMode}</div>
+                <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/5 p-1">
+                  {(["translate", "rotate", "scale"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        setNumericMode(mode);
+                        if (mode === "rotate") {
+                          setNumericAbsolute(eulerDegFromQuat(textureTransform.rotation_quat));
+                        } else if (mode === "scale") {
+                          setNumericAbsolute([...textureTransform.scale] as [number, number, number]);
+                        } else {
+                          setNumericAbsolute([...textureTransform.translation] as [number, number, number]);
+                        }
+                        setNumericOffset([0, 0, 0]);
+                      }}
+                      className={`rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+                        numericMode === mode
+                          ? "bg-cyan-400/20 text-cyan-200"
+                          : "text-slate-300 hover:bg-white/10"
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 p-5">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-2 text-[0.62rem] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Absolute
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["X", "Y", "Z"] as const).map((axis, idx) => (
+                    <label key={`abs-${axis}`} className="flex flex-col gap-1">
+                      <span className="text-[0.58rem] font-semibold uppercase tracking-wider text-slate-400">
+                        {axis}
+                      </span>
+                      <input
+                        type="number"
+                        step={numericMode === "rotate" ? 1 : 0.01}
+                        value={numericAbsolute[idx]}
+                        onChange={(event) =>
+                          setNumericAbsolute((prev) => {
+                            const next = [...prev] as [number, number, number];
+                            next[idx] = Number(event.target.value);
+                            return next;
+                          })
+                        }
+                        className="h-8 rounded-md border border-white/12 bg-slate-950/70 px-2 text-xs font-mono text-white outline-none focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/35"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-2 text-[0.62rem] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Offset
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["X", "Y", "Z"] as const).map((axis, idx) => (
+                    <label key={`off-${axis}`} className="flex flex-col gap-1">
+                      <span className="text-[0.58rem] font-semibold uppercase tracking-wider text-slate-400">
+                        {axis}
+                      </span>
+                      <input
+                        type="number"
+                        step={numericMode === "rotate" ? 1 : 0.01}
+                        value={numericOffset[idx]}
+                        onChange={(event) =>
+                          setNumericOffset((prev) => {
+                            const next = [...prev] as [number, number, number];
+                            next[idx] = Number(event.target.value);
+                            return next;
+                          })
+                        }
+                        className="h-8 rounded-md border border-white/12 bg-slate-950/70 px-2 text-xs font-mono text-white outline-none focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/35"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-white/10 px-5 py-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[0.68rem] text-slate-400">
+                  {numericMode === "rotate" ? "Angles in degrees (XYZ Euler)." : "World-space values for selected texture transform scope."}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    onClick={() => setNumericTransformOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={applyNumericTransform}
+                  >
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

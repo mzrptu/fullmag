@@ -291,6 +291,42 @@ export default function VisualizationPresetPanel({ nodeId }: VisualizationPreset
                 <option value="isolate">isolate</option>
               </select>
             </label>
+            <label className="text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
+              Vector Domain
+              <select
+                className="mt-1 w-full rounded border border-border/40 bg-background px-2 py-1 text-xs"
+                value={preset.fem.vector_domain_filter}
+                onChange={(event) =>
+                  updateFem({
+                    vector_domain_filter: event.target.value as
+                      | "auto"
+                      | "magnetic_only"
+                      | "full_domain"
+                      | "airbox_only",
+                  })
+                }
+              >
+                <option value="auto">auto</option>
+                <option value="magnetic_only">magnetic_only</option>
+                <option value="full_domain">full_domain</option>
+                <option value="airbox_only">airbox_only</option>
+              </select>
+            </label>
+            <label className="text-[0.62rem] font-semibold uppercase tracking-widest text-muted-foreground">
+              Ferro in Airbox
+              <select
+                className="mt-1 w-full rounded border border-border/40 bg-background px-2 py-1 text-xs"
+                value={preset.fem.ferromagnet_visibility_mode}
+                onChange={(event) =>
+                  updateFem({
+                    ferromagnet_visibility_mode: event.target.value as "hide" | "ghost",
+                  })
+                }
+              >
+                <option value="hide">hide</option>
+                <option value="ghost">ghost</option>
+              </select>
+            </label>
           </div>
 
           <label className="flex items-center justify-between gap-2 text-[0.68rem] text-muted-foreground">

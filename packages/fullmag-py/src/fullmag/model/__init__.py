@@ -57,6 +57,7 @@ from .problem import (
     RuntimeSelection,
     backend,
 )
+from .spin_torque import SlonczewskiSTT, SpinTorque, ZhangLiSTT
 from .structure import Ferromagnet, Material, Region
 from .study import Eigenmodes, FrequencyResponse, Relaxation, TimeEvolution
 from .eigen import KPath, KPoint, ModeTracking

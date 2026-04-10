@@ -1,0 +1,1198 @@
+---
+title: "Raport wdrożeniowy — uruchomienie STNO/MTJ vortex w Fullmag"
+repo: "MateuszZelent/fullmag"
+generated_at: "2026-04-10"
+format: "mdx"
+---
+
+# Raport wdrożeniowy: jak doprowadzić Fullmag do praktycznego workflow STNO/MTJ vortex
+
+## 1. Cel wdrożenia
+
+Chcemy dojść do takiego workflow:
+
+1. zbudować model **nanokropki 400 nm**
+2. odwzorować warstwę aktywną **CoFeB(1 nm) / NiFe(8 nm)**
+3. uzyskać stan równowagowy **vortex**
+4. pobudzać układ:
+   - przez **prąd stały**,
+   - przez **prąd zmienny w czasie**
+5. analizować:
+   - **mod gyrotropowy**
+   - **mody fal spinowych**
+   - próg autooscylacji
+   - częstotliwość
+   - orbitę rdzenia
+   - docelowo także linewidth / phase noise
+
+Ten raport zakłada podejście **inkrementalne**:
+najpierw uruchamiamy fizykę, potem narzędzia pomiarowe, a dopiero na końcu GUI i workflow „produktowy”.
+
+---
+
+## 2. Najważniejszy wniosek architektoniczny
+
+W obecnym repo „elektryczne pobudzenie” jest rozbite na trzy różne semantyki:
+
+1. **pole Oersteda**  
+   `OerstedCylinder(...)` jako **energy term**
+
+2. **RF antenna field**  
+   `AntennaFieldSource(...)` jako **current_module**
+
+3. **spin-transfer torque**  
+   jako ukryte pola `ProblemIR` / planu:
+   - `current_density`
+   - `stt_degree`
+   - `stt_beta`
+   - `stt_spin_polarization`
+   - `stt_lambda`
+   - `stt_epsilon_prime`
+
+To działa przeciwko:
+- spójności API,
+- spójności GUI,
+- walidacji,
+- czytelności dokumentacji.
+
+## Rekomendacja architektoniczna
+
+### Minimalny wariant
+Na szybko:
+- **wystawić istniejące pola STT i temperaturę w `Problem(...)`**
+- nic nie zmieniać w IR
+
+### Lepszy wariant długofalowy
+Docelowo zbudować jedną publiczną rodzinę klas typu:
+
+```python
+ElectricalBias
+CurrentDrive
+SpinTorque
+OerstedSource
+AntennaSource
+```
+
+ale **bez przepisywania backendu** — tylko jako ergonomiczny frontend nad już istniejącym IR.
+
+---
+
+## 3. Model fizyczny, który powinien być celem
+
+## 3.1. Równanie ruchu
+
+Podstawą jest LLG z dodatkowymi wkładami od STT, pola Oersteda i ewentualnie temperatury:
+
+$$
+\frac{\partial \mathbf m}{\partial t}
+=
+-\gamma \mu_0 \, \mathbf m \times \mathbf H_\mathrm{eff}
++
+\alpha \, \mathbf m \times \frac{\partial \mathbf m}{\partial t}
++
+\boldsymbol{\tau}_\mathrm{STT}
++
+\boldsymbol{\tau}_\mathrm{th}.
+$$
+
+gdzie
+
+$$
+\mathbf H_\mathrm{eff}
+=
+\mathbf H_\mathrm{ex}
++
+\mathbf H_\mathrm{demag}
++
+\mathbf H_\mathrm{ext}
++
+\mathbf H_\mathrm{ani}
++
+\mathbf H_\mathrm{DMI}
++
+\mathbf H_\mathrm{mel}
++
+\mathbf H_\mathrm{Oe}.
+$$
+
+W praktyce dla Twojego przypadku kluczowe będą:
+
+- `exchange`
+- `demag`
+- `uniaxial anisotropy` / efektywna anizotropia CoFeB
+- `Oersted`
+- `Slonczewski STT`
+- opcjonalnie `thermal noise`
+
+---
+
+## 3.2. Pole Oersteda od nanopillara
+
+Dla idealizowanego długiego przewodnika cylindrycznego:
+
+$$
+H_\phi(r)=
+\begin{cases}
+\frac{I\, r}{2\pi R^2}, & r < R \\
+\frac{I}{2\pi r}, & r \ge R
+\end{cases}
+$$
+
+gdzie:
+
+- $I$ — prąd,
+- $R$ — promień przewodnika,
+- kierunek pola jest obwodowy.
+
+To jest bardzo naturalny mechanizm pobudzenia vortexu, bo:
+- dobrze sprzęga się z ruchem rdzenia,
+- może selektywnie wzmacniać/hamować określoną chiralność,
+- przy pobudzeniu AC daje dostęp do rezonansu gyrotropowego i modów wyższych.
+
+---
+
+## 3.3. Spin-transfer torque
+
+### Zhang–Li
+Ogólna postać ciągła wygląda typowo tak:
+
+$$
+\boldsymbol{\tau}_\mathrm{ZL}
+=
+-(\mathbf u \cdot \nabla)\mathbf m
++
+\beta \, \mathbf m \times (\mathbf u \cdot \nabla)\mathbf m.
+$$
+
+Ta postać jest najbardziej naturalna dla **CIP** i tekstur przestrzennych.
+
+### Slonczewski
+Dla **CPP MTJ** ważniejsza jest postać typu Slonczewski:
+
+$$
+\boldsymbol{\tau}_\mathrm{Slonc}
+=
+\sigma(J, P, \Lambda, d, M_s, \ldots)\;
+\mathbf m \times (\mathbf m \times \mathbf p)
++
+\sigma'(J, \epsilon', \ldots)\;
+\mathbf m \times \mathbf p.
+$$
+
+gdzie:
+
+- $\mathbf p$ — kierunek polaryzacji spinowej (od warstwy referencyjnej),
+- $J$ — gęstość prądu,
+- $\Lambda$ i $\epsilon'$ — parametry modelu,
+- pierwszy człon to zwykle torque damping-like,
+- drugi człon to field-like correction.
+
+## Ważna uwaga wdrożeniowa
+
+W repo trzeba **jawnie zamrozić konwencję znaków**:
+- kierunek dodatniego prądu,
+- znak `current_density`,
+- definicję `stt_degree`,
+- definicję `p`,
+- czy `epsilon_prime` jest dodatkiem field-like w tej samej normalizacji co `SlonczewskiSttConfig`.
+
+To powinno być zapisane w osobnej notce physics, bo inaczej testy regresyjne będą niejednoznaczne.
+
+---
+
+## 3.4. Szum termiczny
+
+Dla termicznego pola Browna typowy wariant ma wariancję:
+
+$$
+\langle H_i^\mathrm{th}(t) H_j^\mathrm{th}(t') \rangle
+\propto
+\frac{2 \alpha k_B T}{\gamma \mu_0 M_s V \Delta t}
+\delta_{ij}\delta_{tt'}.
+$$
+
+W praktyce:
+- bez temperatury da się policzyć próg i częstotliwość nominalną,
+- ale **linewidth** i stabilność fazowa wymagają już modelu termicznego.
+
+---
+
+## 3.5. Redukcja Thiele’a jako narzędzie diagnostyczne
+
+Dla vortexu bardzo użyteczny jest opis rdzenia przez położenie $\mathbf X = (X,Y)$:
+
+$$
+\mathbf G \times \dot{\mathbf X}
+-
+D \dot{\mathbf X}
+-
+\nabla U(\mathbf X)
++
+\mathbf F_\mathrm{drive}
+=
+0.
+$$
+
+To nie zastępuje pełnej mikromagnetyki, ale jest bardzo dobre do:
+
+- interpretacji częstotliwości gyrotropowej,
+- interpretacji promienia orbity,
+- wykrywania wejścia w autooscylację,
+- projektowania obserwabli GUI.
+
+---
+
+## 4. Jak modelować dokładnie Twój układ
+
+## 4.1. CoFeB(1 nm)/NiFe(8 nm): trzy poziomy dokładności
+
+### Poziom A — efektywny free layer
+Jeden cylinder:
+
+- średnica `400 nm`
+- grubość `9 nm`
+- skuteczne:
+  - `Ms_eff`
+  - `A_eff`
+  - `alpha_eff`
+  - `Ku_eff`
+
+To jest najlepszy **pierwszy krok**.
+
+Zalety:
+- szybkość
+- prostota
+- łatwo walidować vortex i $f_g$
+
+Wady:
+- nie rozdzielasz wpływu cienkiego CoFeB od grubego NiFe
+
+### Poziom B — jawna niejednorodność po `z`
+Jedna geometria, ale pola materiałowe zależne od `z`:
+
+- `0–1 nm` → CoFeB
+- `1–9 nm` → NiFe
+
+To jest moim zdaniem najlepsza droga do realistycznego modelu przy obecnym stanie repo.
+
+### Poziom C — pełny stos MTJ
+Warstwa swobodna + referencyjna + bariera + sprzężenie transportowe.
+
+Tego **nie rekomenduję jako pierwszy etap**, bo obecna semantyka repo nie jest jeszcze na to gotowa.
+
+---
+
+## 4.2. Dyskretyzacja
+
+Dla vortexu 400 nm warto zacząć od:
+
+- `dx = dy = 2–4 nm`
+- `dz = 1 nm`
+
+Jeżeli chcesz jawnie odróżnić `CoFeB(1 nm)`:
+- `dz = 1 nm` to sensowne minimum,
+- `dz = 0.5–1 nm` jeśli chcesz lepiej traktować bardzo cienką warstwę.
+
+Praktyczny kompromis:
+
+```text
+wariant szybki:   (4 nm, 4 nm, 1 nm)
+wariant produkcyjny: (2.5 nm, 2.5 nm, 1 nm)
+wariant dokładniejszy po z: (2–2.5 nm, 2–2.5 nm, 0.5–1 nm)
+```
+
+## Wniosek wykonawczy
+
+Dla właściwych przebiegów time-domain STNO preferowałbym:
+- **FDM**
+- **native CUDA**
+- double precision, jeśli koszt akceptowalny
+
+CPU reference zostawiłbym:
+- do testów regresyjnych,
+- do małych przypadków kontrolnych,
+- nie jako główny silnik dużego dysku 400 nm z długimi przebiegami.
+
+---
+
+## 4.3. Strategia symulacyjna
+
+### Etap 1 — relaksacja do vortexu
+Bez STT, bez temperatury.
+
+### Etap 2 — słabe pobudzenie Oerstedem
+- pulse lub sinus
+- mała amplituda
+- identyfikacja $f_g$
+
+### Etap 3 — pobudzenie RF / spin-wave path
+- current module / antenna
+- mapa pobudzenia modów
+
+### Etap 4 — Slonczewski STT
+- sweep gęstości prądu
+- wykrycie progu autooscylacji
+
+### Etap 5 — temperatura
+- linewidth
+- phase noise
+- stabilność orbity
+
+To jest kolejność najbezpieczniejsza numerycznie i organizacyjnie.
+
+---
+
+## 5. Co jest już publicznie dostępne teraz
+
+## 5.1. Przykład: relaksacja vortexu i pobudzenie polem Oersteda
+
+Poniżej przykład zgodny z aktualnym idiomem klas repo (ścieżki importu mogą się jeszcze minimalnie różnić między branchami, ale nazwy klas i pól odpowiadają stanowi repo):
+
+```python
+from fullmag.init import uniform
+from fullmag.model.dynamics import LLG
+from fullmag.model.discretization import DiscretizationHints, FDM
+from fullmag.model.energy import Exchange, Demag, Zeeman, OerstedCylinder, Sinusoidal
+from fullmag.model.geometry import Cylinder
+from fullmag.model.outputs import SaveScalar, Snapshot
+from fullmag.model.problem import (
+    Problem,
+    RuntimeSelection,
+    BackendTarget,
+    DeviceTarget,
+    ExecutionMode,
+)
+from fullmag.model.structure import Material, Ferromagnet
+from fullmag.model.study import Relaxation, TimeEvolution
+
+disk = Cylinder(radius=200e-9, height=9e-9, name="free_disk")
+
+mat = Material(
+    name="free",
+    Ms=8.0e5,
+    A=13e-12,
+    alpha=0.01,
+)
+
+free = Ferromagnet(
+    name="free",
+    geometry=disk,
+    material=mat,
+    m0=uniform((1.0, 0.0, 0.0)),
+)
+
+runtime = RuntimeSelection(
+    backend_target=BackendTarget.FDM,
+    device_target=DeviceTarget.CUDA,
+    execution_mode=ExecutionMode.EXTENDED,
+)
+
+disc = DiscretizationHints(
+    fdm=FDM(default_cell=(2.5e-9, 2.5e-9, 1.0e-9))
+)
+
+relax_problem = Problem(
+    name="vortex_relax",
+    magnets=[free],
+    energy=[
+        Exchange(),
+        Demag(),
+        Zeeman((0.0, 0.0, 0.0)),
+    ],
+    study=Relaxation(
+        outputs=[
+            SaveScalar("time", every=1e-11),
+            SaveScalar("max_h_eff", every=1e-11),
+            Snapshot("m", "z", every=2e-10),
+        ],
+        algorithm="llg_overdamped",
+        max_steps=50000,
+        dynamics=LLG(integrator="heun", fixed_timestep=5e-14),
+    ),
+    discretization=disc,
+    runtime=runtime,
+)
+
+drive_problem = Problem(
+    name="vortex_oersted_drive",
+    magnets=[free],
+    energy=[
+        Exchange(),
+        Demag(),
+        OerstedCylinder(
+            current=4e-3,             # 4 mA
+            radius=200e-9,
+            time_dependence=Sinusoidal(
+                frequency_hz=350e6,
+                phase_rad=0.0,
+                offset=0.0,
+            ),
+        ),
+    ],
+    study=TimeEvolution(
+        dynamics=LLG(integrator="heun", fixed_timestep=2e-14),
+        outputs=[
+            SaveScalar("time", every=2e-12),
+            SaveScalar("mx", every=2e-12),
+            SaveScalar("my", every=2e-12),
+            SaveScalar("mz", every=2e-12),
+            Snapshot("m", "z", every=1e-10),
+        ],
+    ),
+    discretization=disc,
+    runtime=runtime,
+)
+```
+
+### Co ten przykład daje realnie
+- relaksację do vortexu,
+- czasową odpowiedź na AC Oersteda,
+- podstawę do FFT z `mx(t), my(t), mz(t)`
+
+### Czego jeszcze nie daje
+- publicznego STT
+- temperatury w jawnej, pewnej ścieżce publicznej
+- gotowego GUI do analizy widmowej
+
+---
+
+## 5.2. Przykład: publiczny tor RF-antenowy dla fal spinowych
+
+To jest inny publiczny tor niż `OerstedCylinder`, ale dla analiz modów fal spinowych może być bardzo użyteczny:
+
+```python
+from fullmag.model.antenna import (
+    AntennaFieldSource,
+    MicrostripAntenna,
+    RfDrive,
+    SpinWaveExcitationAnalysis,
+)
+from fullmag.model.outputs import SaveSpectrum, SaveDispersion, SaveEigenDiagnostics
+from fullmag.model.study import FrequencyResponse
+
+strip = AntennaFieldSource(
+    name="rf_strip",
+    antenna=MicrostripAntenna(
+        width=1.5e-6,
+        thickness=100e-9,
+        height_above_magnet=50e-9,
+        preview_length=4e-6,
+        center_x=0.0,
+        center_y=0.0,
+    ),
+    drive=RfDrive(
+        current_a=5e-3,
+        frequency_hz=8e9,
+        phase_rad=0.0,
+    ),
+)
+
+fr_problem = Problem(
+    name="spin_wave_excitation",
+    magnets=[free],
+    energy=[Exchange(), Demag()],
+    current_modules=[strip],
+    excitation_analysis=SpinWaveExcitationAnalysis(
+        source="rf_strip",
+        propagation_axis=(1.0, 0.0, 0.0),
+        k_max_rad_per_m=8e7,
+        samples=256,
+    ),
+    study=FrequencyResponse(
+        outputs=[
+            SaveSpectrum(),
+            SaveDispersion(),
+            SaveEigenDiagnostics(),
+        ],
+        frequencies_hz=[1e9, 2e9, 3e9, 4e9, 5e9],
+        excitation_field_au_per_m=(0.0, 1.0, 0.0),
+    ),
+    discretization=disc,
+    runtime=runtime,
+)
+```
+
+Ten tor jest przydatny do:
+- modów fal spinowych,
+- pobudzenia źródłem RF,
+- dispersion-style analysis
+
+ale **nie zastępuje** time-domain STNO z autooscylacją.
+
+---
+
+## 6. Czego trzeba dodać w Python API
+
+## 6.1. Minimalna, niskoryzykowna poprawka
+
+Najkrótsza droga to **rozszerzyć `Problem` o pola, które już istnieją w `ProblemIR`**.
+
+### Proponowane pola w `packages/fullmag-py/src/fullmag/model/problem.py`
+
+```python
+current_density: tuple[float, float, float] | None = None
+stt_degree: float | None = None
+stt_beta: float | None = None
+stt_spin_polarization: tuple[float, float, float] | None = None
+stt_lambda: float | None = None
+stt_epsilon_prime: float | None = None
+temperature: float | None = None
+```
+
+### Minimalna walidacja
+
+```python
+if self.current_density is not None:
+    object.__setattr__(self, "current_density", as_vector3(self.current_density, "current_density"))
+
+if self.stt_spin_polarization is not None:
+    object.__setattr__(
+        self,
+        "stt_spin_polarization",
+        as_vector3(self.stt_spin_polarization, "stt_spin_polarization"),
+    )
+
+if self.temperature is not None and self.temperature < 0.0:
+    raise ValueError("temperature must be >= 0")
+```
+
+### Rozszerzenie `to_ir()`
+
+Do zwracanego słownika trzeba dopisać:
+
+```python
+"current_density": list(self.current_density) if self.current_density is not None else None,
+"stt_degree": self.stt_degree,
+"stt_beta": self.stt_beta,
+"stt_spin_polarization": (
+    list(self.stt_spin_polarization) if self.stt_spin_polarization is not None else None
+),
+"stt_lambda": self.stt_lambda,
+"stt_epsilon_prime": self.stt_epsilon_prime,
+"temperature": self.temperature,
+```
+
+## Dlaczego to jest dobra pierwsza poprawka
+
+- niczego nie przebudowujesz w IR,
+- niczego nie przebudowujesz w plannerze,
+- niczego nie przebudowujesz w runnerze,
+- po prostu **odblokowujesz to, co już wygląda na zaszyte niżej**.
+
+---
+
+## 6.2. Lepsza, ergonomiczna warstwa użytkownika
+
+Po minimalnym wariancie warto dodać **ładniejszy frontend**:
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+
+@dataclass(frozen=True, slots=True)
+class SpinTorque:
+    model: Literal["slonczewski", "zhang_li"]
+    current_density: tuple[float, float, float]
+
+    # wspólne / opcjonalne
+    beta: float | None = None
+
+    # Slonczewski
+    polarization: tuple[float, float, float] | None = None
+    degree: float | None = None
+    lambda_: float | None = None
+    epsilon_prime: float | None = None
+```
+
+a potem:
+
+```python
+Problem(
+    ...,
+    spin_torque=SpinTorque(
+        model="slonczewski",
+        current_density=(0.0, 0.0, 8e10),
+        polarization=(0.0, 0.0, 1.0),
+        degree=0.45,
+        lambda_=2.0,
+        epsilon_prime=0.0,
+    ),
+    temperature=300.0,
+)
+```
+
+## Rekomendacja
+
+- **najpierw**: wystawienie surowych pól w `Problem`
+- **potem**: ergonomiczny wrapper `SpinTorque`
+
+To ogranicza ryzyko wdrożenia.
+
+---
+
+## 7. Proponowany model użytkowy dla Twojego przypadku
+
+### MVP modelu STNO vortex
+
+```python
+Problem(
+    name="mtj_vortex_stno",
+    magnets=[free_layer],
+    energy=[
+        Exchange(),
+        Demag(),
+        UniaxialAnisotropy(ku1=...),
+        OerstedCylinder(current=Idc, radius=200e-9, time_dependence=Constant()),
+    ],
+    study=TimeEvolution(...),
+    current_density=(0.0, 0.0, Jz),
+    stt_spin_polarization=(0.0, 0.0, 1.0),
+    stt_degree=...,
+    stt_lambda=...,
+    stt_epsilon_prime=...,
+    temperature=300.0,
+)
+```
+
+### Uwaga fizyczna
+Dla **CPP MTJ vortex oscillatora** priorytetem jest:
+- `Slonczewski STT`
+- `Oersted`
+- `thermal`
+
+`Zhang–Li` traktowałbym tutaj jako:
+- wsparcie techniczne backendu,
+- ale nie priorytet pierwszego milestone’u.
+
+---
+
+## 8. Co trzeba dodać do GUI
+
+## 8.1. Panel „Electrical drive / STT”
+
+Nowy panel powinien mieć sekcje:
+
+### A. Bias current
+- typ:
+  - none
+  - dc
+  - dc + sinus
+  - pulse
+- amplituda
+- częstotliwość
+- faza
+- offset
+
+### B. Oersted source
+- enable
+- radius
+- center
+- axis
+- powiązanie z current envelope
+
+### C. Spin torque
+- model:
+  - Slonczewski
+  - Zhang–Li
+- `current_density`
+- `polarization`
+- `degree`
+- `beta`
+- `lambda`
+- `epsilon_prime`
+
+### D. Thermal
+- enable
+- `temperature`
+- `seed`
+
+---
+
+## 8.2. Study Builder: nowe payloady
+
+Dziś `study-builder` jest bardzo ogólny i sprowadza się do kilku wspólnych pól. Dla STNO potrzebne są dodatkowe payloady albo dedykowane stage parametry.
+
+### Propozycja rozszerzenia `payload`
+
+```ts
+type CurrentDrivePayload = {
+  kind: "set_current";
+  current_density: string;       // np. "0,0,8e10"
+  waveform: "dc" | "sin" | "pulse" | "dc_plus_sin";
+  frequency_hz?: string;
+  phase_rad?: string;
+  offset?: string;
+};
+
+type SpinTorquePayload = {
+  stt_model: "slonczewski" | "zhang_li";
+  polarization?: string;         // "0,0,1"
+  degree?: string;
+  beta?: string;
+  lambda?: string;
+  epsilon_prime?: string;
+};
+
+type ThermalPayload = {
+  temperature_k?: string;
+  seed?: string;
+};
+```
+
+### Dodatkowe makra, które naprawdę mają sens pod STNO
+
+- `current_sweep_run`
+- `current_sweep_relax_run`
+- `dc_bias_plus_rf_probe`
+- `threshold_search`
+- `linewidth_vs_temperature`
+
+---
+
+## 8.3. Analyze Workspace: czego realnie potrzeba
+
+Aktualny analyze workspace jest skierowany głównie w `eigenmodes / dispersion`.  
+Dla STNO trzeba dołożyć cztery grupy paneli:
+
+### Panel 1 — Time traces
+- `mx(t), my(t), mz(t)`
+- amplituda
+- envelope
+- transient discard
+
+### Panel 2 — Spectrum
+- FFT
+- PSD
+- peak picker
+- Lorentzian fit
+- linewidth
+
+### Panel 3 — Vortex orbit
+- `(Xc(t), Yc(t))`
+- promień orbity
+- dryft orbity
+- faza
+
+### Panel 4 — Threshold / bias
+- amplituda vs `J`
+- częstotliwość vs `J`
+- linewidth vs `J`
+- mapy stanu:
+  - damped
+  - resonant
+  - self-oscillating
+  - chaotic / multimode
+
+---
+
+## 9. Jakie obserwable dodać do engine / outputs
+
+## 9.1. Minimalny zestaw derived quantities
+
+Do istniejącego output systemu dodałbym:
+
+- `core_x`
+- `core_y`
+- `core_radius`
+- `core_phase`
+- `mean_mx`
+- `mean_my`
+- `mean_mz`  
+  (te trzy już są częściowo jako `mx/my/mz`)
+- `oscillation_power`
+- `peak_frequency`
+- `effective_linewidth`  
+  (może być początkowo tylko postprocess artifact, nie online scalar)
+
+## 9.2. Jak liczyć pozycję rdzenia
+
+Najprostszy wariant roboczy:
+
+$$
+X_c = \frac{\int x \, w(\mathbf r)\, dA}{\int w(\mathbf r)\, dA}, \quad
+Y_c = \frac{\int y \, w(\mathbf r)\, dA}{\int w(\mathbf r)\, dA}
+$$
+
+z wagą typu:
+
+$$
+w(\mathbf r) = \max(m_z(\mathbf r), 0)^p
+$$
+
+dla odpowiednio dobranego `p` (np. `p=2...6`) albo przez lokalne maksimum `|m_z|` w obszarze rdzenia.
+
+Wersja dokładniejsza:
+- użyć gęstości topologicznej
+- albo detekcji maksimum `|q(\mathbf r)|`
+
+ale na MVP prostszy tracker jest w zupełności wystarczający.
+
+---
+
+## 9.3. Jak liczyć widmo
+
+Najprostsza ścieżka post-process:
+
+```python
+import numpy as np
+
+def psd_from_trace(t, x):
+    t = np.asarray(t)
+    x = np.asarray(x)
+    dt = float(np.mean(np.diff(t)))
+    x = x - np.mean(x)
+
+    window = np.hanning(len(x))
+    X = np.fft.rfft(x * window)
+    f = np.fft.rfftfreq(len(x), dt)
+    S = (np.abs(X) ** 2) / np.sum(window ** 2)
+    return f, S
+```
+
+To można dziś robić **poza GUI** już teraz na `mx/my/mz`.
+
+Docelowo GUI powinno:
+- umieć wybrać kanał,
+- odrzucić transjent,
+- zrobić okno,
+- pokazać peak,
+- dopasować linewidth.
+
+---
+
+## 10. Czego nie warto robić w pierwszym kroku
+
+## 10.1. Nie zaczynać od pełnego stacku MTJ
+
+Nie zaczynałbym od:
+- osobnej warstwy referencyjnej,
+- jawnego tunelowania,
+- modelu `R(t)` / `V(t)`,
+- bias-dependent polarization
+
+To za wcześnie.
+
+## 10.2. Nie zaczynać od eigen-solvera jako walidatora vortexu
+
+Dla vortexu główny workflow powinien być:
+
+```text
+relax -> time drive -> trace -> FFT -> orbit
+```
+
+a nie:
+
+```text
+relax -> eigenmodes -> uznajemy, że to wszystko
+```
+
+## 10.3. Nie mieszać od razu Oersteda, STT i temperatury
+
+Najpierw:
+1. vortex
+2. Oersted
+3. STT
+4. temperatura
+
+To bardzo zmniejsza ryzyko błędnej diagnozy.
+
+---
+
+## 11. Proponowane testy regresyjne
+
+## Test 1 — vortex relax
+**Cel:** czy dysk 400 nm / 9 nm relaksuje do vortexu.  
+**Kryterium:** stabilny wzór `m_z` rdzenia i curling in-plane.
+
+## Test 2 — gyrotropic resonance by weak pulse
+**Cel:** czy z odpowiedzi czasowej da się wydobyć pojedynczą dominującą częstotliwość gyrotropową.  
+**Kryterium:** czytelny peak FFT.
+
+## Test 3 — Oersted chirality response
+**Cel:** czy znak prądu daje oczekiwaną zmianę kierunku pobudzenia.  
+**Kryterium:** zmiana znaku fazy / kierunku orbity.
+
+## Test 4 — public STT serialization
+**Cel:** czy nowe pola `Problem(...)` trafiają do IR i runnera bez utraty.  
+**Kryterium:** test snapshotowy JSON IR.
+
+## Test 5 — Slonczewski threshold sweep
+**Cel:** czy istnieje wykrywalny próg autooscylacji przy rosnącym `J`.  
+**Kryterium:** wzrost stabilnej amplitudy i zawężenie dominującego modu.
+
+## Test 6 — thermal broadening
+**Cel:** czy przy `T > 0` widmo ulega poszerzeniu.  
+**Kryterium:** większy linewidth niż w przebiegu deterministycznym.
+
+---
+
+## 12. Definicja „gotowe do użycia” dla STNO w Fullmag
+
+Uznaję projekt za gotowy do realnej pracy STNO wtedy, gdy spełnione będą jednocześnie:
+
+### Backend
+- publiczny `Problem` wystawia STT i temperaturę
+- Oersted + STT przechodzą E2E test
+- co najmniej jeden backend GPU działa stabilnie dla 400 nm disk
+
+### API
+- istnieje prosty przykład vortex STNO
+- istnieje przykład sweepu prądu
+- dokumentacja wyjaśnia znaczenie `stt_degree`, `lambda`, `epsilon_prime`
+
+### GUI
+- panel bias/STT/thermal
+- panel FFT/PSD
+- panel orbit rdzenia
+
+### Walidacja
+- test vortex relax
+- test gyrotropic FFT
+- test threshold current
+- test temperature broadening
+
+---
+
+## 13. Konkretna lista zmian w repo
+
+## 13.1. `packages/fullmag-py`
+
+### `model/problem.py`
+- dodać publiczne pola:
+  - `current_density`
+  - `stt_degree`
+  - `stt_beta`
+  - `stt_spin_polarization`
+  - `stt_lambda`
+  - `stt_epsilon_prime`
+  - `temperature`
+
+### `model/energy.py`
+- zostawić `OerstedCylinder`
+- opcjonalnie dodać wygodny wrapper `SpinTorque`
+
+### `examples/`
+dodać:
+- `fdm_vortex_relax.py`
+- `fdm_vortex_oersted_drive.py`
+- `fdm_vortex_stno_slonczewski.py`
+
+---
+
+## 13.2. `docs/physics`
+
+Dodać nowy dokument, np.:
+
+```text
+docs/physics/0810-fdm-stt.md
+```
+
+Powinien zawierać:
+- LLGS formę równania
+- konwencję znaków
+- definicje parametrów
+- relację do `SlonczewskiSttConfig` i `ZhangLiSttConfig`
+- uwagi o CPP vs CIP
+
+---
+
+## 13.3. `apps/web`
+
+### Physics panel
+- bias current
+- Oersted
+- STT
+- thermal
+
+### Study Builder
+- payloady dla current/stt/thermal
+- nowe makra sweepów
+
+### Analyze
+- time trace
+- PSD
+- vortex orbit
+
+---
+
+## 13.4. `crates/fullmag-plan` / `runner`
+
+Tu raczej nie przewiduję dużej rewolucji.  
+Raczej:
+
+- testy,
+- dopięcie walidacji,
+- poprawienie komunikatów błędów,
+- upewnienie się, że `temperature` i `ThermalNoise` nie są semantycznie rozjechane.
+
+---
+
+## 14. Dodatkowe uwagi fizyczne dla Twojego konkretnego projektu
+
+## 14.1. Co jest najważniejsze fizycznie
+
+Dla vortex MTJ oscillatora najważniejsze są:
+
+1. **demag**
+2. **exchange**
+3. **Oersted**
+4. **Slonczewski STT**
+5. **temperatura**
+
+Anizotropia:
+- ważna dla cienkiego CoFeB,
+- ale nie musi być głównym mechanizmem dynamiki vortexu,
+- chyba że eksperyment ma silną interfejsową PMA.
+
+DMI:
+- nie traktowałbym jako blocker dla pierwszego modelu,
+- chyba że od początku chcesz badać wyraźnie chiralne efekty interfejsowe.
+
+---
+
+## 14.2. Co mierzyć jako pierwsze
+
+W kolejności:
+
+1. `mz` snapshoty po relaksacji
+2. `mx(t), my(t), mz(t)` przy słabym pobudzeniu
+3. FFT i peak frequency
+4. `(Xc(t), Yc(t))`
+5. amplitude vs `J`
+6. linewidth vs `T`
+
+---
+
+## 14.3. Co będzie najlepszym pierwszym benchmarkiem
+
+Najlepszy pierwszy benchmark to nie „pełny MTJ”.
+
+Najlepszy pierwszy benchmark to:
+
+> **pojedynczy dysk 400 nm, 9 nm, vortex, słabe pobudzenie Oerstedem, ekstrakcja częstotliwości gyrotropowej.**
+
+Dopiero potem:
+
+> **ten sam układ + publicznie wystawiony Slonczewski STT + sweep gęstości prądu.**
+
+---
+
+## 15. Przykład docelowego skryptu po wdrożeniu braków
+
+To jest przykład tego, jak chciałbym widzieć API po minimalnym rozszerzeniu `Problem`:
+
+```python
+from fullmag.init import uniform
+from fullmag.model.dynamics import LLG
+from fullmag.model.discretization import DiscretizationHints, FDM
+from fullmag.model.energy import Exchange, Demag, OerstedCylinder, Constant, UniaxialAnisotropy
+from fullmag.model.geometry import Cylinder
+from fullmag.model.outputs import SaveScalar, Snapshot
+from fullmag.model.problem import (
+    Problem,
+    RuntimeSelection,
+    BackendTarget,
+    DeviceTarget,
+    ExecutionMode,
+)
+from fullmag.model.structure import Material, Ferromagnet
+from fullmag.model.study import TimeEvolution
+
+disk = Cylinder(radius=200e-9, height=9e-9, name="free_disk")
+
+mat = Material(
+    name="free",
+    Ms=8.0e5,
+    A=13e-12,
+    alpha=0.015,
+    Ku1=2.0e4,
+    anisU=(0.0, 0.0, 1.0),
+)
+
+free = Ferromagnet(
+    name="free",
+    geometry=disk,
+    material=mat,
+    m0=uniform((1.0, 0.0, 0.0)),
+)
+
+problem = Problem(
+    name="cpp_mtj_vortex_stno",
+    magnets=[free],
+    energy=[
+        Exchange(),
+        Demag(),
+        UniaxialAnisotropy(ku1=2.0e4, axis=(0.0, 0.0, 1.0)),
+        OerstedCylinder(
+            current=6e-3,
+            radius=200e-9,
+            time_dependence=Constant(),
+        ),
+    ],
+    study=TimeEvolution(
+        dynamics=LLG(integrator="heun", fixed_timestep=2e-14),
+        outputs=[
+            SaveScalar("time", every=2e-12),
+            SaveScalar("mx", every=2e-12),
+            SaveScalar("my", every=2e-12),
+            SaveScalar("mz", every=2e-12),
+            Snapshot("m", "z", every=5e-11),
+        ],
+    ),
+    current_density=(0.0, 0.0, 8e10),
+    stt_spin_polarization=(0.0, 0.0, 1.0),
+    stt_degree=0.45,
+    stt_lambda=2.0,
+    stt_epsilon_prime=0.0,
+    temperature=300.0,
+    discretization=DiscretizationHints(
+        fdm=FDM(default_cell=(2.5e-9, 2.5e-9, 1.0e-9))
+    ),
+    runtime=RuntimeSelection(
+        backend_target=BackendTarget.FDM,
+        device_target=DeviceTarget.CUDA,
+        execution_mode=ExecutionMode.EXTENDED,
+    ),
+)
+```
+
+To jest dokładnie ten poziom ergonomii, który odblokuje Ci realną pracę.
+
+---
+
+## 16. Końcowa rekomendacja wykonawcza
+
+## Co robić od razu
+1. wystawić STT + temperaturę w `Problem`
+2. dodać przykład vortex + Oersted + FFT
+3. dodać przykład vortex + Slonczewski STT
+4. dodać minimalny panel GUI dla bias/STT
+
+## Czego nie odkładać
+5. physics note z konwencją znaków STT
+6. test regresyjny dla vortexu 400 nm
+
+## Co można odłożyć
+7. pełny model `R(t), V(t)` MTJ
+8. rozbudowaną analizę linewidth online
+9. lepszy eigen solver dla vortexu
+
+---
+
+## 17. Najkrótsza odpowiedź wdrożeniowa
+
+Jeżeli pytanie brzmi:
+
+> „Czy musimy dużo przebudować, żeby liczyć taki STNO?”
+
+to moja odpowiedź brzmi:
+
+> **Nie trzeba przepisywać silnika. Trzeba głównie dokończyć ekspozycję i diagnostykę.**
+
+Najważniejsze jest:
+- wyprowadzić STT z backendu do publicznego API,
+- dodać obserwable STNO,
+- dopiąć GUI,
+- nie opierać się na obecnym eigen-solverze jako głównym walidatorze vortexu.
+
+To jest projekt **realny do dopięcia bez zmiany fundamentów**.

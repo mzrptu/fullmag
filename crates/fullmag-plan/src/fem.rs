@@ -415,6 +415,8 @@ pub(crate) fn plan_fem(
             &mesh.mesh_name,
             magnet.initial_magnetization.as_ref(),
             mesh.nodes.len(),
+            Some(&mesh.nodes),
+            Some(&mesh.nodes),
         ) {
             Ok(initial_magnetization) => merged_initial_magnetization.extend(initial_magnetization),
             Err(message) => errors.push(message),
@@ -578,6 +580,14 @@ pub(crate) fn plan_fem(
                     &domain_asset.mesh.mesh_name,
                     effective_initial,
                     segment.node_count as usize,
+                    Some(
+                        &domain_asset.mesh.nodes
+                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                    ),
+                    Some(
+                        &domain_asset.mesh.nodes
+                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                    ),
                 )
                 .map_err(|message| PlanError {
                     reasons: vec![message],
@@ -1066,6 +1076,8 @@ pub(crate) fn plan_fem_eigen(
             &mesh.mesh_name,
             magnet.initial_magnetization.as_ref(),
             mesh.nodes.len(),
+            Some(&mesh.nodes),
+            Some(&mesh.nodes),
         ) {
             Ok(values) => merged_equilibrium.extend(values),
             Err(message) => errors.push(message),
@@ -1312,6 +1324,14 @@ pub(crate) fn plan_fem_eigen(
                     &domain_asset.mesh.mesh_name,
                     effective_initial,
                     segment.node_count as usize,
+                    Some(
+                        &domain_asset.mesh.nodes
+                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                    ),
+                    Some(
+                        &domain_asset.mesh.nodes
+                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                    ),
                 )
                 .map_err(|message| PlanError {
                     reasons: vec![message],

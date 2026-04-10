@@ -283,7 +283,10 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
     if (nodeId === "objects") return <GeometryPanel />;
     if (nodeId.startsWith("physobj-")) return <MaterialPanel nodeId={nodeId} />;
     if (nodeId.startsWith("mag-")) return <MaterialPanel nodeId={nodeId} view="magnetization" />;
-    if (nodeId.startsWith("reg-") && nodeId.endsWith("-texture")) {
+    if (
+      nodeId.startsWith("reg-") &&
+      (nodeId.endsWith("-texture") || nodeId.endsWith("-texture-transform"))
+    ) {
       return <MaterialPanel nodeId={nodeId} view="magnetization" />;
     }
     if (nodeId.startsWith("geo-") && nodeId.includes("-mesh")) {

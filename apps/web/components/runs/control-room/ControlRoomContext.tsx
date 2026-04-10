@@ -411,6 +411,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const [femArrowAlpha, setFemArrowAlpha] = useState(1);
   const [femArrowLengthScale, setFemArrowLengthScale] = useState(1);
   const [femArrowThickness, setFemArrowThickness] = useState(1);
+  const [femVectorDomainFilter, setFemVectorDomainFilter] = useState<
+    "auto" | "magnetic_only" | "full_domain" | "airbox_only"
+  >("auto");
+  const [femFerromagnetVisibilityMode, setFemFerromagnetVisibilityMode] = useState<
+    "hide" | "ghost"
+  >("hide");
   const [fdmVisualizationSettings, setFdmVisualizationSettings] =
     useState<VisualizationPresetFdmState>(DEFAULT_FDM_VISUALIZATION_SETTINGS);
   const [runUntilInput, setRunUntilInput] = useState("1e-12");
@@ -1131,6 +1137,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     pendingMeshConfigSignatureRef.current = null;
     setSelectedObjectId(hydratedScene.editor.selected_object_id);
     setObjectViewMode(normalizePersistedObjectViewMode(hydratedScene.editor.object_view_mode));
+    setFemVectorDomainFilter(hydratedScene.editor.vector_domain_filter ?? "auto");
+    setFemFerromagnetVisibilityMode(
+      hydratedScene.editor.ferromagnet_visibility_mode ?? "hide",
+    );
     setAirMeshVisible(hydratedScene.editor.air_mesh_visible ?? false);
     setAirMeshOpacity(
       typeof hydratedScene.editor.air_mesh_opacity === "number" &&
@@ -1191,6 +1201,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         previousEditor.selected_entity_id === selectedEntityId &&
         previousEditor.focused_entity_id === focusedEntityId &&
         previousEditor.object_view_mode === objectViewMode &&
+        previousEditor.vector_domain_filter === femVectorDomainFilter &&
+        previousEditor.ferromagnet_visibility_mode === femFerromagnetVisibilityMode &&
         previousEditor.active_transform_scope === activeTransformScope &&
         previousEditor.air_mesh_visible === airMeshVisible &&
         previousEditor.air_mesh_opacity === nextAirMeshOpacity &&
@@ -1217,6 +1229,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           selected_entity_id: selectedEntityId,
           focused_entity_id: focusedEntityId,
           object_view_mode: objectViewMode,
+          vector_domain_filter: femVectorDomainFilter,
+          ferromagnet_visibility_mode: femFerromagnetVisibilityMode,
           active_transform_scope: activeTransformScope,
           air_mesh_visible: airMeshVisible,
           air_mesh_opacity: nextAirMeshOpacity,
@@ -1229,6 +1243,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [
     airMeshOpacity,
     airMeshVisible,
+    femFerromagnetVisibilityMode,
+    femVectorDomainFilter,
     activeVisualizationPresetRef,
     focusedEntityId,
     meshEntityViewState,
@@ -1311,6 +1327,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
                 source_format: asset.source_format,
                 dataset: asset.dataset,
                 sample_index: asset.sample_index,
+                mapping: asset.mapping,
+                texture_transform: asset.texture_transform,
+                preset_kind: asset.preset_kind,
+                preset_params: asset.preset_params,
+                preset_version: asset.preset_version,
+                ui_label: asset.ui_label,
               }
             : asset;
         }),
@@ -2194,6 +2216,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
           arrow_length_scale: femArrowLengthScale,
           arrow_thickness: femArrowThickness,
           object_view_mode: objectViewMode,
+          vector_domain_filter: femVectorDomainFilter,
+          ferromagnet_visibility_mode: femFerromagnetVisibilityMode,
           air_mesh_visible: airMeshVisible,
           air_mesh_opacity: airMeshOpacity,
           mesh_entity_view_state: serializeMeshEntityViewStateForScene(meshEntityViewState),
@@ -2225,6 +2249,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       femArrowLengthScale,
       femArrowMonoColor,
       femArrowThickness,
+      femFerromagnetVisibilityMode,
+      femVectorDomainFilter,
       fdmVisualizationSettings,
       isFemBackend,
       meshClipAxis,
@@ -2463,6 +2489,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         setFemArrowLengthScale(preset.fem.arrow_length_scale);
         setFemArrowThickness(preset.fem.arrow_thickness);
         setObjectViewMode(preset.fem.object_view_mode);
+        setFemVectorDomainFilter(preset.fem.vector_domain_filter);
+        setFemFerromagnetVisibilityMode(preset.fem.ferromagnet_visibility_mode);
         setAirMeshVisible(preset.fem.air_mesh_visible);
         setAirMeshOpacity(preset.fem.air_mesh_opacity);
         setMeshEntityViewState(
@@ -3544,6 +3572,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     femArrowColorMode, femArrowMonoColor, femArrowAlpha, femArrowLengthScale, femArrowThickness,
+    femVectorDomainFilter, femFerromagnetVisibilityMode,
     fdmVisualizationSettings,
     visualizationProjectPresets: projectVisualizationPresets,
     visualizationLocalPresets: localVisualizationPresets,
@@ -3588,12 +3617,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     analyzeSelection,
     setSolverSettings, setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis, setMeshRenderMode, setMeshOpacity, setMeshClipEnabled, setMeshClipAxis,
     setMeshClipPos, setMeshShowArrows, setFemArrowColorMode, setFemArrowMonoColor, setFemArrowAlpha, setFemArrowLengthScale, setFemArrowThickness, setFdmVisualizationSettings, setMeshSelection, setMeshOptions, setFemDockTab,
+    setFemVectorDomainFilter, setFemFerromagnetVisibilityMode,
     setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
     createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
     femArrowColorMode, femArrowMonoColor, femArrowAlpha, femArrowLengthScale, femArrowThickness,
+    femVectorDomainFilter, femFerromagnetVisibilityMode,
     fdmVisualizationSettings, projectVisualizationPresets, localVisualizationPresets, activeVisualizationPresetRef,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,

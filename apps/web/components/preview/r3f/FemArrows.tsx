@@ -279,8 +279,9 @@ export function FemArrows({
     if (meshData.quantityDomain === "magnetic_only" && !effectiveNodeMask) {
       return [] as number[];
     }
-    const candidates =
-      filteredBoundaryCandidateNodes.length > 0
+    const candidates = effectiveNodeMask
+      ? filteredBoundaryCandidateNodes
+      : filteredBoundaryCandidateNodes.length > 0
         ? filteredBoundaryCandidateNodes
         : boundaryCandidateNodes;
     return sampleCandidateNodes(meshData.nodes, candidates, arrowDensity);

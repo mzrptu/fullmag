@@ -15,6 +15,7 @@ mod error;
 mod fdm;
 mod fem;
 mod geometry;
+mod magnetization_textures;
 mod mesh;
 mod util;
 mod validate;

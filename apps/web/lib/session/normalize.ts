@@ -421,6 +421,25 @@ function normalizeVisualizationPresetDomain(
   return raw === "fdm" ? "fdm" : "fem";
 }
 
+function normalizeFemVectorDomainFilter(
+  raw: unknown,
+): SceneDocument["editor"]["visualization_presets"][number]["fem"]["vector_domain_filter"] {
+  switch (raw) {
+    case "magnetic_only":
+    case "full_domain":
+    case "airbox_only":
+      return raw;
+    default:
+      return "auto";
+  }
+}
+
+function normalizeFemFerromagnetVisibilityMode(
+  raw: unknown,
+): SceneDocument["editor"]["visualization_presets"][number]["fem"]["ferromagnet_visibility_mode"] {
+  return raw === "ghost" ? "ghost" : "hide";
+}
+
 function normalizeVisualizationPresets(
   raw: unknown,
 ): SceneDocument["editor"]["visualization_presets"] {
@@ -459,6 +478,10 @@ function normalizeVisualizationPresets(
         arrow_length_scale: Number(fem?.arrow_length_scale ?? 1),
         arrow_thickness: Number(fem?.arrow_thickness ?? 1),
         object_view_mode: fem?.object_view_mode === "isolate" ? "isolate" : "context",
+        vector_domain_filter: normalizeFemVectorDomainFilter(fem?.vector_domain_filter),
+        ferromagnet_visibility_mode: normalizeFemFerromagnetVisibilityMode(
+          fem?.ferromagnet_visibility_mode,
+        ),
         air_mesh_visible: Boolean(fem?.air_mesh_visible ?? false),
         air_mesh_opacity: Number(fem?.air_mesh_opacity ?? 28),
         mesh_entity_view_state: normalizeSceneEditorMeshEntityViewState(
@@ -1307,6 +1330,10 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
         raw.editor?.object_view_mode === "isolate"
           ? raw.editor.object_view_mode
           : null,
+      vector_domain_filter: normalizeFemVectorDomainFilter(raw.editor?.vector_domain_filter),
+      ferromagnet_visibility_mode: normalizeFemFerromagnetVisibilityMode(
+        raw.editor?.ferromagnet_visibility_mode,
+      ),
       air_mesh_visible:
         typeof raw.editor?.air_mesh_visible === "boolean"
           ? raw.editor.air_mesh_visible

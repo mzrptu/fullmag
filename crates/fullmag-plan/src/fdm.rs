@@ -12,10 +12,41 @@ use crate::geometry::{
     cell_for_magnet, extract_multilayer_geometry, fdm_default_cell, ir_to_shape,
     validate_realized_grid, voxelize_shape, GeometryShape, LoweredBody,
 };
+use crate::magnetization_textures::{sample_preset_texture, TextureSamplePoint};
 use crate::util::{generate_random_unit_vectors, runtime_requests_cuda, MU0, PLACEMENT_TOLERANCE};
 use crate::validate::{
     planned_study_controls, validate_executable_outputs, validate_grid_asset_cell_size,
 };
+
+fn grid_sample_points(
+    grid_cells: [u32; 3],
+    cell_size: [f64; 3],
+    origin: [f64; 3],
+    active_mask: Option<&Vec<bool>>,
+) -> Vec<TextureSamplePoint> {
+    let nx = grid_cells[0] as usize;
+    let ny = grid_cells[1] as usize;
+    let nz = grid_cells[2] as usize;
+    let mut points = Vec::with_capacity(nx * ny * nz);
+    for z in 0..nz {
+        for y in 0..ny {
+            for x in 0..nx {
+                let idx = x + nx * (y + ny * z);
+                let world = [
+                    origin[0] + (x as f64 + 0.5) * cell_size[0],
+                    origin[1] + (y as f64 + 0.5) * cell_size[1],
+                    origin[2] + (z as f64 + 0.5) * cell_size[2],
+                ];
+                points.push(TextureSamplePoint {
+                    position_world: world,
+                    position_object: world,
+                    active: active_mask.map(|mask| mask[idx]).unwrap_or(true),
+                });
+            }
+        }
+    }
+    points
+}
 
 pub(crate) fn plan_fdm(
     problem: &ProblemIR,
@@ -299,13 +330,26 @@ pub(crate) fn plan_fdm(
             vectors
         }
         Some(InitialMagnetizationIR::SampledField { values }) => values.clone(),
-        Some(InitialMagnetizationIR::PresetTexture { preset_kind, .. }) => {
-            return Err(PlanError {
-                reasons: vec![format!(
-                    "magnet '{}' uses preset_texture '{}' but FDM planning still requires runtime pre-sampling to sampled_field values",
-                    magnet.name, preset_kind
-                )],
-            });
+        Some(InitialMagnetizationIR::PresetTexture {
+            preset_kind,
+            params,
+            mapping,
+            texture_transform,
+        }) => {
+            let origin = [
+                -(grid_cells[0] as f64 * cell_size[0]) * 0.5,
+                -(grid_cells[1] as f64 * cell_size[1]) * 0.5,
+                -(grid_cells[2] as f64 * cell_size[2]) * 0.5,
+            ];
+            let points = grid_sample_points(grid_cells, cell_size, origin, active_mask.as_ref());
+            match sample_preset_texture(preset_kind, params, mapping, texture_transform, &points) {
+                Ok(values) => values,
+                Err(message) => {
+                    return Err(PlanError {
+                        reasons: vec![format!("magnet '{}': {}", magnet.name, message)],
+                    });
+                }
+            }
         }
         None => {
             if let Some(ref mask) = active_mask {
@@ -796,12 +840,25 @@ pub(crate) fn plan_fdm_multilayer(
                 }
                 values.clone()
             }
-            Some(InitialMagnetizationIR::PresetTexture { preset_kind, .. }) => {
-                errors.push(format!(
-                    "magnet '{}' uses preset_texture '{}' but native FDM lowering still requires runtime pre-sampling to sampled_field values",
-                    magnet.name, preset_kind
-                ));
-                vec![[0.0, 0.0, 0.0]; n_cells]
+            Some(InitialMagnetizationIR::PresetTexture {
+                preset_kind,
+                params,
+                mapping,
+                texture_transform,
+            }) => {
+                let points = grid_sample_points(
+                    grid_cells,
+                    cell_size,
+                    native_origin,
+                    active_mask.as_ref(),
+                );
+                match sample_preset_texture(preset_kind, params, mapping, texture_transform, &points) {
+                    Ok(values) => values,
+                    Err(message) => {
+                        errors.push(format!("magnet '{}': {}", magnet.name, message));
+                        vec![[0.0, 0.0, 0.0]; n_cells]
+                    }
+                }
             }
             None => {
                 if let Some(ref mask) = active_mask {

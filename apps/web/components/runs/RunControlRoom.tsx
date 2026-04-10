@@ -24,7 +24,6 @@ import {
 } from "../../lib/session/magneticPhysics";
 import {
   assignMagneticPreset,
-  patchMagnetizationAsset,
 } from "../../lib/session/magnetizationAssetActions";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../panels/SolverSettingsPanel";
 import {
@@ -357,16 +356,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         if (!magnetizationRef) return prev;
         const descriptor = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === kind);
         if (!descriptor) return prev;
-        let next = assignMagneticPreset(prev, magnetizationRef, descriptor);
-        next = patchMagnetizationAsset(next, magnetizationRef, {
-          kind: "preset_texture",
-          value: null,
-          seed: null,
-          source_path: null,
-          source_format: null,
-          dataset: null,
-          sample_index: null,
-          preset_version: 1,
+        const next = assignMagneticPreset(prev, magnetizationRef, descriptor, {
+          objectId,
         });
         return {
           ...next,
@@ -402,16 +393,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         if (asset?.kind !== "preset_texture") {
           const fallback = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === "uniform");
           if (fallback) {
-            next = assignMagneticPreset(next, magnetizationRef, fallback);
-            next = patchMagnetizationAsset(next, magnetizationRef, {
-              kind: "preset_texture",
-              value: null,
-              seed: null,
-              source_path: null,
-              source_format: null,
-              dataset: null,
-              sample_index: null,
-              preset_version: 1,
+            next = assignMagneticPreset(next, magnetizationRef, fallback, {
+              objectId,
             });
           }
         }

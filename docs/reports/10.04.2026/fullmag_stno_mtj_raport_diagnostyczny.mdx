@@ -1,0 +1,677 @@
+---
+title: "Raport diagnostyczny — gotowość Fullmag do STNO/MTJ vortex"
+repo: "MateuszZelent/fullmag"
+generated_at: "2026-04-10"
+format: "mdx"
+---
+
+# Raport diagnostyczny: Fullmag a STNO/MTJ vortex
+
+## Kontekst
+
+Cel inspekcji był bardzo konkretny:
+
+- **układ**: nanokropka / nanopillar o średnicy **400 nm**
+- **warstwa aktywna**: **CoFeB(1 nm) / NiFe(8 nm)**
+- **zjawisko**: **vortex STNO**
+- **pobudzenie**:
+  - prąd elektryczny stały (DC),
+  - prąd elektryczny zmienny w czasie (AC / envelope),
+  - interesują nas zarówno **mod gyrotropowy vortexu**, jak i **fale spinowe**
+- **pytanie praktyczne**:
+  1. czy obecna fizyka / backend Fullmag już to potrafi,
+  2. czego jeszcze brakuje,
+  3. czy **GUI** jest gotowe do takiej analizy.
+
+Inspekcja objęła pięć warstw repozytorium:
+
+1. **publiczny Python DSL**
+2. **IR / planner**
+3. **engine / runner**
+4. **dokumentację i capability matrix**
+5. **frontend / GUI / analyze workspace**
+
+---
+
+## Werdykt w jednym akapicie
+
+**Krótki werdykt techniczny**:
+
+- **backend fizyczny** jest **bliżej gotowości niż sugeruje README i część dokumentacji**;
+- **publiczny workflow użytkownika** (Python DSL + GUI + analiza wyników) **nie jest jeszcze domknięty** dla pełnego przypadku **CPP MTJ vortex STNO**;
+- **pole Oersteda** i **czasowe pobudzenia prądowe** są już bardzo wyraźnie obecne;
+- **STT (w tym Slonczewski dla MTJ)** istnieje w warstwie IR / planner / runner, ale **nie jest normalnie wystawione w publicznym `Problem(...)`**;
+- **GUI** ma dziś sens głównie jako ogólny builder studiów i workbench do **eigenmodes / dispersion**, a **nie** jako kompletne środowisko do **time-domain STNO**.
+
+W praktyce oznacza to:
+
+> **Tak — da się dojść do symulacji vortex STNO w Fullmag, ale jeszcze nie przez w pełni gotowy, oficjalny i klikalny workflow.**  
+> **Nie — nie nazwałbym obecnego stanu „gotowym modułem STNO/MTJ” bez kilku brakujących ekspozycji i narzędzi diagnostycznych.**
+
+---
+
+## Macierz gotowości
+
+| Obszar | Stan | Komentarz |
+|---|---:|---|
+| Relaksacja dysku do vortexu | **TAK** | To jest realistyczny i naturalny pierwszy etap, szczególnie w FDM. |
+| Pobudzenie vortexu polem Oersteda (DC / sinus / pulse) | **TAK / prawie gotowe** | Publiczny DSL ma `OerstedCylinder` i obwiednie czasowe. |
+| Pobudzenie mikrofalowe przez antenę / current module | **TAK** | Jest publiczny model `AntennaFieldSource` i analiza źródła fal spinowych. |
+| Autooscylacja przez **Slonczewski STT** (CPP MTJ) | **CZĘŚCIOWO** | Low-level path wygląda na obecny, ale publiczny autoring nie jest domknięty. |
+| Zhang–Li STT | **CZĘŚCIOWO** | Istnieje w IR / runner, lecz dla MTJ CPP jest to tor drugorzędny. |
+| Temperatura / szum termiczny | **CZĘŚCIOWO** | Obiekty i pola są w kodzie, ale publiczny E2E path wymaga dopięcia i testu regresyjnego. |
+| Pełny model stacku MTJ (free / barrier / reference / transport / TMR) | **NIE** | Brak pierwszoklasowego modelu stosu MTJ i diagnostyki napięciowej. |
+| Ekstrakcja częstotliwości gyrotropowej z time trace | **TAK, ale zewnętrznie** | Da się po `mx,my,mz(t)` i FFT poza GUI. |
+| Linewidth / PSD / phase noise / orbit core | **NIE jako first-class feature** | Brakuje gotowych obserwabli i paneli analitycznych. |
+| GUI pod STNO | **NIE** | Jest za mało dedykowanych kontrolek i za mało diagnostyki domenowej. |
+| Eigenmodes dla silnie niejednorodnego vortexu jako główny walidator | **NIEZALECANE** | Obecny solver eigen jest za słaby jako główne narzędzie weryfikacji vortexu. |
+
+---
+
+## Co repozytorium ma już dziś
+
+## 1) Publiczny Python DSL: więcej niż sugerują stare notki
+
+W publicznym DSL znalazłem kilka bardzo istotnych elementów:
+
+### 1.1. Pole Oersteda od nanopillara
+
+W `packages/fullmag-py/src/fullmag/model/energy.py` jest:
+
+- `OerstedCylinder`
+- obwiednie czasowe:
+  - `Constant`
+  - `Sinusoidal`
+  - `Pulse`
+
+Co więcej, sam komentarz przy `OerstedCylinder` wprost odnosi się do **STNO / MTJ pillar**. To jest mocny sygnał, że autor repo **świadomie celował** w ten przypadek fizyczny.
+
+To oznacza, że dla Twojego zastosowania:
+
+- **DC current** → można modelować **statyczny bias Oersteda**
+- **AC current** → można modelować **rezonansowe pobudzenie** modu gyrotropowego i modów fal spinowych
+- **pulse** → można robić ringdown i ekstrakcję częstotliwości z odpowiedzi impulsowej
+
+### 1.2. Anizotropia, DMI, thermal-noise są w DSL
+
+W tym samym obszarze kodu są również:
+
+- `UniaxialAnisotropy`
+- `CubicAnisotropy`
+- `InterfacialDMI`
+- `BulkDMI`
+- `ThermalNoise`
+
+To nie jest jeszcze dowód, że każda z tych rzeczy działa end-to-end w każdym backendzie, ale jest to ważne z punktu widzenia architektury:
+
+- **CoFeB(1 nm)** często wymaga sensownego potraktowania **anizotropii interfejsowej / efektywnej**
+- dla oscylatora STNO docelowo chcesz móc badać:
+  - próg autooscylacji,
+  - amplitudę,
+  - selekcję modu,
+  - **linewidth**,
+  - wpływ **temperatury**
+
+Bez thermal/noise nie ma wiarygodnej ścieżki do linewidth.
+
+### 1.3. Materiał i geometria mają wystarczającą bazę pod thin-film disk
+
+W `Material` są jawnie dostępne:
+
+- `Ms`
+- `A`
+- `alpha`
+- stałe anisotropii
+- nawet pola przestrzennie zmienne:
+  - `Ms_field`
+  - `A_field`
+  - `alpha_field`
+  - `Ku_field` itd.
+
+To jest bardzo ważne dla Twojego przypadku, bo daje **dwie ścieżki modelowania**:
+
+#### Ścieżka A — model efektywny
+Potraktować `CoFeB(1)/NiFe(8)` jako **jedną efektywną warstwę swobodną** o grubości ~9 nm i skutecznych parametrach `Ms, A, alpha, Ku`.
+
+#### Ścieżka B — model jawny po `z`
+Zrobić jedną bryłę i nadać jej **przestrzennie zmienne parametry po osi `z`**:
+- komórka 0..1 nm → CoFeB
+- komórki 1..9 nm → NiFe
+
+To jest dzisiaj najbezpieczniejsza droga, jeśli chcesz odwzorować **exchange-coupled composite free layer** bez budowania skomplikowanej semantyki stosu MTJ.
+
+---
+
+## 2) IR / planner / runner: tu widać prawdziwy potencjał STNO
+
+Najmocniejszy wniosek z całej inspekcji jest taki:
+
+> **Warstwa IR / planner / runner wygląda na bardziej rozwiniętą fizycznie niż publiczny Python API i niż oficjalne „public-executable” notki.**
+
+### 2.1. STT już siedzi w `ProblemIR`
+
+W `crates/fullmag-ir/src/lib.rs` są pola typu:
+
+- `current_density`
+- `stt_degree`
+- `stt_beta`
+- `stt_spin_polarization`
+- `stt_lambda`
+- `stt_epsilon_prime`
+- `temperature`
+
+To jest dokładnie ten zestaw, którego oczekujesz od implementacji:
+
+- **Zhang–Li**
+- **Slonczewski**
+- temperatura / thermal path
+
+Dla **MTJ vortex oscillatora** najważniejsze jest tutaj:
+
+- `stt_spin_polarization`
+- `stt_lambda`
+- `stt_epsilon_prime`
+- `current_density`
+
+czyli sygnały, że **CPP-like STT path** jest przewidziany.
+
+### 2.2. Planner przenosi te pola dalej
+
+W `crates/fullmag-plan/src/fdm.rs` i `crates/fullmag-plan/src/fem.rs` widać, że plan zawiera i przenosi:
+
+- `current_modules`
+- parametry STT
+- `temperature`
+- parametry `OerstedCylinder`
+
+To oznacza, że nie jest to „martwe pole w IR”, tylko coś, co miało być użyte w backendzie wykonawczym.
+
+### 2.3. CPU reference i native FDM mają wyraźne ślady STT
+
+W runnerach znalazłem kilka istotnych faktów:
+
+- `cpu_reference.rs` buduje konfiguracje:
+  - `ZhangLiSttConfig`
+  - `SlonczewskiSttConfig`
+  - `SotConfig`
+- `native_fdm.rs` mapuje:
+  - `current_density`
+  - `stt_degree`
+  - `stt_beta`
+  - `stt_spin_polarization`
+  - `stt_lambda`
+  - `stt_epsilon_prime`
+  - oraz `OerstedCylinder`
+
+To już nie wygląda jak szkic. To wygląda jak **realnie przygotowany backend path**, tylko jeszcze **słabo wyprowadzony do użytkownika końcowego**.
+
+### 2.4. Anteny FEM i analiza źródła fal spinowych działają jako osobny tor
+
+Publiczne `current_modules` i `AntennaFieldSource` są z kolei powiązane z realnym runnerem FEM dla pola antenowego.
+
+To jest ważne, bo pokazuje, że Fullmag umie już rozwiązać **prąd → pole RF → pobudzenie fal spinowych** w dedykowanym torze.
+
+Dla Twojego zastosowania oznacza to:
+
+- jeśli chcesz badać **spin-wave excitation** niezależnie od STT, repo ma już rozsądny punkt zaczepienia,
+- ale architektonicznie jest tu pewien chaos, bo:
+  - **OerstedCylinder** siedzi jako **energy term**
+  - **RF antenna** siedzi jako **current_module**
+  - **STT** siedzi jako **ukryte pola `ProblemIR`**
+
+To są trzy różne ścieżki opisu „prądu”, które powinny docelowo zostać zunifikowane.
+
+---
+
+## 3) Największy problem: publiczny DSL nie wystawia STT
+
+To jest główny problem praktyczny.
+
+W `packages/fullmag-py/src/fullmag/model/problem.py` publiczna klasa `Problem` ma m.in.:
+
+- `magnets`
+- `energy`
+- `study`
+- `runtime`
+- `current_modules`
+- `excitation_analysis`
+
+ale **nie ma** pól typu:
+
+- `current_density`
+- `stt_degree`
+- `stt_beta`
+- `stt_spin_polarization`
+- `stt_lambda`
+- `stt_epsilon_prime`
+- `temperature`
+
+Czyli:
+
+> **low-level backend umie lub prawie umie, ale użytkownik nie ma normalnej, oficjalnej klamki do zadania CPP-STT w skrypcie.**
+
+To nie jest drobny detal. To jest główna luka, która dziś blokuje „normalny” workflow STNO.
+
+---
+
+## 4) Repo jest wewnętrznie niespójne: kod wyprzedza dokumentację
+
+To wracało przez całą inspekcję.
+
+### 4.1. README i public-executable scope są nadal wąskie
+
+Root `README.md` oraz część physics/spec docs sugerują publicznie znacznie węższy zakres, mniej więcej:
+
+- `Box + Exchange + Demag + Zeeman + TimeEvolution + FDM`
+- bardzo ostrożnie z FEM
+- bardzo ostrożnie z eigen
+
+### 4.2. Capability matrix też jest zachowawcza
+
+`docs/specs/capability-matrix-v0.md` nadal traktuje część z tych rzeczy jako:
+
+- planned
+- semantic-only
+- niepubliczne
+
+### 4.3. Tymczasem kod runnerów i plannerów jest szerszy
+
+Kod źródłowy mówi wyraźnie więcej:
+
+- STT
+- SOT
+- Oersted
+- anisotropy
+- DMI
+- thermal
+- antenna field
+
+Wniosek praktyczny:
+
+> **Trzeba rozróżnić „co repo umie od strony jądra” od „co repo obiecuje i wspiera jako oficjalny publiczny workflow”.**
+
+Dla Ciebie to oznacza:
+- do prac R&D można wejść szybciej,
+- ale do pracy „produkcyjnej / powtarzalnej / GUI-first” jeszcze brakuje porządków.
+
+---
+
+## 5) Czy obecna fizyka wystarcza do Twojego dokładnego układu?
+
+## 5.1. Dla vortexu 400 nm — tak, jako time-domain micromagnetics
+
+Nanokropka 400 nm z warstwą permalloy-like / soft free layer to klasyczny przypadek, w którym:
+
+- relaksacja do vortexu jest naturalna,
+- mod gyrotropowy najlepiej wyciągać z:
+  - impulsu,
+  - słabego pobudzenia AC,
+  - albo ringdown po krótkim kopnięciu.
+
+Na to Fullmag ma już wystarczającą bazę:
+
+- FDM
+- relax
+- time evolution
+- OerstedCylinder
+- zapisy `mx, my, mz`
+- snapshoty `m`
+
+### 5.2. Dla **MTJ CPP auto-oscillation** — jeszcze nie jako publiczne „gotowe”
+
+Jeżeli przez „modelowanie STNO (MTJ)” rozumiesz dokładnie:
+
+- free layer + reference layer + barrier
+- spin polarization z reference layer
+- CPP Slonczewski torque
+- Oersted bias
+- autooscylację
+- częstotliwość, orbita, linewidth i sygnał mikrofalowy
+
+to odpowiedź jest:
+
+> **backend wygląda na częściowo gotowy, ale produktowo i publicznie jeszcze nie.**
+
+Brakuje przynajmniej:
+
+1. **publicznego API do STT**
+2. **GUI do STT**
+3. **diagnostyki STNO**
+4. **jawnego modelu stacku MTJ**
+5. **spójnej dokumentacji konwencji znaków i parametrów**
+
+### 5.3. Co z CoFeB(1)/NiFe(8)?
+
+Dla tej konkretnej warstwy aktywnej rekomenduję **trzystopniową strategię modelowania**:
+
+#### Poziom 1 — model efektywny
+Najpierw uruchom:
+- jeden cylinder
+- wysokość 9 nm
+- efektywne `Ms, A, alpha, Ku`
+
+To pozwoli szybko odpowiedzieć:
+- czy vortex się stabilizuje,
+- jaka jest częstotliwość gyrotropowa,
+- jak wygląda odpowiedź na Oersteda.
+
+#### Poziom 2 — z-dependent material fields
+Potem dopiero przejdź na:
+- jedną bryłę
+- pola materiałowe zmienne po `z`
+
+To pozwoli odróżnić:
+- cienki CoFeB z możliwą większą anizotropią,
+- gruby NiFe jako główną część vortexową.
+
+#### Poziom 3 — pełny STT + temperatura
+Dopiero po zgraniu etapu 1–2:
+- włącz STT,
+- zrób sweep `J`,
+- dopiero potem `T > 0` i linewidth.
+
+To ograniczy liczbę miejsc, w których można „zgubić fizykę” albo stabilność numeryczną.
+
+---
+
+## 6) Co jest słabe lub niebezpieczne w obecnym stanie
+
+## 6.1. Rozszczepiona semantyka prądu
+
+Aktualnie „prąd” jest reprezentowany trzema różnymi mechanizmami:
+
+1. **`OerstedCylinder`** jako `energy term`
+2. **`AntennaFieldSource`** jako `current_module`
+3. **STT** jako ukryte pola `ProblemIR`
+
+To jest zła sytuacja z punktu widzenia:
+- UX,
+- GUI,
+- walidacji,
+- spójności dokumentacji.
+
+Dopóki to nie zostanie spięte jedną publiczną semantyką, GUI będzie zawsze „niepełne”.
+
+## 6.2. Brak first-class obserwabli STNO
+
+Dzisiaj masz głównie:
+- `mx`, `my`, `mz`
+- `time`
+- `solver_dt`
+- `max_h_eff`
+- `max_dm_dt`
+- pola `m`, `H_eff`, itd.
+
+To wystarcza do:
+- ręcznego FFT,
+- ręcznego oglądania vortexu,
+- eksportu snapshotów
+
+ale nie wystarcza do sensownego modułu STNO, gdzie chcesz od razu mieć:
+
+- PSD
+- peak frequency
+- linewidth
+- orbit radius
+- pozycję rdzenia vortexu `(Xc, Yc)`
+- topological charge / polarity diagnostics
+- fazę chwilową
+- amplitude envelope
+- ewentualnie `R(t)` / `V(t)` z modelu TMR
+
+## 6.3. GUI nie ma domenowych paneli STNO
+
+W UI jest:
+
+- ogólny builder studiów,
+- `study pipeline`,
+- analyze workbench nastawiony na **eigenmodes / dispersion**
+
+Nie znalazłem natomiast pełnego, dedykowanego wsparcia dla:
+
+- bias current density
+- STT polarization vector
+- `lambda`, `epsilon_prime`, `beta`
+- Oersted pillar geometry editor
+- thermal seed / temperature
+- DC sweep + AC overlay
+- FFT / PSD / linewidth panel
+- vortex core orbit plot
+- sygnał mikrofalowy / MTJ voltage
+
+## 6.4. Obecne eigenmodes nie są głównym narzędziem dla vortexu
+
+To jest bardzo ważny punkt.
+
+Dokumenty eigen/FEM mówią wprost, że aktualny solver:
+
+- jest jeszcze MVP / reference-style,
+- zachowuje tylko część operatora,
+- jest wiarygodniejszy dla stanów **jednorodnych lub prawie jednorodnych**
+
+Vortex jest z definicji:
+- **silnie niejednorodny**
+- ma topologię i przesunięty rdzeń
+- łatwo w nim o problemy przy uproszczonej linearyzacji
+
+Wniosek:
+
+> **Dla vortex STNO nie traktowałbym obecnego eigen-solvera jako głównego narzędzia walidacyjnego.**  
+> Podstawą powinien być **time-domain** + FFT + tracking rdzenia.
+
+---
+
+## 7) Czy GUI „mamy wszystko” do takiej analizy?
+
+**Nie.**
+
+Najuczciwsza odpowiedź brzmi:
+
+> **GUI ma dziś tylko część elementów potrzebnych do takiej analizy, ale nie ma kompletnego workflow STNO/MTJ.**
+
+### Co GUI już daje
+
+- budowanie pipeline’u typu:
+  - relax
+  - run
+  - eigenmodes
+  - sweeps / macros
+- panele analyze dla:
+  - eigen spectrum
+  - branch plots
+  - mode inspection
+
+### Czego brakuje w GUI
+
+#### Panel modelu fizycznego
+- STT block
+- model polaryzacji
+- rozróżnienie Slonczewski vs Zhang–Li
+- temperatura / seed
+- model stosu MTJ
+
+#### Panel pobudzenia
+- bias current + RF modulation
+- Oersted pillar editor
+- synchronizacja prądu z analizą sweepów
+
+#### Panel analizy
+- FFT / PSD
+- linewidth
+- orbit core
+- mode purity / autooscillation threshold
+- time-frequency spectrogram
+
+#### Panel wyników MTJ
+- `R(t)`
+- `V(t)`
+- mixing / rectification
+- power estimate
+
+### Dodatkowy sygnał ostrzegawczy
+
+Capability audit frontendu jest bardzo skromny i obejmuje tylko kilka podstawowych pozycji. To nie wygląda jak GUI już audytowane pod STNO.
+
+---
+
+## 8) Rekomendacja strategiczna
+
+## Rekomendacja główna
+
+**Tak — Fullmag warto pchać w stronę tego projektu.**  
+Ale najlepiej traktować to jako:
+
+> **„backend-prepared, public-workflow-incomplete”**
+
+To nie jest stan „zaczynam od GUI i od razu liczę vortex MTJ oscillator end-to-end”.
+To jest stan:
+- **jądro już dużo potrafi**
+- trzeba **wyprowadzić to do publicznego API**
+- trzeba **dołożyć analizę STNO**
+- trzeba **zsynchronizować dokumentację z kodem**
+
+---
+
+## 9) Priorytety prac
+
+## P0 — absolutnie konieczne
+
+1. **Wystawić STT i temperaturę w publicznym Python `Problem(...)`**
+2. **Dodać test E2E: vortex disk + Oersted + STT**
+3. **Dodać choć minimalny post-processing FFT / PSD**
+4. **Napisać physics note dla STT (konwencje znaków, parametrów, jednostek)**
+
+## P1 — bardzo ważne
+
+5. **GUI panel dla current bias / STT / Oersted**
+6. **Derived observables: core position, orbit radius, threshold**
+7. **Sparametryzowane przykłady CoFeB/NiFe disk**
+
+## P2 — kolejny etap
+
+8. **Model wyjścia MTJ: `R(t), V(t)`**
+9. **Lepszy eigen solver dla stanów silnie niejednorodnych**
+10. **Spójna semantyka prądu w całym systemie**
+
+---
+
+## 10) Ostateczna odpowiedź na Twoje pytanie
+
+### Czy fizyka Fullmag już pozwala modelować taki układ?
+
+**Częściowo tak.**  
+Jeżeli celem jest:
+
+- vortex w dysku 400 nm,
+- pobudzenie Oerstedem,
+- time-domain response,
+- analiza modu gyrotropowego i modów spinowych,
+
+to **tak, repo ma już realne podstawy**.
+
+Jeżeli celem jest:
+
+- **pełny MTJ CPP STNO**
+- z publicznego API / GUI
+- z autooscylacją od STT
+- z dobrymi obserwablami i analizą sygnału
+
+to **jeszcze nie w pełni**.
+
+### Czy trzeba coś poprawić / rozwinąć?
+
+**Tak, ale lista jest dość konkretna i ograniczona** — to nie wygląda na potrzebę przepisywania całego projektu.  
+Najbardziej brakuje:
+
+- ekspozycji STT/temperature,
+- diagnostyki STNO,
+- GUI,
+- porządku w dokumentacji i semantyce prądu.
+
+### Czy GUI już mamy do takiej analizy?
+
+**Nie.**
+GUI jest obecnie **za mało domenowe** dla STNO vortex MTJ.
+
+---
+
+## 11) Mój praktyczny plan wejścia w ten projekt
+
+Gdybym miał to wdrażać od razu, zrobiłbym to w tej kolejności:
+
+1. **NiFe-like effective disk 400 nm, t = 9 nm**
+2. relaksacja do vortexu
+3. słabe pobudzenie `OerstedCylinder(..., Sinusoidal(...))`
+4. FFT z `mx,my,mz`
+5. dopiero potem publiczne wystawienie Slon STT
+6. sweep gęstości prądu
+7. temperatura i linewidth
+8. na końcu GUI
+
+To minimalizuje ryzyko mieszania:
+- problemów numerycznych,
+- braków w API,
+- braków w analizie.
+
+---
+
+## Aneks A — najważniejsze pliki, które warto mieć przed oczami
+
+### Publiczny DSL / Python
+- `packages/fullmag-py/src/fullmag/model/energy.py`
+- `packages/fullmag-py/src/fullmag/model/structure.py`
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+- `packages/fullmag-py/src/fullmag/model/outputs.py`
+- `packages/fullmag-py/src/fullmag/model/study.py`
+- `packages/fullmag-py/src/fullmag/model/antenna.py`
+- `packages/fullmag-py/src/fullmag/model/discretization.py`
+
+### IR / planner / runner
+- `crates/fullmag-ir/src/lib.rs`
+- `crates/fullmag-plan/src/fdm.rs`
+- `crates/fullmag-plan/src/fem.rs`
+- `crates/fullmag-plan/src/validate.rs`
+- `crates/fullmag-runner/src/capabilities.rs`
+- `crates/fullmag-runner/src/cpu_reference.rs`
+- `crates/fullmag-runner/src/native_fdm.rs`
+- `crates/fullmag-runner/src/antenna_fields.rs`
+- `crates/fullmag-engine/src/lib.rs`
+- `crates/fullmag-engine/src/fdm_types.rs`
+
+### Dokumentacja / kontrakt
+- `README.md`
+- `docs/specs/capability-matrix-v0.md`
+- `docs/specs/visualization-quantities-v1.md`
+- `docs/physics/0050-shared-problem-semantics-and-embedded-python-api.md`
+- `docs/physics/0600-fem-eigenmodes.md`
+- `docs/physics/0600-fem-eigenmodes-linearized-llg.md`
+- `docs/physics/0800-fdm-sot.md`
+
+### GUI / frontend
+- `apps/web/lib/workspace/capability-contract.ts`
+- `apps/web/lib/study-builder/types.ts`
+- `apps/web/lib/study-builder/materialize.ts`
+- `apps/web/components/analyze/*`
+
+---
+
+## Aneks B — najkrótsza klasyfikacja gotowości
+
+### Do użycia już teraz
+- vortex relax
+- Oersted DC / AC
+- czasowa odpowiedź magnetyzacji
+- analiza manualna / skryptowa poza GUI
+
+### Do dopięcia przed właściwym STNO-MTJ
+- publiczne STT
+- temperatura end-to-end
+- GUI current/STT
+- FFT / PSD / orbit
+- dokumentacja STT
+
+### Do późniejszego etapu
+- TMR / `V(t)`
+- linewidth z termiką
+- pełny GUI STNO workbench
+- mocny eigen solver dla stanów niejednorodnych

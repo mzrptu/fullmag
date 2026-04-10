@@ -18,6 +18,7 @@ from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
 from fullmag.model.domain_frame import build_domain_frame, geometry_bounds
 from fullmag.model.energy import BulkDMI, Demag, Exchange, InterfacialDMI, Magnetoelastic, Zeeman
+from fullmag.model.spin_torque import SlonczewskiSTT, SpinTorque, ZhangLiSTT
 from fullmag.model.mechanics import (
     ElasticBody,
     ElasticMaterial,
@@ -848,6 +849,10 @@ class Problem:
         repr=False,
         compare=False,
     )
+    # Spin-transfer torque (optional)
+    spin_torque: SpinTorque | None = None
+    # Temperature for Brown thermal field [K] (optional, 0 = no noise)
+    temperature: float | None = None
     # Magnetoelastic (optional)
     elastic_materials: Sequence[ElasticMaterial] = ()
     elastic_bodies: Sequence[ElasticBody] = ()
@@ -865,6 +870,8 @@ class Problem:
         normalized_study = self._normalize_study()
         object.__setattr__(self, "study", normalized_study)
 
+        if self.temperature is not None and self.temperature < 0.0:
+            raise ValueError("temperature must be >= 0")
         ensure_unique_names((magnet.name for magnet in self.magnets), "magnet names")
         ensure_unique_names(
             (module.name for module in self.current_modules), "current module names"
@@ -998,6 +1005,12 @@ class Problem:
                 "discretization_hints": discretization.to_ir() if discretization else None,
             },
             "validation_profile": {"execution_mode": runtime.execution_mode.value},
+            # Spin-transfer torque
+            **(self.spin_torque.to_ir_fields() if self.spin_torque is not None else {}),
+            # Temperature
+            **({
+                "temperature": self.temperature,
+            } if self.temperature is not None else {}),
             # Magnetoelastic extensions
             "elastic_materials": [em.to_ir() for em in self.elastic_materials],
             "elastic_bodies": [eb.to_ir() for eb in self.elastic_bodies],
