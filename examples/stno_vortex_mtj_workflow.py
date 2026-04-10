@@ -5,6 +5,7 @@ Entrypoint: flat_workspace
 """
 
 from pathlib import Path
+import os
 
 import fullmag as fm
 
@@ -12,6 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 RELAXED_STATE_ZARR = SCRIPT_DIR / "stno_vortex_relaxed_m.zarr.zip"
 RELAXED_STATE_H5 = SCRIPT_DIR / "stno_vortex_relaxed_m.h5"
 USE_SAVED_RELAXED_STATE = RELAXED_STATE_ZARR.exists()
+USE_SAVED_RELAXED_STATE = USE_SAVED_RELAXED_STATE and os.getenv("FULLMAG_USE_SAVED_STATE") == "1"
 
 study = fm.study("stno_vortex_mtj_workflow")
 
@@ -20,10 +22,10 @@ study.engine("fem")
 study.device("cpu", precision="double")
 study.universe(
     mode="auto",
-    size=(800e-9, 800e-9, 300e-9),
+    size=(500e-9, 500e-9, 50e-9),
     center=(0, 0, 0),
     padding=(0, 0, 0),
-    airbox_hmax=80e-9,
+    airbox_hmax=200e-9,
 )
 study.interactive(True)
 
@@ -87,23 +89,22 @@ study.solver(max_error=1e-6, integrator="rk45", g=2.115)
 study.tableautosave(10e-12)
 
 # Run
-if not USE_SAVED_RELAXED_STATE:
-    relax_result = study.relax(
-        tol=1e-5,
-        max_steps=100_000,
-        algorithm="llg_overdamped",
-    )
-    if hasattr(relax_result, "save_state"):
-        relax_result.save_state(RELAXED_STATE_ZARR, format="zarr")
-        relax_result.save_state(RELAXED_STATE_H5, format="h5")
-        free.m = fm.load_magnetization(RELAXED_STATE_ZARR, format="zarr")
+# if not USE_SAVED_RELAXED_STATE:
+#     relax_result = study.relax(
+#         tol=1e-5,
+#         max_steps=100_000,
+#         algorithm="llg_overdamped",
+#     )
+#     if hasattr(relax_result, "save_state"):
+#         relax_result.save_state(RELAXED_STATE_ZARR, format="zarr")
+#         relax_result.save_state(RELAXED_STATE_H5, format="h5")
 
-study.run(100e-9)
+# study.run(100e-9)
 
-# Optional spectral diagnostics
-study.eigenmodes(
-    count=20,
-    target="lowest",
-    include_demag=True,
-    equilibrium_source="relax",
-)
+# # Optional spectral diagnostics
+# study.eigenmodes(
+#     count=20,
+#     target="lowest",
+#     include_demag=True,
+#     equilibrium_source="relax",
+# )

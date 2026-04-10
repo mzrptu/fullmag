@@ -484,6 +484,7 @@ fn bootstrap_workspace_payload(snapshot_json: &str) -> Result<String, ApiError> 
 /// `SessionStateResponse`, publishes it, and returns the bootstrap payload so
 /// the client can immediately transition out of the loading state.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct CreateWorkspaceRequest {
     #[serde(default)]
     name: Option<String>,

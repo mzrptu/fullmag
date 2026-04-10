@@ -217,11 +217,19 @@ def _geometry_to_trimesh(
     if isinstance(geometry, Box):
         return trimesh.creation.box(extents=geometry.size)
     if isinstance(geometry, Cylinder):
-        return trimesh.creation.cylinder(
-            radius=geometry.radius,
-            height=geometry.height,
+        # Build at unit scale first and then scale vertices to SI units.
+        # This avoids numerical degeneration for nano-scale dimensions where
+        # direct creation can collapse faces to zero in newer trimesh builds.
+        mesh = trimesh.creation.cylinder(
+            radius=1.0,
+            height=1.0,
             sections=cylinder_sections,
         )
+        mesh = mesh.copy()
+        mesh.vertices[:, 0] *= geometry.radius
+        mesh.vertices[:, 1] *= geometry.radius
+        mesh.vertices[:, 2] *= geometry.height
+        return mesh
     if isinstance(geometry, Ellipsoid):
         mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
         mesh.vertices[:, 0] *= geometry.rx
@@ -229,9 +237,10 @@ def _geometry_to_trimesh(
         mesh.vertices[:, 2] *= geometry.rz
         return mesh
     if isinstance(geometry, Ellipse):
-        mesh = trimesh.creation.cylinder(radius=1.0, height=geometry.height, sections=cylinder_sections)
+        mesh = trimesh.creation.cylinder(radius=1.0, height=1.0, sections=cylinder_sections)
         mesh.vertices[:, 0] *= geometry.rx
         mesh.vertices[:, 1] *= geometry.ry
+        mesh.vertices[:, 2] *= geometry.height
         return mesh
     if isinstance(geometry, Difference):
         base = _geometry_to_trimesh(geometry.base, trimesh, cylinder_sections)

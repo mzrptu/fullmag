@@ -1050,6 +1050,7 @@ impl ExchangeLlgProblem {
     }
 
     /// Effective field accumulation with telemetry instrumentation.
+    #[allow(dead_code)]
     pub(crate) fn effective_field_into_ws_telem(
         &self,
         magnetization: &[Vector3],
@@ -1112,6 +1113,7 @@ impl ExchangeLlgProblem {
     // Torques
     // ===================================================================
 
+    #[allow(dead_code)]
     pub(crate) fn zhang_li_stt_torque(
         &self,
         magnetization: &[Vector3],
@@ -1204,6 +1206,7 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn slonczewski_stt_torque(
         &self,
         magnetization: &[Vector3],
@@ -1254,6 +1257,7 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn sot_torque(&self, magnetization: &[Vector3], cfg: &SotConfig) -> Vec<Vector3> {
         const HBAR: f64 = 1.054571817e-34;
         const E_CHARGE: f64 = 1.60217662e-19;
@@ -1663,6 +1667,7 @@ impl ExchangeLlgProblem {
     ///
     /// This avoids the extra scratch-buffer passes needed to separate
     /// exchange / demag / external energy contributions.
+    #[allow(dead_code)]
     pub(crate) fn compute_step_observables_minimal(
         &self,
         magnetization: &[Vector3],
@@ -1719,6 +1724,7 @@ impl ExchangeLlgProblem {
     }
 
     /// Dispatch to full or minimal observables based on evaluation request.
+    #[allow(dead_code)]
     pub(crate) fn compute_step_observables(
         &self,
         magnetization: &[Vector3],
@@ -1905,6 +1911,7 @@ impl ExchangeLlgProblem {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn llg_rhs_full_ws(
         &self,
         magnetization: &[Vector3],

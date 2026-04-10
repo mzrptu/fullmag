@@ -465,6 +465,7 @@ pub(crate) enum PythonProgressEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub(crate) struct PythonProgressEnvelope {
     pub kind: String,
     #[serde(default)]

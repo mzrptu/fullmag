@@ -16,8 +16,6 @@
 //! let snapshot = t.finish(); // consumes, returns StepSnapshot
 //! ```
 
-use std::time::Instant;
-
 /// Per-step timing snapshot with named sections.
 #[derive(Debug, Clone, Default)]
 pub struct StepSnapshot {

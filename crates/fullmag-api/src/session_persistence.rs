@@ -57,6 +57,7 @@ pub(crate) struct SessionImportCommitRequest {
     pub fms_base64: String,
     /// Restore mode: "resume", "initial_condition", "config_only".
     #[serde(default)]
+    #[allow(dead_code)]
     pub restore_mode: Option<String>,
 }
 

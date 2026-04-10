@@ -167,6 +167,7 @@ impl CsrMatrix {
     }
 
     /// Build CSR from a map of (row, col) -> value entries.
+    #[allow(dead_code)]
     fn from_entries(n: usize, entries: &HashMap<(usize, usize), f64>) -> Self {
         // Group by row
         let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
@@ -3072,7 +3073,7 @@ impl FemLlgProblem {
 }
 
 #[derive(Debug, Clone)]
-struct TransferGridDesc {
+pub(crate) struct TransferGridDesc {
     grid: GridShape,
     cell_size: CellSize,
     bbox_min: Vector3,
@@ -3126,6 +3127,7 @@ struct TetGridOverlap {
 /// reused across all rasterization calls (C7).
 #[derive(Debug, Clone)]
 pub struct TransferGridCache {
+    #[allow(dead_code)]
     desc: TransferGridDesc,
     overlaps: Vec<TetGridOverlap>,
     /// Number of grid cells.
@@ -3134,7 +3136,8 @@ pub struct TransferGridCache {
 
 impl TransferGridCache {
     /// Build the overlap map for a given mesh topology and grid descriptor.
-    pub fn build(topology: &MeshTopology, desc: &TransferGridDesc) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn build(topology: &MeshTopology, desc: &TransferGridDesc) -> Self {
         let mut overlaps = Vec::new();
 
         for (element_index, element) in topology.elements.iter().enumerate() {
@@ -3236,7 +3239,8 @@ impl TransferGridCache {
     }
 
     /// Grid descriptor (for accessing cell_size, grid shape, etc.).
-    pub fn desc(&self) -> &TransferGridDesc { &self.desc }
+    #[allow(dead_code)]
+    pub(crate) fn desc(&self) -> &TransferGridDesc { &self.desc }
 
     /// Number of grid cells.
     pub fn n_cells(&self) -> usize { self.n_cells }

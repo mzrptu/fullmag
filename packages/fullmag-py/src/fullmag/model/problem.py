@@ -141,7 +141,23 @@ def _materialize_preset_texture_initial_conditions(
         geometry_name = magnet.geometry.geometry_name
         sampled_values: list[list[float]] | None = None
 
-        if geometry_name in fdm_assets:
+        # Prefer sampling on the realized shared-domain FEM mesh when present.
+        # This keeps sampled_field length aligned with the execution mesh nodes.
+        if domain_mesh_ir is not None and geometry_name in region_markers:
+            marker = region_markers[geometry_name]
+            sample_points = domain_mesh_ir.get("nodes") or []
+            sampled = prepare_initial_magnetization(
+                initial,
+                sample_points,
+                object_transform=object_transform,
+            )
+            mask = _node_mask_for_region_marker(domain_mesh_ir, marker)
+            if len(mask) == len(sampled):
+                sampled_values = [
+                    vector.tolist() if mask[index] else [0.0, 0.0, 0.0]
+                    for index, vector in enumerate(sampled)
+                ]
+        elif geometry_name in fdm_assets:
             asset = fdm_assets[geometry_name]
             sample_points = _fdm_cell_centers_from_asset(asset)
             sampled = prepare_initial_magnetization(
@@ -167,21 +183,6 @@ def _materialize_preset_texture_initial_conditions(
                     object_transform=object_transform,
                 )
                 sampled_values = sampled.tolist()
-        elif domain_mesh_ir is not None and geometry_name in region_markers:
-            marker = region_markers[geometry_name]
-            sample_points = domain_mesh_ir.get("nodes") or []
-            sampled = prepare_initial_magnetization(
-                initial,
-                sample_points,
-                object_transform=object_transform,
-            )
-            mask = _node_mask_for_region_marker(domain_mesh_ir, marker)
-            if len(mask) == len(sampled):
-                sampled_values = [
-                    vector.tolist() if mask[index] else [0.0, 0.0, 0.0]
-                    for index, vector in enumerate(sampled)
-                ]
-
         if sampled_values is None:
             raise ValueError(
                 f"magnet '{magnet.name}' uses preset_texture but no executable mesh/grid assets were available for pre-sampling"
@@ -378,8 +379,10 @@ def build_geometry_assets_for_request(
     if should_build_fem_assets and discretization.fem is not None:
         from fullmag._core import validate_mesh_ir
         from fullmag.model.geometry import ImportedGeometry
-        from fullmag.meshing import realize_fem_domain_mesh_asset, realize_fem_mesh_asset
-        from fullmag.meshing import realize_fem_domain_mesh_asset
+        from fullmag.meshing import (
+            realize_fem_domain_mesh_asset_from_components,
+            realize_fem_mesh_asset,
+        )
         from fullmag.meshing.gmsh_bridge import MeshData
 
         fem_mesh_cache_dir = _fem_mesh_cache_dir()
@@ -469,11 +472,11 @@ def build_geometry_assets_for_request(
             }
         elif study_universe is not None:
             domain_mesh, region_markers = (
-                realize_fem_domain_mesh_asset(
-                list(geometries),
-                discretization.fem,
-                study_universe=study_universe,
-                mesh_workflow=mesh_workflow,
+                realize_fem_domain_mesh_asset_from_components(
+                    list(geometries),
+                    discretization.fem,
+                    study_universe=study_universe,
+                    mesh_workflow=mesh_workflow,
                 )
             )
             domain_mesh_ir = domain_mesh.to_ir("study_domain")

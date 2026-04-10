@@ -76,6 +76,7 @@ pub struct AbmHistorySoA {
 }
 
 impl AbmHistorySoA {
+    #[allow(dead_code)]
     pub(crate) fn new() -> Self {
         Self {
             f_n: None,
@@ -106,6 +107,7 @@ impl AbmHistorySoA {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn restart(&mut self) {
         *self = Self::new();
     }

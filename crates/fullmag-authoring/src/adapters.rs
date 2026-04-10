@@ -692,6 +692,7 @@ fn script_builder_magnetization_from_asset(
     }
 }
 
+#[allow(dead_code)]
 pub fn magnetization_asset_for_preset(
     name: &str,
     preset_kind: &str,
