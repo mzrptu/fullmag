@@ -139,6 +139,8 @@ class FDM:
     per_magnet: dict[str, FDMGrid] | None = None
     demag: FDMDemag | None = None
     boundary_correction: str | None = None  # "none" | "volume" (T0) | "full" (T1)
+    boundary_phi_floor: float | None = None  # min volume fraction for stability (default 0.05)
+    boundary_delta_min: float | None = None  # min δ for T1 ECB stencil stability [cells]
 
     # --- backward compatibility: FDM(cell=(...)) --------------------------
     def __init__(
@@ -149,6 +151,8 @@ class FDM:
         per_magnet: dict[str, FDMGrid] | None = None,
         demag: FDMDemag | None = None,
         boundary_correction: str | None = None,
+        boundary_phi_floor: float | None = None,
+        boundary_delta_min: float | None = None,
     ) -> None:
         # Resolve old-style `cell=` to `default_cell=`
         if cell is not None and default_cell is not None:
@@ -175,6 +179,20 @@ class FDM:
                     f"got {boundary_correction!r}"
                 )
         object.__setattr__(self, "boundary_correction", boundary_correction)
+
+        if boundary_phi_floor is not None:
+            if not (0.0 < boundary_phi_floor < 1.0):
+                raise ValueError(
+                    f"boundary_phi_floor must be in (0, 1), got {boundary_phi_floor!r}"
+                )
+        object.__setattr__(self, "boundary_phi_floor", boundary_phi_floor)
+
+        if boundary_delta_min is not None:
+            if boundary_delta_min < 0.0:
+                raise ValueError(
+                    f"boundary_delta_min must be >= 0, got {boundary_delta_min!r}"
+                )
+        object.__setattr__(self, "boundary_delta_min", boundary_delta_min)
 
         # Must have at least one cell specification
         if self.default_cell is None and not self.per_magnet:
@@ -203,6 +221,10 @@ class FDM:
             ir["demag"] = self.demag.to_ir()
         if self.boundary_correction is not None:
             ir["boundary_correction"] = self.boundary_correction
+        if self.boundary_phi_floor is not None:
+            ir["boundary_phi_floor"] = self.boundary_phi_floor
+        if self.boundary_delta_min is not None:
+            ir["boundary_delta_min"] = self.boundary_delta_min
         return ir
 
 

@@ -1,7 +1,7 @@
 use crate::{
     add, cross, dot, norm, normalized, scale, sub, AbmHistory, CellSize, EffectiveFieldObservables,
     EffectiveFieldTerms, EngineError, ExchangeLlgProblem, GridShape, LlgConfig, MaterialParameters,
-    Result, StepReport, TimeIntegrator, Vector3, MU0,
+    Result, RhsEvaluation, StepReport, TimeIntegrator, Vector3, MU0,
 };
 use fullmag_ir::MeshIR;
 #[cfg(feature = "parallel")]
@@ -153,6 +153,24 @@ impl CsrMatrix {
 
     /// Sparse matrix-vector multiply: y = A * x
     pub fn spmv(&self, x: &[f64]) -> Vec<f64> {
+        #[cfg(feature = "parallel")]
+        {
+            // Rayon setup dominates for small/medium systems.
+            if self.n >= 20_000 {
+                return (0..self.n)
+                    .into_par_iter()
+                    .map(|row| {
+                        let start = self.row_ptr[row];
+                        let end = self.row_ptr[row + 1];
+                        let mut sum = 0.0;
+                        for idx in start..end {
+                            sum += self.values[idx] * x[self.col_idx[idx]];
+                        }
+                        sum
+                    })
+                    .collect();
+            }
+        }
         let mut y = vec![0.0; self.n];
         for row in 0..self.n {
             let start = self.row_ptr[row];
@@ -663,20 +681,7 @@ impl FemLlgProblem {
         state.magnetization = corrected;
         state.time_seconds += dt;
 
-        let observables = self.observe_vectors(state.magnetization())?;
-        Ok(StepReport {
-            time_seconds: state.time_seconds,
-            dt_used: dt,
-            step_rejected: false,
-            suggested_next_dt: None,
-            exchange_energy_joules: observables.exchange_energy_joules,
-            demag_energy_joules: observables.demag_energy_joules,
-            external_energy_joules: observables.external_energy_joules,
-            total_energy_joules: observables.total_energy_joules,
-            max_effective_field_amplitude: observables.max_effective_field_amplitude,
-            max_demag_field_amplitude: observables.max_demag_field_amplitude,
-            max_rhs_amplitude: observables.max_rhs_amplitude,
-        })
+        self.step_report_from_vectors(state.magnetization(), state.time_seconds, dt, false, None)
     }
 
     // -----------------------------------------------------------------------
@@ -763,20 +768,7 @@ impl FemLlgProblem {
         let _ = n; // suppress unused warning in parallel path
         state.time_seconds += dt;
 
-        let observables = self.observe_vectors(state.magnetization())?;
-        Ok(StepReport {
-            time_seconds: state.time_seconds,
-            dt_used: dt,
-            step_rejected: false,
-            suggested_next_dt: None,
-            exchange_energy_joules: observables.exchange_energy_joules,
-            demag_energy_joules: observables.demag_energy_joules,
-            external_energy_joules: observables.external_energy_joules,
-            total_energy_joules: observables.total_energy_joules,
-            max_effective_field_amplitude: observables.max_effective_field_amplitude,
-            max_demag_field_amplitude: observables.max_demag_field_amplitude,
-            max_rhs_amplitude: observables.max_rhs_amplitude,
-        })
+        self.step_report_from_vectors(state.magnetization(), state.time_seconds, dt, false, None)
     }
 
     // -----------------------------------------------------------------------
@@ -846,20 +838,13 @@ impl FemLlgProblem {
                     * (cfg.max_error / error.max(ZERO_THRESHOLD)).powf(1.0 / 3.0))
                 .max(cfg.dt_min)
                 .min(cfg.dt_max);
-                let observables = self.observe_vectors(state.magnetization())?;
-                return Ok(StepReport {
-                    time_seconds: state.time_seconds,
-                    dt_used: dt,
-                    step_rejected: false,
-                    suggested_next_dt: Some(dt_next),
-                    exchange_energy_joules: observables.exchange_energy_joules,
-                    demag_energy_joules: observables.demag_energy_joules,
-                    external_energy_joules: observables.external_energy_joules,
-                    total_energy_joules: observables.total_energy_joules,
-                    max_effective_field_amplitude: observables.max_effective_field_amplitude,
-                    max_demag_field_amplitude: observables.max_demag_field_amplitude,
-                    max_rhs_amplitude: observables.max_rhs_amplitude,
-                });
+                return self.step_report_from_vectors(
+                    state.magnetization(),
+                    state.time_seconds,
+                    dt,
+                    false,
+                    Some(dt_next),
+                );
             }
 
             let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(1.0 / 3.0);
@@ -1028,20 +1013,13 @@ impl FemLlgProblem {
                     (cfg.headroom * dt * (cfg.max_error / error.max(ZERO_THRESHOLD)).powf(0.2))
                         .max(cfg.dt_min)
                         .min(cfg.dt_max);
-                let observables = self.observe_vectors(state.magnetization())?;
-                return Ok(StepReport {
-                    time_seconds: state.time_seconds,
-                    dt_used: dt,
-                    step_rejected: false,
-                    suggested_next_dt: Some(dt_next),
-                    exchange_energy_joules: observables.exchange_energy_joules,
-                    demag_energy_joules: observables.demag_energy_joules,
-                    external_energy_joules: observables.external_energy_joules,
-                    total_energy_joules: observables.total_energy_joules,
-                    max_effective_field_amplitude: observables.max_effective_field_amplitude,
-                    max_demag_field_amplitude: observables.max_demag_field_amplitude,
-                    max_rhs_amplitude: observables.max_rhs_amplitude,
-                });
+                return self.step_report_from_vectors(
+                    state.magnetization(),
+                    state.time_seconds,
+                    dt,
+                    false,
+                    Some(dt_next),
+                );
             }
 
             let dt_new = cfg.headroom * dt * (cfg.max_error / error).powf(0.2);
@@ -1079,20 +1057,13 @@ impl FemLlgProblem {
             let f_accepted = self.llg_rhs_from_vectors(state.magnetization())?;
             state.abm_history.push(f_accepted, dt);
 
-            let observables = self.observe_vectors(state.magnetization())?;
-            return Ok(StepReport {
-                time_seconds: state.time_seconds,
-                dt_used: dt,
-                step_rejected: false,
-                suggested_next_dt: None,
-                exchange_energy_joules: observables.exchange_energy_joules,
-                demag_energy_joules: observables.demag_energy_joules,
-                external_energy_joules: observables.external_energy_joules,
-                total_energy_joules: observables.total_energy_joules,
-                max_effective_field_amplitude: observables.max_effective_field_amplitude,
-                max_demag_field_amplitude: observables.max_demag_field_amplitude,
-                max_rhs_amplitude: observables.max_rhs_amplitude,
-            });
+            return self.step_report_from_vectors(
+                state.magnetization(),
+                state.time_seconds,
+                dt,
+                false,
+                None,
+            );
         }
 
         // --- Full ABM3 step ---
@@ -1130,20 +1101,7 @@ impl FemLlgProblem {
         state.time_seconds += dt;
         state.abm_history.push(f_star, dt);
 
-        let observables = self.observe_vectors(state.magnetization())?;
-        Ok(StepReport {
-            time_seconds: state.time_seconds,
-            dt_used: dt,
-            step_rejected: false,
-            suggested_next_dt: None,
-            exchange_energy_joules: observables.exchange_energy_joules,
-            demag_energy_joules: observables.demag_energy_joules,
-            external_energy_joules: observables.external_energy_joules,
-            total_energy_joules: observables.total_energy_joules,
-            max_effective_field_amplitude: observables.max_effective_field_amplitude,
-            max_demag_field_amplitude: observables.max_demag_field_amplitude,
-            max_rhs_amplitude: observables.max_rhs_amplitude,
-        })
+        self.step_report_from_vectors(state.magnetization(), state.time_seconds, dt, false, None)
     }
 
     // -----------------------------------------------------------------------
@@ -1244,31 +1202,33 @@ impl FemLlgProblem {
             })
             .collect::<Vec<_>>();
         let magnetic_node_volumes = &self.topology.magnetic_node_volumes;
+        let max_effective_field_amplitude = max_norm(&effective_field);
+        let max_demag_field_amplitude = max_norm(&demag_field);
         #[cfg(feature = "parallel")]
-        let rhs = magnetization
+        let max_rhs_amplitude = magnetization
             .par_iter()
             .zip(effective_field.par_iter())
             .enumerate()
             .map(|(node, (m, h))| {
                 if magnetic_node_volumes[node] > 0.0 {
-                    self.llg_rhs_from_field(*m, *h)
+                    norm(self.llg_rhs_from_field(*m, *h))
                 } else {
-                    [0.0, 0.0, 0.0]
+                    0.0
                 }
             })
-            .collect::<Vec<_>>();
+            .reduce(|| 0.0, f64::max);
         #[cfg(not(feature = "parallel"))]
-        let rhs = magnetization
+        let max_rhs_amplitude = magnetization
             .iter()
             .enumerate()
             .map(|(node, m)| {
                 if magnetic_node_volumes[node] > 0.0 {
-                    self.llg_rhs_from_field(*m, effective_field[node])
+                    norm(self.llg_rhs_from_field(*m, effective_field[node]))
                 } else {
-                    [0.0, 0.0, 0.0]
+                    0.0
                 }
             })
-            .collect::<Vec<_>>();
+            .fold(0.0f64, f64::max);
         let exchange_energy_joules = if self.terms.exchange {
             self.exchange_energy_from_vectors(magnetization)
         } else {
@@ -1286,17 +1246,99 @@ impl FemLlgProblem {
         Ok(EffectiveFieldObservables {
             magnetization: magnetization.to_vec(),
             exchange_field,
-            demag_field: demag_field.clone(),
+            demag_field,
             external_field,
-            effective_field: effective_field.clone(),
+            effective_field,
             exchange_energy_joules,
             demag_energy_joules,
             external_energy_joules,
             total_energy_joules,
-            max_effective_field_amplitude: max_norm(&effective_field),
-            max_demag_field_amplitude: max_norm(&demag_field),
-            max_rhs_amplitude: max_norm(&rhs),
+            max_effective_field_amplitude,
+            max_demag_field_amplitude,
+            max_rhs_amplitude,
         })
+    }
+
+    fn evaluate_rhs_summary_from_vectors(&self, magnetization: &[Vector3]) -> Result<RhsEvaluation> {
+        let n = self.topology.n_nodes;
+        let exchange_field = if self.terms.exchange {
+            self.exchange_field_from_vectors(magnetization)
+        } else {
+            vec![[0.0, 0.0, 0.0]; n]
+        };
+        let (demag_field, demag_energy_joules) = if self.terms.demag {
+            self.demag_observables_from_vectors(magnetization)?
+        } else {
+            (vec![[0.0, 0.0, 0.0]; n], 0.0)
+        };
+        let external_field = self.external_field_vectors();
+        let anisotropy_field = self.anisotropy_field_from_vectors(magnetization);
+        let (interfacial_dmi_field, bulk_dmi_field) = self.dmi_fields_from_vectors(magnetization);
+        let exchange_energy_joules = if self.terms.exchange {
+            self.exchange_energy_from_vectors(magnetization)
+        } else {
+            0.0
+        };
+        let external_energy_joules =
+            if self.terms.external_field.is_some() || self.terms.per_node_field.is_some() {
+                self.external_energy_from_fields(magnetization, &external_field)
+            } else {
+                0.0
+            };
+        let total_energy_joules =
+            exchange_energy_joules + demag_energy_joules + external_energy_joules;
+        let max_demag_field_amplitude = max_norm(&demag_field);
+        let mut max_effective_field_amplitude = 0.0f64;
+        let mut max_rhs_amplitude = 0.0f64;
+        for node in 0..n {
+            let effective = add(
+                add(
+                    add(
+                        add(exchange_field[node], demag_field[node]),
+                        add(external_field[node], anisotropy_field[node]),
+                    ),
+                    interfacial_dmi_field[node],
+                ),
+                bulk_dmi_field[node],
+            );
+            let h_norm = norm(effective);
+            if h_norm > max_effective_field_amplitude {
+                max_effective_field_amplitude = h_norm;
+            }
+            let rhs = if self.topology.magnetic_node_volumes[node] > 0.0 {
+                self.llg_rhs_from_field(magnetization[node], effective)
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+            let rhs_norm = norm(rhs);
+            if rhs_norm > max_rhs_amplitude {
+                max_rhs_amplitude = rhs_norm;
+            }
+        }
+
+        Ok(RhsEvaluation {
+            exchange_energy_joules,
+            demag_energy_joules,
+            external_energy_joules,
+            total_energy_joules,
+            max_effective_field_amplitude,
+            max_demag_field_amplitude,
+            max_rhs_amplitude,
+        })
+    }
+
+    fn step_report_from_vectors(
+        &self,
+        magnetization: &[Vector3],
+        time_seconds: f64,
+        dt_used: f64,
+        step_rejected: bool,
+        suggested_next_dt: Option<f64>,
+    ) -> Result<StepReport> {
+        let evaluation = self.evaluate_rhs_summary_from_vectors(magnetization)?;
+        let mut report = evaluation.into_step_report(time_seconds, dt_used, step_rejected);
+        report.suggested_next_dt = suggested_next_dt;
+        Ok(report)
     }
 
     fn exchange_field_from_vectors(&self, magnetization: &[Vector3]) -> Vec<Vector3> {

@@ -381,8 +381,8 @@ impl NativeFdmBackend {
                 Some("full") => ffi::fullmag_fdm_boundary_correction::FULLMAG_FDM_BOUNDARY_FULL,
                 _ => ffi::fullmag_fdm_boundary_correction::FULLMAG_FDM_BOUNDARY_NONE,
             },
-            boundary_phi_floor: 0.0,
-            boundary_delta_min: 0.0,
+            boundary_phi_floor: plan.boundary_phi_floor.unwrap_or(0.0),
+            boundary_delta_min: plan.boundary_delta_min.unwrap_or(0.0),
             volume_fraction: plan
                 .boundary_geometry
                 .as_ref()

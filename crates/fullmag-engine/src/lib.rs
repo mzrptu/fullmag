@@ -38,7 +38,10 @@ pub type Vector3 = [f64; 3];
 // ── Re-exports from FDM modules ───────────────────────────────────────
 pub use fdm_demo::{run_reference_exchange_demo, ReferenceDemoReport};
 
-pub use fdm_fft::FftWorkspace;
+pub use fdm_fft::{
+    compute_newell_kernel_spectra, compute_newell_kernel_spectra_thin_film_2d, DemagKernelSpectra,
+    FftWorkspace,
+};
 
 pub use fdm_state::{
     AbmHistory, EffectiveFieldObservables, ExchangeLlgState, IntegratorBuffers, RhsEvaluation,

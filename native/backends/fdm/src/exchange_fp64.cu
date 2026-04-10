@@ -143,6 +143,8 @@ extern "C" __global__ void exchange_field_t0_fp64_kernel(
     const double *,
     const double *, const double *, const double *, const double *,
     const double *, const double *,
+    const uint32_t *, const double *,
+    int, int,
     double, double, double, double, double, double,
     uint32_t, uint32_t, uint32_t);
 
@@ -152,7 +154,9 @@ extern "C" __global__ void exchange_field_t1_fp64_kernel(
     const double *,
     const double *, const double *, const double *, const double *,
     const double *, const double *,
-    double, double, double, double, double, double,
+    const uint32_t *, const double *,
+    int, int,
+    double, double, double, double, double, double, double,
     uint32_t, uint32_t, uint32_t);
 
 void launch_exchange_field_fp64(Context &ctx) {
@@ -178,6 +182,10 @@ void launch_exchange_field_fp64(Context &ctx) {
             ctx.face_link_xp, ctx.face_link_xm,
             ctx.face_link_yp, ctx.face_link_ym,
             ctx.face_link_zp, ctx.face_link_zm,
+            ctx.region_mask,
+            ctx.exchange_lut,
+            ctx.has_region_mask ? 1 : 0,
+            FULLMAG_FDM_MAX_EXCHANGE_REGIONS,
             ctx.Ms, ctx.A,
             inv_dx2, inv_dy2, inv_dz2,
             ctx.phi_floor,
@@ -204,9 +212,14 @@ void launch_exchange_field_fp64(Context &ctx) {
             ctx.delta_xp, ctx.delta_xm,
             ctx.delta_yp, ctx.delta_ym,
             ctx.delta_zp, ctx.delta_zm,
+            ctx.region_mask,
+            ctx.exchange_lut,
+            ctx.has_region_mask ? 1 : 0,
+            FULLMAG_FDM_MAX_EXCHANGE_REGIONS,
             ctx.Ms, ctx.A,
             ctx.dx, ctx.dy, ctx.dz,
             ctx.delta_min,
+            ctx.phi_floor,
             ctx.nx, ctx.ny, ctx.nz);
         return;
     }

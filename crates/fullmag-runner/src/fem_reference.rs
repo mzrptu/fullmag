@@ -498,9 +498,26 @@ fn execute_reference_fem_impl(
 
         if !default_scalar_trace || !field_schedules.is_empty() {
             let ant = antenna_field_at(&problem, state.magnetization().len());
-            // Pre-compute observables when live mode is active so the live block can
-            // reuse them below without a second observe_state() call per step.
-            let step_observables: Option<StateObservables> = if live.is_some() {
+            let scalar_due_now = scalar_schedules
+                .iter()
+                .any(|schedule| is_due(state.time_seconds, schedule.next_time));
+            let field_due_now = field_schedules
+                .iter()
+                .any(|schedule| is_due(state.time_seconds, schedule.next_time));
+            let display_selection = live.as_ref().and_then(|handle| handle.display_selection.map(|get| get()));
+            let preview_due = display_selection
+                .as_ref()
+                .map(|selection| {
+                    display_refresh_due(last_preview_revision, selection, step_count)
+                })
+                .unwrap_or(false);
+            let preview_targets_global_scalar = display_selection
+                .as_ref()
+                .is_some_and(display_is_global_scalar);
+            let need_observables_for_live_preview = preview_due && !preview_targets_global_scalar;
+            let need_step_observables =
+                scalar_due_now || field_due_now || need_observables_for_live_preview;
+            let step_observables: Option<StateObservables> = if need_step_observables {
                 let obs = observe_state(&problem, &state, &ant)?;
                 current_observables = obs.clone();
                 Some(obs)
@@ -521,31 +538,20 @@ fn execute_reference_fem_impl(
                 step_observables.as_ref(),
             )?;
             if let Some(live) = live.as_mut() {
-                // Reuse already-computed observables from above — no extra observe_state call.
-                let observables = step_observables
-                    .as_ref()
-                    .expect("observables computed for live mode");
-                current_observables = observables.clone();
                 let emit_every = live.field_every_n.max(1);
-                let display_selection = live.display_selection.map(|get| get());
-                let preview_due = display_selection
-                    .as_ref()
-                    .map(|selection| {
-                        display_refresh_due(last_preview_revision, selection, step_count)
-                    })
-                    .unwrap_or(false);
-                let preview_targets_global_scalar = display_selection
-                    .as_ref()
-                    .is_some_and(display_is_global_scalar);
+                let display_selection = display_selection;
                 let magnetization =
                     if live.display_selection.is_none() && step_count % emit_every == 0 {
-                        Some(flatten_vectors(&observables.magnetization))
+                        Some(flatten_vectors(state.magnetization()))
                     } else {
                         None
                     };
                 let preview_field = if preview_due && !preview_targets_global_scalar {
                     let selection = display_selection.as_ref().expect("checked preview_due");
                     let request = selection.preview_request();
+                    let observables = step_observables
+                        .as_ref()
+                        .expect("observables computed for non-scalar preview");
                     Some(build_mesh_preview_field_with_active_mask(
                         &request,
                         select_observables(observables, &request.quantity)?,
@@ -556,15 +562,9 @@ fn execute_reference_fem_impl(
                 };
                 let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds)
                     || (preview_due && preview_targets_global_scalar);
-                let mut update_stats = make_step_stats(
-                    step_count,
-                    state.time_seconds,
-                    dt_step,
-                    wall_elapsed,
-                    observables,
-                );
+                let mut update_stats = latest_stats.clone();
                 if due_scalar_row || scalar_outputs_request_average_m(&scalar_schedules) {
-                    apply_average_m_to_step_stats(&mut update_stats, &observables.magnetization);
+                    apply_average_m_to_step_stats(&mut update_stats, state.magnetization());
                 }
                 let action = (live.on_step)(StepUpdate {
                     stats: update_stats,
@@ -594,9 +594,6 @@ fn execute_reference_fem_impl(
             }
         } else if let Some(live) = live.as_mut() {
             // No scheduled outputs, but live mode is active: compute observables once.
-            let ant = antenna_field_at(&problem, state.magnetization().len());
-            let observables = observe_state(&problem, &state, &ant)?;
-            current_observables = observables.clone();
             let emit_every = live.field_every_n.max(1);
             let display_selection = live.display_selection.map(|get| get());
             let preview_due = display_selection
@@ -608,16 +605,19 @@ fn execute_reference_fem_impl(
                 .is_some_and(display_is_global_scalar);
             let magnetization = if live.display_selection.is_none() && step_count % emit_every == 0
             {
-                Some(flatten_vectors(&observables.magnetization))
+                Some(flatten_vectors(state.magnetization()))
             } else {
                 None
             };
             let preview_field = if preview_due && !preview_targets_global_scalar {
                 let selection = display_selection.as_ref().expect("checked preview_due");
                 let request = selection.preview_request();
+                let ant = antenna_field_at(&problem, state.magnetization().len());
+                let observables = observe_state(&problem, &state, &ant)?;
+                current_observables = observables.clone();
                 Some(build_mesh_preview_field_with_active_mask(
                     &request,
-                    select_observables(&observables, &request.quantity)?,
+                    select_observables(&current_observables, &request.quantity)?,
                     mesh_quantity_active_mask(&request.quantity, &plan.mesh),
                 ))
             } else {
@@ -625,15 +625,9 @@ fn execute_reference_fem_impl(
             };
             let due_scalar_row = scalar_row_due(&scalar_schedules, state.time_seconds)
                 || (preview_due && preview_targets_global_scalar);
-            let mut update_stats = make_step_stats(
-                step_count,
-                state.time_seconds,
-                dt_step,
-                wall_elapsed,
-                &observables,
-            );
+            let mut update_stats = latest_stats.clone();
             if due_scalar_row || scalar_outputs_request_average_m(&scalar_schedules) {
-                apply_average_m_to_step_stats(&mut update_stats, &observables.magnetization);
+                apply_average_m_to_step_stats(&mut update_stats, state.magnetization());
             }
             let action = (live.on_step)(StepUpdate {
                 stats: update_stats,

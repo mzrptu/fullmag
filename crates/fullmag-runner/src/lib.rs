@@ -1081,15 +1081,33 @@ pub fn resolve_session_runtime_with_registry(
 }
 
 fn configured_cpu_threads(problem: &ProblemIR) -> usize {
-    problem
+    // 1. Explicit per-problem setting from runtime_metadata
+    let from_problem = problem
         .problem_meta
         .runtime_metadata
         .get("runtime_selection")
         .and_then(Value::as_object)
         .and_then(|selection| selection.get("cpu_threads"))
         .and_then(Value::as_u64)
-        .map(|threads| threads as usize)
-        .unwrap_or_else(default_cpu_threads)
+        .map(|threads| threads as usize);
+    if let Some(threads) = from_problem {
+        return threads;
+    }
+    // 2. Environment variable override
+    if let Some(threads) = env_cpu_threads() {
+        return threads;
+    }
+    // 3. Default: all available cores
+    default_cpu_threads()
+}
+
+/// Read thread count from `FULLMAG_CPU_THREADS` (or `RAYON_NUM_THREADS` as fallback).
+fn env_cpu_threads() -> Option<usize> {
+    std::env::var("FULLMAG_CPU_THREADS")
+        .ok()
+        .or_else(|| std::env::var("RAYON_NUM_THREADS").ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&threads| threads >= 1)
 }
 
 fn default_cpu_threads() -> usize {

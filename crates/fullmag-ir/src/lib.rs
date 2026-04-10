@@ -1829,6 +1829,14 @@ pub struct FdmPlanIR {
     /// Boundary correction tier: "none" | "volume" (T0) | "full" (T1)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_correction: Option<String>,
+    /// Minimum volume fraction for numerical stability (clamps φ_eff >= phi_floor).
+    /// Default in backend: 0.05.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_phi_floor: Option<f64>,
+    /// Minimum intersection distance δ for T1 ECB stencil stability [cells].
+    /// Default in backend: 0.0 (no clamping).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_delta_min: Option<f64>,
     /// Sub-cell geometry data (computed by planner when boundary_correction is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_geometry: Option<BoundaryGeometryIR>,
@@ -3382,6 +3390,8 @@ mod tests {
                 adaptive_timestep: None,
                 relaxation: None,
                 boundary_correction: None,
+                boundary_phi_floor: None,
+                boundary_delta_min: None,
                 boundary_geometry: None,
                 inter_region_exchange: vec![],
                 current_density: None,

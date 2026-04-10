@@ -513,10 +513,11 @@ class RuntimeSelection:
         if self.cpu_threads is not None and self.cpu_threads <= 0:
             raise ValueError("cpu_threads must be >= 1")
         if self.cpu_threads is not None and self.cpu_threads > 1:
-            warnings.warn(
-                f"cpu_threads={self.cpu_threads} requested but parallel CPU execution is not yet "
-                "implemented — the simulation will run single-threaded",
-                stacklevel=2,
+            import logging
+            logging.getLogger("fullmag.runtime").info(
+                "cpu_threads=%d — rayon thread pool will use %d threads",
+                self.cpu_threads,
+                self.cpu_threads,
             )
         if self.device_target in {DeviceTarget.CPU, DeviceTarget.AUTO} and self.device_index is not None:
             raise ValueError("device_index requires device_target='cuda' or 'gpu'")

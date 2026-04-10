@@ -18,6 +18,8 @@ if(FULLMAG_ENABLE_CUDA)
         src/device_info.cpp
         src/exchange_fp64.cu
         src/exchange_fp32.cu
+        src/exchange_t0_fp64.cu
+        src/exchange_t1_fp64.cu
         src/demag_fp64.cu
         src/demag_fp32.cu
         src/llg_fp64.cu

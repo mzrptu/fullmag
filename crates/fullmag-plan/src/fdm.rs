@@ -405,6 +405,8 @@ pub(crate) fn plan_fdm(
             .as_ref()
             .and_then(|h| h.fdm.as_ref())
             .and_then(|fdm| fdm.boundary_correction.clone()),
+        boundary_phi_floor: None,
+        boundary_delta_min: None,
         boundary_geometry: None,
         current_density: problem.current_density,
         stt_degree: problem.stt_degree,
