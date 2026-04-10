@@ -143,7 +143,41 @@ class Pulse:
         return {"kind": "pulse", "t_on": self.t_on, "t_off": self.t_off}
 
 
-TimeDependence = Constant | Sinusoidal | Pulse
+@dataclass(frozen=True, slots=True)
+class PiecewiseLinear:
+    """Piecewise-linear time dependence defined by (time, value) control points.
+
+    The envelope is interpolated linearly between successive points.  Before
+    the first point and after the last, the value is held constant at the
+    first/last value respectively.
+
+    Parameters
+    ----------
+    points : sequence of (time, value) pairs
+        At least 2 points with strictly increasing times.
+    """
+
+    points: tuple[tuple[float, float], ...]
+
+    def __init__(self, points: Sequence[Sequence[float]]) -> None:
+        converted = tuple(
+            (float(p[0]), float(p[1])) for p in points
+        )
+        if len(converted) < 2:
+            raise ValueError("PiecewiseLinear requires at least 2 points")
+        ts = [p[0] for p in converted]
+        if any(t2 <= t1 for t1, t2 in zip(ts, ts[1:])):
+            raise ValueError("PiecewiseLinear times must be strictly increasing")
+        object.__setattr__(self, "points", converted)
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "piecewise_linear",
+            "points": [[t, v] for t, v in self.points],
+        }
+
+
+TimeDependence = Constant | Sinusoidal | Pulse | PiecewiseLinear
 
 
 @dataclass(frozen=True, slots=True)

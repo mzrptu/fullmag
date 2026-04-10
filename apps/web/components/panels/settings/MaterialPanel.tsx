@@ -970,6 +970,7 @@ export default function MaterialPanel({
                           }))
                         }
                         options={[
+                          { label: "None", value: "none" },
                           { label: "Clamp", value: "clamp" },
                           { label: "Repeat", value: "repeat" },
                           { label: "Mirror", value: "mirror" },

@@ -17,7 +17,7 @@ from fullmag.model.antenna import AntennaFieldSource, SpinWaveExcitationAnalysis
 from fullmag.model.discretization import DiscretizationHints, FEM
 from fullmag.model.dynamics import LLG
 from fullmag.model.domain_frame import build_domain_frame, geometry_bounds
-from fullmag.model.energy import BulkDMI, CubicAnisotropy, Demag, Exchange, InterfacialDMI, Magnetoelastic, OerstedCylinder, ThermalNoise, UniaxialAnisotropy, Zeeman
+from fullmag.model.energy import BulkDMI, CubicAnisotropy, Demag, Exchange, InterfacialDMI, Magnetoelastic, OerstedCylinder, PiecewiseLinear, ThermalNoise, UniaxialAnisotropy, Zeeman
 from fullmag.model.spin_torque import SlonczewskiSTT, SpinTorque, ZhangLiSTT
 from fullmag.model.mechanics import (
     ElasticBody,
@@ -727,6 +727,13 @@ def _builder_editable_scopes(
         problem.discretization is not None and problem.discretization.fem is not None
     ):
         scopes.append("meshing")
+    # STNO scopes (F03)
+    if problem.spin_torque is not None:
+        scopes.append("spin_torque")
+    if problem.temperature is not None:
+        scopes.append("thermal")
+    if any(isinstance(t, OerstedCylinder) for t in problem.energy):
+        scopes.append("oersted")
     return scopes
 
 
@@ -792,6 +799,9 @@ def build_problem_builder_manifest(
             "study": problem.study.to_ir(),
             "discretization": problem.discretization.to_ir() if problem.discretization else None,
             "mesh_workflow": mesh_workflow,
+            # STNO / drive fields (F02)
+            "spin_torque": problem.spin_torque.to_ir_fields() if problem.spin_torque is not None else None,
+            "temperature": problem.temperature,
         },
     }
     if study_pipeline is not None:
@@ -875,6 +885,22 @@ class Problem:
 
         if self.temperature is not None and self.temperature < 0.0:
             raise ValueError("temperature must be >= 0")
+
+        # Validate ThermalNoise ↔ temperature consistency (F01)
+        thermal_terms = [t for t in self.energy if isinstance(t, ThermalNoise)]
+        if len(thermal_terms) > 1:
+            raise ValueError(
+                "at most one ThermalNoise energy term is allowed"
+            )
+        if thermal_terms and self.temperature is not None:
+            tn = thermal_terms[0]
+            if abs(tn.temperature - self.temperature) > 1e-6:
+                raise ValueError(
+                    f"ThermalNoise.temperature ({tn.temperature} K) conflicts with "
+                    f"Problem.temperature ({self.temperature} K); use one or the other, "
+                    f"or ensure they match"
+                )
+
         ensure_unique_names((magnet.name for magnet in self.magnets), "magnet names")
         ensure_unique_names(
             (module.name for module in self.current_modules), "current module names"

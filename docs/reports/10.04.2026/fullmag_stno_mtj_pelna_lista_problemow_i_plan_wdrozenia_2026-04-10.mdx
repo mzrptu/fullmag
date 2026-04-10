@@ -1,0 +1,3213 @@
+
+---
+title: "Fullmag STNO/MTJ — pełna lista problemów i bardzo szczegółowy plan wdrożenia"
+date: "2026-04-10"
+author: "OpenAI"
+repo: "MateuszZelent/fullmag"
+format: "mdx"
+---
+
+# Fullmag STNO/MTJ — pełna lista problemów i bardzo szczegółowy plan wdrożenia
+
+## 1. Cel dokumentu
+
+Ten dokument zbiera **wszystkie wykryte problemy** związane z próbą zbudowania **produkcyjnego** workflow STNO/MTJ dla przypadku:
+
+- vortex w nanokropce o średnicy 400 nm,
+- stos materiałowy uproszczony do modelu swobodnej warstwy typu CoFeB(1 nm) / NiFe(8 nm),
+- pobudzenie przez:
+  - spin-transfer torque (STT),
+  - pole Oersteda od prądu stałego lub zmiennego w czasie,
+  - temperaturę / fluktuacje termiczne,
+- analiza:
+  - sygnału czasowego,
+  - PSD/FFT,
+  - częstotliwości piku,
+  - linewidth,
+  - trajektorii rdzenia vortexu,
+  - promienia orbity,
+  - fazy.
+
+Dokument ma dwa zadania jednocześnie:
+
+1. **Audyt stanu obecnego** repozytorium.
+2. **Plan wdrożeniowy plik-po-pliku**, bardzo szczegółowy, tak aby można go było zamienić na serię PR-ów.
+
+---
+
+## 2. Werdykt wykonawczy
+
+### 2.1. Werdykt krótki
+
+**Nie, repo nie jest jeszcze w stanie „produkcyjny model STNO end-to-end”.**
+
+Najbliżej tego celu jest dziś ścieżka:
+
+- **Python DSL / IR** — w dużej części przygotowana,
+- **native FDM / CUDA** — najbliżej pełnej fizyki STNO,
+- **frontend** — nadal niepełny,
+- **CPU fallback** — nie ma pełnej parzystości z backendem produkcyjnym,
+- **FEM path** — ma Oersteda i temperaturę, ale brak potwierdzonego pełnego STT end-to-end.
+
+### 2.2. Co już działa lub jest bardzo blisko
+
+Na podstawie publicznie sprawdzalnych warstw repo da się potwierdzić, że:
+
+- `Problem` ma już pola `spin_torque` i `temperature`.
+- Python DSL ma klasy:
+  - `SlonczewskiSTT`,
+  - `ZhangLiSTT`,
+  - `OerstedCylinder`,
+  - `Sinusoidal`,
+  - `Pulse`,
+  - `ThermalNoise`,
+  - `UniaxialAnisotropy`,
+  - `CubicAnisotropy`.
+- IR wspiera:
+  - top-level STT,
+  - top-level `temperature`,
+  - `EnergyTermIR::OerstedCylinder`,
+  - `TimeDependenceIR`,
+  - `RfDriveIR`,
+  - capability flags: `supports_stt`, `supports_thermal`, `supports_oersted`.
+- `native_fdm` runner ma opis planu obejmujący STT, temperaturę i Oersteda, w tym parametry czasowe pobudzenia.
+- `native_fem` runner przenosi Oersteda i temperaturę.
+- przykład `examples/stno_vortex_mtj_workflow.py` już istnieje i serializuje STT, temperaturę oraz Oersteda.
+
+### 2.3. Dlaczego mimo tego nie daję statusu „produkcyjny”
+
+Bo nadal występują blokery strukturalne:
+
+1. **Rozjazd publicznego API i builder/UI**  
+   `Problem` ma już STT i temperaturę, ale builder manifest nie publikuje ich jako pełnoprawnych pól round-trip dla UI.
+
+2. **Brak pełnej parzystości backendów**  
+   Najbliżej pełnej fizyki STNO jest `native_fdm`, ale:
+   - CPU reference ma STT + thermal, lecz brak w nim potwierdzonego Oersteda,
+   - native FEM ma Oersteda + thermal, ale brak potwierdzonego STT.
+
+3. **Frontend nie ma pełnego UI STNO**  
+   Nie ma potwierdzonego kompletnego authoringu i analyze workbench dla:
+   - STT,
+   - temperatury,
+   - Oersted cylinder,
+   - waveformów,
+   - PSD / linewidth / orbit / core tracking.
+
+4. **Postprocessing jest na razie badawczy, nie produkcyjny**  
+   `linewidth_lorentzian` jest w praktyce estymatorem half-maximum, a nie rzetelnym dopasowaniem Lorenza.  
+   `track_vortex_core` jest heurystyką, nie stabilnym trackerem produkcyjnym.
+
+5. **Brak twardej walidacji, benchmarków i testów regresyjnych STNO**  
+   Widoczny zestaw testów Python nie pokrywa STNO, Oersteda, temperatury, linewidth ani trackingu vortexu.
+
+---
+
+## 3. Matryca gotowości — stan realny
+
+## 3.1. Warstwa Python DSL
+
+**Stan:** częściowo gotowa, ale niespójna.
+
+Plusy:
+- są klasy STT,
+- jest OerstedCylinder z time dependence,
+- jest temperatura i ThermalNoise,
+- przykład STNO istnieje.
+
+Minusy:
+- alias `EnergyTerm` jest nieaktualny względem realnych klas fizycznych,
+- publiczny export surface jest niespójny,
+- builder manifest nie wystawia wszystkiego, co DSL już potrafi.
+
+## 3.2. IR / Planner
+
+**Stan:** dobra baza kontraktowa, ale z oznakami dryfu architektonicznego.
+
+Plusy:
+- IR ma pola STT / thermal / Oersted / waveformy,
+- capability matrix przewiduje STT, Oersteda, thermal.
+
+Minusy:
+- komentarze i część plannerowego opisu nadal sugerują „phase 1” i węższy zakres wykonawczy niż to, co widać już w runnerach,
+- Python DSL nie mapuje jeszcze całego zakresu dostępnego w IR.
+
+## 3.3. Native FDM
+
+**Stan:** najbliżej produkcyjnego STNO.
+
+Plusy:
+- runner przenosi STT, thermal i Oersteda,
+- capability matrix deklaruje szeroki zestaw termów.
+
+Minusy:
+- brak potwierdzonego pełnego przepływu thermal seed,
+- trzeba zbudować walidację fizyczną i benchmarki STNO,
+- trzeba domknąć artefakty i analitykę.
+
+## 3.4. CPU reference FDM
+
+**Stan:** niepełna ścieżka referencyjna.
+
+Plusy:
+- ma STT,
+- ma temperaturę / thermal_dt.
+
+Minusy:
+- brak potwierdzonego Oersteda,
+- capability commentary mówi, że `H_ant` jest zawsze zerowe,
+- brak pełnej parzystości z native FDM.
+
+## 3.5. Native FEM
+
+**Stan:** niepełny dla STNO.
+
+Plusy:
+- ma Oersteda,
+- ma temperaturę.
+
+Minusy:
+- brak potwierdzonego przepływu STT w wrapperze,
+- brak podstaw, by traktować FEM jako kompletny backend STNO dla MTJ vortex oscillator.
+
+## 3.6. Frontend
+
+**Stan:** niepełny.
+
+Plusy:
+- ma ogólny builder etapów i analyze dla eigen/dispersion.
+
+Minusy:
+- brak pełnego UI authoring dla STNO,
+- brak analyze workbench pod PSD/FFT/linewidth/core tracking,
+- brak sensownego round-trip builder manifest ↔ UI dla STT/thermal/Oersted.
+
+## 3.7. Dokumentacja i testy
+
+**Stan:** nieprodukcyjny.
+
+Plusy:
+- jest przykład workflow STNO.
+
+Minusy:
+- brak noty fizycznej STNO/vortex/Oersted,
+- brak szerokiego pakietu testów,
+- brak benchmarków jakościowych i ilościowych.
+
+---
+
+## 4. Podstawa dowodowa
+
+Poniżej skrócony spis najważniejszych miejsc w repo, na których opiera się ten raport:
+
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+- `packages/fullmag-py/src/fullmag/model/spin_torque.py`
+- `packages/fullmag-py/src/fullmag/model/energy.py`
+- `packages/fullmag-py/src/fullmag/model/__init__.py`
+- `packages/fullmag-py/src/fullmag/__init__.py`
+- `examples/stno_vortex_mtj_workflow.py`
+- `packages/fullmag-py/src/fullmag/analysis/spectrum.py`
+- `packages/fullmag-py/src/fullmag/analysis/vortex.py`
+- `crates/fullmag-ir/src/lib.rs`
+- `crates/fullmag-plan/src/lib.rs`
+- `crates/fullmag-plan/src/fdm.rs`
+- `crates/fullmag-runner/src/capabilities.rs`
+- `crates/fullmag-runner/src/cpu_reference.rs`
+- `crates/fullmag-runner/src/native_fdm.rs`
+- `crates/fullmag-runner/src/native_fem.rs`
+- `docs/physics/*`
+- `apps/web/lib/study-builder/types.ts`
+- `apps/web/lib/study-builder/materialize.ts`
+- `apps/web/components/analyze/*`
+
+Wnioski typu „brak X” oznaczają tu: **nie znaleziono potwierdzonej implementacji w sprawdzonych publicznie warstwach repo**. Tam, gdzie nie oglądałem jądra numerycznego lub plików FFI backendu, zaznaczam to jawnie.
+
+---
+
+## 5. Pełna lista problemów
+
+Poniżej każdy problem ma identyfikator, klasyfikację, dotknięte pliki, dokładny opis oraz plan zmiany.
+
+---
+
+# Problem F01 — alias `EnergyTerm` w Python DSL jest nieaktualny względem realnych klas fizycznych
+
+**Krytyczność:** wysoka  
+**Obszar:** Python DSL / typowanie / builder / ergonomia API
+
+## Stan obecny
+
+W `problem.py` alias `EnergyTerm` nie odzwierciedla pełnego zestawu klas, które faktycznie istnieją w `energy.py` i są używane w przykładzie STNO. To oznacza, że DSL i typowanie są rozjechane z realną fizyką modelu.
+
+## Skutek
+
+- typowanie jest mylące,
+- edytory i narzędzia statyczne pokazują niepełny kontrakt,
+- builder manifest i walidacja mogą nie nadążać za realnym zakresem API,
+- przykład STNO wygląda jakby używał fizyki „spoza oficjalnego typu”.
+
+## Potwierdzone symptomy
+
+Widoczne są klasy:
+- `OerstedCylinder`,
+- `UniaxialAnisotropy`,
+- `CubicAnisotropy`,
+- `ThermalNoise`,
+
+a alias `EnergyTerm` nie jest z nimi w pełni zgodny.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/problem.py`
+2. ewentualnie `packages/fullmag-py/src/fullmag/model/energy.py`
+3. testy:
+   - `packages/fullmag-py/tests/test_api.py`
+   - nowy: `packages/fullmag-py/tests/test_energy_terms_contract.py`
+
+## Wymagane zmiany
+
+### A. Ujednolicić alias `EnergyTerm`
+
+Docelowo alias powinien obejmować wszystkie publiczne, wspierane przez DSL termy energii. Minimalna wersja:
+
+```python
+EnergyTerm = (
+    Exchange
+    | Demag
+    | Zeeman
+    | InterfacialDMI
+    | BulkDMI
+    | UniaxialAnisotropy
+    | CubicAnisotropy
+    | OerstedCylinder
+    | Magnetoelastic
+    | ThermalNoise
+)
+```
+
+### B. Zdecydować, czy `ThermalNoise` ma pozostać energy termem
+
+To jest ważna decyzja architektoniczna.
+
+Są dwie opcje:
+
+#### Opcja 1 — `ThermalNoise` pozostaje energy termem
+Wtedy:
+- trzeba konsekwentnie włączyć go do `EnergyTerm`,
+- jawnie opisać relację `Problem.temperature` ↔ `ThermalNoise`,
+- zdefiniować precedence rules.
+
+#### Opcja 2 — `ThermalNoise` przestaje być energy termem
+Wtedy:
+- trzeba usunąć go z `energy.py` jako term lub oznaczyć deprecated,
+- wprowadzić osobny model `ThermalConfig`,
+- przenieść go do top-level `Problem`.
+
+**Rekomendacja:** dla produkcyjnego STNO wybrać **Opcję 2**.  
+Top-level temperatura + seed + opcjonalna polityka generatora jest architektonicznie czystsza niż „term energii”, który w praktyce jest fluktuacją stochastyczną, a nie deterministycznym wkładem energetycznym.
+
+### C. Dodać walidację spójności
+
+Jeżeli przez okres przejściowy zostaje:
+- `Problem.temperature`
+- oraz `ThermalNoise(...)`
+
+to trzeba w `Problem.__post_init__` lub w validatorze zablokować niejednoznaczne przypadki:
+
+- `temperature is not None` i jednocześnie `ThermalNoise` w `energy_terms` z inną temperaturą,
+- dwa różne seed source,
+- `temperature < 0`.
+
+## Kryteria akceptacji
+
+- type checker widzi pełny kontrakt,
+- wszystkie przykłady STNO przechodzą bez hacków typowych,
+- dokumentacja i auto-complete odzwierciedlają realne API.
+
+## Testy
+
+1. Konstrukcja `Problem(..., energy_terms=[OerstedCylinder(...)])` nie powoduje niezgodności typowej.
+2. Konstrukcja z `UniaxialAnisotropy` i `CubicAnisotropy` przechodzi.
+3. Konfiguracje konfliktowe thermal są odrzucane z czytelnym błędem.
+
+## Szacowany zakres
+
+- kod: 40–120 LOC,
+- testy: 80–180 LOC.
+
+---
+
+# Problem F02 — builder manifest nie publikuje `spin_torque` i `temperature` jako pełnych pól problemu
+
+**Krytyczność:** krytyczna  
+**Obszar:** Python DSL ↔ frontend round-trip
+
+## Stan obecny
+
+`Problem` ma już pola `spin_torque` i `temperature`, ale manifest budowany dla buildera nie wystawia ich jako pełnoprawnej części modelu, którą UI może bezstratnie edytować i zapisać.
+
+## Skutek
+
+- UI nie ma gwarantowanego round-tripu dla STT i temperatury,
+- backend potrafi więcej niż builder/frontend,
+- pojawia się „ukryta fizyka” dostępna tylko z kodu.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/problem.py`
+2. frontend konsumujący manifest:
+   - `apps/web/lib/study-builder/types.ts`
+   - `apps/web/lib/study-builder/materialize.ts`
+   - komponenty formularzy problemu / physics editor (nowe lub istniejące)
+
+## Wymagane zmiany
+
+### A. Rozszerzyć `build_problem_builder_manifest`
+
+Do serializacji manifestu trzeba dopisać:
+
+- `spin_torque`,
+- `temperature`,
+- docelowo `thermal_seed`,
+- opcjonalnie `analysis` / `postprocessing` jeśli chcemy round-trip dla STNO workbench.
+
+Przykładowy kierunek:
+
+```python
+"problem": {
+    ...
+    "spin_torque": _to_builder_value(problem.spin_torque),
+    "temperature": problem.temperature,
+    "thermal_seed": problem.thermal_seed,
+    ...
+}
+```
+
+### B. Dodać schema metadata dla UI
+
+Sam surowy payload nie wystarczy. UI potrzebuje semantyki:
+
+- discriminator:
+  - `slonczewski`
+  - `zhang_li`
+- jednostki:
+  - `A/m^2`,
+  - `K`,
+  - bezwymiarowe współczynniki STT,
+- zakresy walidacyjne.
+
+Przykład struktury:
+
+```python
+"schema": {
+  "spin_torque": {
+    "kind": "union",
+    "discriminator": "kind",
+    "variants": [
+      {"kind": "slonczewski", "fields": {...}},
+      {"kind": "zhang_li", "fields": {...}}
+    ]
+  },
+  "temperature": {
+    "kind": "float",
+    "units": "K",
+    "min": 0.0
+  }
+}
+```
+
+### C. Włączyć round-trip tests
+
+Potrzebny test typu:
+
+1. zbuduj `Problem` ze STT i temperaturą,
+2. wygeneruj manifest,
+3. przemapuj manifest z powrotem do `Problem`,
+4. porównaj semantycznie wynik.
+
+## Kryteria akceptacji
+
+- UI może stworzyć, otworzyć i ponownie zapisać problem STNO bez utraty STT/temperature,
+- eksport/import projektu zachowuje te pola,
+- builder manifest jest stabilny w testach snapshot.
+
+## Testy
+
+- snapshot manifestu,
+- round-trip manifest ↔ problem,
+- walidacja wszystkich wariantów STT.
+
+## Szacowany zakres
+
+- backend manifest: 80–180 LOC,
+- frontend schema/forms: 250–700 LOC,
+- testy: 150–350 LOC.
+
+---
+
+# Problem F03 — builder scopes nie przewidują pełnego authoringu STNO
+
+**Krytyczność:** wysoka  
+**Obszar:** UI authoring / modelowanie workflow
+
+## Stan obecny
+
+Z aktualnego builder scope widać głównie:
+- runtime,
+- universe,
+- geometry,
+- regions,
+- materials,
+- magnets,
+- energy_terms,
+- current_modules,
+- excitation_analysis,
+- study,
+- outputs,
+- meshing.
+
+Brakuje jawnie:
+- `spin_torque`,
+- `thermal`,
+- `stno_analysis`,
+- `observables`,
+- `probes`,
+- `signals`.
+
+## Skutek
+
+UI nie ma języka pojęciowego do authoringu STNO jako produktu, tylko ogólny zestaw paneli.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/problem.py`
+2. `apps/web/lib/study-builder/types.ts`
+3. `apps/web/lib/study-builder/materialize.ts`
+4. nowe komponenty UI:
+   - `apps/web/components/stno/SttEditor.tsx`
+   - `apps/web/components/stno/ThermalEditor.tsx`
+   - `apps/web/components/stno/OerstedEditor.tsx`
+   - `apps/web/components/stno/ProbeEditor.tsx`
+
+## Wymagane zmiany
+
+### A. Rozszerzyć zakres editable scopes
+
+Docelowy minimalny zestaw:
+
+- `spin_torque`
+- `thermal`
+- `oersted`
+- `signals`
+- `stno_analysis`
+
+### B. Wprowadzić model authoringu obserwabli
+
+STNO nie kończy się na „run”. Potrzeba jawnie modelować:
+- sygnał globalny `m_x(t), m_y(t), m_z(t)`,
+- sygnały lokalnych sond,
+- zapis trajektorii rdzenia,
+- okna czasowe analizy,
+- PSD config,
+- fit linewidth.
+
+### C. Dodać warstwę walidacji zależności
+
+Na przykład:
+- STT typu Slonczewski wymaga `current_density`,
+- Oersted AC wymaga waveform,
+- linewidth bez PSD source ma być invalid.
+
+## Kryteria akceptacji
+
+- użytkownik bez kodu może skonfigurować cały case STNO,
+- builder ma semantyczne sekcje odpowiadające realnemu workflow fizycznemu.
+
+## Szacowany zakres
+
+- backend scopes: 30–100 LOC,
+- frontend authoring: 600–1500 LOC,
+- testy UI: 200–500 LOC.
+
+---
+
+# Problem F04 — Python DSL nie wystawia `PiecewiseLinear`, mimo że IR już to wspiera
+
+**Krytyczność:** wysoka  
+**Obszar:** waveformy / pobudzenie czasowe
+
+## Stan obecny
+
+IR przewiduje `PiecewiseLinear`, ale Python DSL dla `TimeDependence` ma tylko:
+- `Constant`,
+- `Sinusoidal`,
+- `Pulse`.
+
+## Skutek
+
+- Python public API jest uboższe niż backend kontraktowy,
+- nie można wygodnie modelować ramp, modulacji i ręcznie zadanych obwiedni,
+- użytkownik STNO nie ma sensownego narzędzia do:
+  - sweepu amplitudy,
+  - kick-startu,
+  - wygaszania,
+  - niestandardowych impulsów.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/energy.py`
+2. `packages/fullmag-py/src/fullmag/model/antenna.py` lub równoważna warstwa waveformów current modules
+3. `packages/fullmag-py/src/fullmag/model/__init__.py`
+4. `packages/fullmag-py/src/fullmag/__init__.py`
+5. testy:
+   - nowy `packages/fullmag-py/tests/test_time_dependence.py`
+
+## Wymagane zmiany
+
+### A. Dodać klasę `PiecewiseLinear`
+
+Przykładowy szkic:
+
+```python
+@dataclass(frozen=True)
+class PiecewiseLinear:
+    points: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        if len(self.points) < 2:
+            raise ValueError("PiecewiseLinear requires at least 2 points")
+        ts = [p[0] for p in self.points]
+        if any(t2 <= t1 for t1, t2 in zip(ts, ts[1:])):
+            raise ValueError("PiecewiseLinear times must be strictly increasing")
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "piecewise_linear",
+            "points": [[float(t), float(v)] for t, v in self.points],
+        }
+```
+
+### B. Rozszerzyć alias `TimeDependence`
+
+```python
+TimeDependence = Constant | Sinusoidal | Pulse | PiecewiseLinear
+```
+
+### C. Wyrównać to w OerstedCylinder i RF drive
+
+To samo powinno być możliwe dla:
+- `OerstedCylinder.time_dependence`,
+- `RfDrive.waveform`,
+- docelowo innych time envelope.
+
+## Kryteria akceptacji
+
+- Python DSL może wygenerować każdy waveform obsługiwany przez IR,
+- frontend może taki waveform wyedytować.
+
+## Testy
+
+1. `PiecewiseLinear` z poprawnymi punktami serializuje się do IR.
+2. Błędna monotoniczność czasu zgłasza wyjątek.
+3. `OerstedCylinder(time_dependence=PiecewiseLinear(...))` przechodzi round-trip.
+
+## Szacowany zakres
+
+- kod: 80–160 LOC,
+- testy: 100–180 LOC.
+
+---
+
+# Problem F05 — publiczny export surface jest niespójny i niepełny dla STNO
+
+**Krytyczność:** wysoka  
+**Obszar:** ergonomia API / discoverability / dokumentacja
+
+## Stan obecny
+
+Widać rozjazd między tym, co jest zaimportowane wewnętrznie, a tym, co faktycznie trafia do `__all__` i top-level API pakietu.
+
+Skutki:
+- użytkownik nie ma pewności, co jest oficjalnym API,
+- dokumentacja może pokazywać importy, których root package nie wystawia,
+- auto-complete i `from fullmag import ...` są niespójne.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/__init__.py`
+2. `packages/fullmag-py/src/fullmag/__init__.py`
+
+## Wymagane zmiany
+
+### A. W `model.__all__` dodać
+
+- `SpinTorque`
+- `SlonczewskiSTT`
+- `ZhangLiSTT`
+- `Constant`
+- `Pulse`
+- `PiecewiseLinear` po wdrożeniu F04
+
+### B. W root `fullmag.__init__` dodać
+
+- `SlonczewskiSTT`
+- `ZhangLiSTT`
+- `SpinTorque`
+- `Constant`
+- `Pulse`
+- `PiecewiseLinear`
+- ewentualnie `ThermalNoise` tylko jeśli pozostaje publicznym bytem
+
+### C. Wyrównać dokumentację importów
+
+Przykład docelowy:
+
+```python
+from fullmag import (
+    Problem,
+    Material,
+    Magnet,
+    Exchange,
+    Demag,
+    Zeeman,
+    OerstedCylinder,
+    Sinusoidal,
+    Pulse,
+    SlonczewskiSTT,
+)
+```
+
+## Kryteria akceptacji
+
+- każdy byt pokazany w dokumentacji i przykładach daje się zaimportować z top-level `fullmag`,
+- `dir(fullmag)` odzwierciedla oficjalny publiczny surface.
+
+## Testy
+
+- import smoke tests,
+- snapshot `__all__`,
+- docs examples import tests.
+
+## Szacowany zakres
+
+- kod: 30–100 LOC,
+- testy: 20–60 LOC.
+
+---
+
+# Problem F06 — brak pełnej noty fizycznej STNO / vortex / Oersted w dokumentacji
+
+**Krytyczność:** wysoka  
+**Obszar:** docs / walidacja / onboarding
+
+## Stan obecny
+
+W dokumentacji fizycznej nie ma pełnej noty STNO/vortex/Oersted, mimo że repo już ma przykład i backendowe elementy tej funkcjonalności.
+
+## Skutek
+
+- wiedza jest w kodzie, nie w dokumentacji,
+- użytkownik nie wie:
+  - jakie backendy są wspierane,
+  - jakie są ograniczenia,
+  - jaka jest konwencja znaków,
+  - jak interpretować parametry STT,
+  - jakie obserwable są wiarygodne.
+
+## Pliki do zmiany
+
+1. nowy `docs/physics/stno_vortex_mtj.md`
+2. nowy `docs/physics/stno_observables.md`
+3. `docs/physics/readme.md` lub indeks dokumentacji
+4. ewentualnie `readme.md`
+
+## Wymagane zmiany
+
+### A. Dodać notę fizyczną STNO
+
+Powinna zawierać:
+- cel modelu,
+- zakres:
+  - vortex gyration,
+  - STT,
+  - Oersted AC/DC,
+  - thermal broadening,
+- równania:
+  - LLG z torque,
+  - Slonczewski STT,
+  - Zhang–Li STT,
+  - model pola Oersteda,
+  - znaczenie temperatury,
+- backend matrix,
+- znane ograniczenia.
+
+### B. Dodać notę observables
+
+Powinna opisywać:
+- skąd brać sygnał,
+- jak liczyć PSD,
+- jak liczyć linewidth,
+- jak śledzić rdzeń,
+- jakie są pułapki:
+  - transienty,
+  - leakage,
+  - aliasing,
+  - zero-padding vs real resolution.
+
+### C. Dodać notę „trust boundaries”
+
+Osobny rozdział:
+- co jest produkcyjne,
+- co jest eksperymentalne,
+- co jest tylko dla native FDM,
+- czego nie należy interpretować ilościowo bez benchmarków.
+
+## Kryteria akceptacji
+
+- nowa dokumentacja jest linkowana z `readme`,
+- każdy nowy physics feature ma spisaną notę,
+- użytkownik z samej dokumentacji potrafi uruchomić poprawny workflow.
+
+## Szacowany zakres
+
+- 400–1000 LOC markdown/MDX.
+
+---
+
+# Problem F07 — przykład STNO nie jest jeszcze dowodem pełnej gotowości produkcyjnej
+
+**Krytyczność:** średnia, ale bardzo ważna diagnostycznie  
+**Obszar:** examples / walidacja
+
+## Stan obecny
+
+Istnieje przykład `examples/stno_vortex_mtj_workflow.py`, ale jego rola jest dziś głównie:
+- demonstracyjna,
+- serializacyjna,
+- częściowo analityczna na danych syntetycznych.
+
+Nie jest to jeszcze benchmark produkcyjny, który dowodzi:
+- poprawności numerycznej,
+- zgodności backendów,
+- stabilności fizyki,
+- jakości linewidth.
+
+## Skutek
+
+Łatwo przecenić poziom gotowości systemu.
+
+## Pliki do zmiany
+
+1. `examples/stno_vortex_mtj_workflow.py`
+2. nowy:
+   - `examples/stno_vortex_mtj_run_native_fdm.py`
+   - `examples/stno_vortex_mtj_postprocess.py`
+   - `examples/stno_vortex_mtj_validation.py`
+
+## Wymagane zmiany
+
+### A. Rozdzielić przykład na 3 klasy przykładów
+
+1. **authoring example** — jak zbudować `Problem`,
+2. **run example** — jak uruchomić backend i zapisać artefakty,
+3. **analysis example** — jak policzyć PSD, linewidth, orbitę.
+
+### B. Dodać oczekiwane artefakty
+
+Na przykład:
+- `m_avg.csv`,
+- `core_track.csv`,
+- `psd.npz`,
+- `summary.json`.
+
+### C. Dodać walidację semantyczną
+
+Przykład powinien mieć jawne assert-y:
+- peak frequency w sensownym zakresie,
+- orbit radius > 0 po wzbudzeniu,
+- linewidth dodatni,
+- przy `temperature=0` brak termicznego broadeningu w synthetic smoke test.
+
+## Kryteria akceptacji
+
+- przykład nie jest tylko „pokazówką API”,
+- przykład staje się elementem smoke / benchmark suite.
+
+## Szacowany zakres
+
+- 250–700 LOC.
+
+---
+
+# Problem F08 — brak widocznego pakietu testów STNO w Pythonie
+
+**Krytyczność:** krytyczna  
+**Obszar:** testy / regresja
+
+## Stan obecny
+
+Widoczny zestaw testów Python nie pokrywa:
+- `spin_torque`,
+- `OerstedCylinder`,
+- `temperature`,
+- `linewidth_lorentzian`,
+- `track_vortex_core`,
+- pełnego workflow STNO.
+
+## Skutek
+
+- każda zmiana w API może cicho zepsuć STNO,
+- nie ma szybkiej odpowiedzi, czy regresja dotyczy serializacji, analizy czy UI.
+
+## Pliki do dodania
+
+1. `packages/fullmag-py/tests/test_spin_torque.py`
+2. `packages/fullmag-py/tests/test_oersted.py`
+3. `packages/fullmag-py/tests/test_temperature_and_thermal.py`
+4. `packages/fullmag-py/tests/test_stno_analysis.py`
+5. `packages/fullmag-py/tests/test_stno_roundtrip.py`
+
+## Wymagane przypadki testowe
+
+### A. Serializacja STT
+
+- Slonczewski → IR fields
+- Zhang–Li → IR fields
+- walidacja parametrów
+
+### B. Oersted AC/DC
+
+- `Constant`
+- `Sinusoidal`
+- `Pulse`
+- `PiecewiseLinear`
+
+### C. Temperatura
+
+- `temperature=0`
+- `temperature=300`
+- konflikt z `ThermalNoise` jeśli zostaje
+
+### D. Analityka STNO
+
+- synthetic sinusoid PSD,
+- dwa bliskie piki,
+- linewidth na znanym sygnale Lorenza,
+- tracking rdzenia na syntetycznej orbicie.
+
+### E. End-to-end shape tests
+
+- `Problem` → `to_ir()` → expected payload snapshot.
+
+## Kryteria akceptacji
+
+- pakiet testów STNO w Pythonie staje się obowiązkowy w CI,
+- każda nowa zmiana dotykająca STNO odpala te testy.
+
+## Szacowany zakres
+
+- 500–1500 LOC.
+
+---
+
+# Problem F09 — `linewidth_lorentzian` nie jest produkcyjnym fitterem linewidth
+
+**Krytyczność:** wysoka  
+**Obszar:** analiza STNO / metrologia spektralna
+
+## Stan obecny
+
+Funkcja nazwana `linewidth_lorentzian` jest w praktyce prostym estymatorem half-maximum width, a nie rzetelnym dopasowaniem funkcji Lorenza.
+
+## Dlaczego to jest poważny problem
+
+W STNO linewidth bywa jednym z głównych wyników fizycznych.  
+Jeżeli narzędzie:
+- nie dopasowuje tła,
+- nie liczy niepewności,
+- nie oddziela sąsiednich pików,
+- nie uwzględnia jakości PSD,
+
+to wynik może być mylący.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/analysis/spectrum.py`
+2. nowy:
+   - `packages/fullmag-py/src/fullmag/analysis/fitting.py`
+3. testy:
+   - `packages/fullmag-py/tests/test_stno_analysis.py`
+
+## Wymagane zmiany
+
+### A. Rozdzielić estymator i prawdziwy fitter
+
+Dziś jedna funkcja robi coś, co nie odpowiada nazwie.  
+Docelowo:
+
+- `linewidth_halfmax(...)` — szybki estymator,
+- `fit_lorentzian_linewidth(...)` — właściwy fitter.
+
+### B. Zdefiniować model fitu
+
+Minimalny model:
+
+\[
+S(f) = B_0 + B_1 f + \frac{A}{1 + \left(\frac{f-f_0}{\Gamma}\right)^2}
+\]
+
+gdzie:
+- \(f_0\) — peak frequency,
+- \(\Gamma\) — half-width,
+- linewidth FWHM = \(2\Gamma\).
+
+### C. Dodać preprocessing
+
+- detrending sygnału czasowego,
+- windowing,
+- Welch PSD,
+- wybór okna fitu,
+- opcjonalne odjęcie tła.
+
+### D. Zwracać pełny wynik
+
+Nie samą liczbę, tylko np.:
+
+```python
+@dataclass(frozen=True)
+class LinewidthFitResult:
+    f0_hz: float
+    fwhm_hz: float
+    q_factor: float
+    amplitude: float
+    background_offset: float
+    background_slope: float
+    fit_r2: float | None
+    covariance: np.ndarray | None
+    fit_window_hz: tuple[float, float]
+    method: str
+```
+
+### E. Zachować starą funkcję jako deprecated alias
+
+To zmniejszy ryzyko łamania API.
+
+## Kryteria akceptacji
+
+- dla syntetycznego piku Lorenza błąd linewidth < 5%,
+- testy rozróżniają half-max estimate od fitu,
+- UI nie opisuje estymatora jako „Lorentzian fit”, jeśli nim nie jest.
+
+## Szacowany zakres
+
+- kod: 200–450 LOC,
+- testy: 150–300 LOC.
+
+---
+
+# Problem F10 — `track_vortex_core` jest heurystyczny i za słaby na workflow produkcyjny
+
+**Krytyczność:** wysoka  
+**Obszar:** analiza vortex dynamics
+
+## Stan obecny
+
+Tracker rdzenia opiera się na heurystyce typu:
+- weighted centroid,
+- `max_mz`.
+
+To jest dobre jako szybki prototyp, ale słabe dla produkcyjnej analizy:
+- szum termiczny,
+- deformacja rdzenia,
+- precesja eliptyczna,
+- skok między sąsiednimi pikselami,
+- aliasing siatki.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/analysis/vortex.py`
+2. nowy:
+   - `packages/fullmag-py/src/fullmag/analysis/vortex_fit.py`
+3. testy:
+   - `packages/fullmag-py/tests/test_vortex_tracking.py`
+
+## Wymagane zmiany
+
+### A. Wprowadzić tryby trackingu
+
+1. `method="argmax_mz"`
+2. `method="weighted_centroid"`
+3. `method="quadratic_subpixel"`
+4. `method="gaussian_local_fit"`
+5. `method="continuity_regularized"`
+
+### B. Dodać lokalne dopasowanie sub-pixel
+
+W oknie \(3\times 3\), \(5\times 5\) lub \(7\times 7\) wokół ekstremum:
+- dopasować paraboloidę lub lokalną gaussowską mapę intensywności,
+- wyznaczyć środek sub-pixel.
+
+### C. Dodać continuity prior
+
+Przy kolejnych klatkach:
+- ograniczyć skok pozycji,
+- użyć poprzedniej pozycji jako initial guess,
+- odrzucać nierealistyczne skoki.
+
+### D. Zwracać confidence score
+
+Np.:
+- lokalny kontrast,
+- odległość od poprzedniej pozycji,
+- residual fitu.
+
+### E. Dodać derived metrics
+
+- promień orbity,
+- środek orbity,
+- eliptyczność,
+- częstotliwość obrotu z fazy,
+- chirality/polarity, jeśli dane to wspierają.
+
+## Kryteria akceptacji
+
+- tracker na syntetycznej orbicie daje błąd pozycji < 0.25 komórki,
+- przy szumie termicznym nie gubi rdzenia w > 99% klatek testu,
+- wynik zawiera confidence i metryki pochodne.
+
+## Szacowany zakres
+
+- kod: 250–600 LOC,
+- testy: 200–500 LOC.
+
+---
+
+# Problem F11 — frontend study-builder nie ma pierwszoklasowego modelu authoringu STNO
+
+**Krytyczność:** krytyczna  
+**Obszar:** frontend / authoring UX
+
+## Stan obecny
+
+Stage builder ma ogólne etapy:
+- `relax`,
+- `run`,
+- `eigenmodes`,
+- `set_field`,
+- `set_current`,
+- `save_state`,
+- `load_state`,
+- `export`,
+- kilka makr.
+
+Nie widać dedykowanego authoringu dla:
+- STT,
+- OerstedCylinder,
+- waveformów,
+- temperatury,
+- sond sygnałowych,
+- obserwabli STNO.
+
+## Skutek
+
+- użytkownik końcowy nie ma pełnego UI do zbudowania case’u STNO,
+- część fizyki istnieje tylko w Pythonie,
+- to nie jest „product-grade feature”.
+
+## Pliki do zmiany
+
+1. `apps/web/lib/study-builder/types.ts`
+2. `apps/web/lib/study-builder/materialize.ts`
+3. nowe typy:
+   - `apps/web/lib/study-builder/stnoTypes.ts`
+4. nowe komponenty:
+   - `apps/web/components/stno/StnoProblemPanel.tsx`
+   - `apps/web/components/stno/SttPanel.tsx`
+   - `apps/web/components/stno/OerstedCylinderPanel.tsx`
+   - `apps/web/components/stno/WaveformEditor.tsx`
+   - `apps/web/components/stno/ThermalPanel.tsx`
+   - `apps/web/components/stno/SignalProbePanel.tsx`
+
+## Wymagane zmiany
+
+### A. Zdefiniować frontendowy model danych STNO
+
+Na przykład:
+
+```ts
+type SttState =
+  | {
+      kind: "none";
+    }
+  | {
+      kind: "slonczewski";
+      currentDensityApm2: number;
+      polarization: [number, number, number];
+      degree: number;
+      lambdaAsymmetry: number;
+      epsilonPrime: number;
+    }
+  | {
+      kind: "zhang_li";
+      currentDensityApm2: [number, number, number];
+      beta: number;
+    };
+
+type OerstedCylinderState = {
+  enabled: boolean;
+  currentA: number;
+  radiusM: number;
+  centerM: [number, number, number];
+  axis: "x" | "y" | "z";
+  waveform: WaveformState;
+};
+
+type ThermalState = {
+  enabled: boolean;
+  temperatureK: number;
+  seed?: number;
+};
+```
+
+### B. Wpiąć ten model w materializację problemu
+
+`materialize.ts` musi umieć z `StnoProblemState` złożyć:
+- `spin_torque`,
+- `temperature`,
+- `energy_terms += OerstedCylinder(...)`,
+- ewentualne observables.
+
+### C. Dodać walidację UX
+
+Np.:
+- brak STT polaryzacji → błąd,
+- ujemna temperatura → błąd,
+- radius <= 0 → błąd,
+- waveform invalid → błąd.
+
+## Kryteria akceptacji
+
+- cały case STNO da się skonfigurować bez pisania kodu,
+- zapis projektu i re-open zachowuje komplet ustawień.
+
+## Szacowany zakres
+
+- typy + materializacja: 300–900 LOC,
+- komponenty UI: 1200–3000 LOC,
+- testy frontend: 300–800 LOC.
+
+---
+
+# Problem F12 — analyze UI jest eigen-centric, a nie STNO-centric
+
+**Krytyczność:** krytyczna  
+**Obszar:** frontend / analiza wyników
+
+## Stan obecny
+
+Sprawdzalne komponenty analyze są skoncentrowane na:
+- eigen spectrum,
+- dispersion,
+- mode inspector.
+
+Brakuje dedykowanego workbencha STNO.
+
+## Skutek
+
+Nawet jeśli backend wygeneruje dane, użytkownik nie ma gotowego panelu do:
+- PSD,
+- peak picking,
+- linewidth fit,
+- orbit radius,
+- core trajectory,
+- transient trimming,
+- porównania przebiegów dla różnych prądów / temperatur.
+
+## Pliki do zmiany
+
+Nowe pliki sugerowane:
+
+1. `apps/web/components/analyze/StnoAnalyzeWorkbench.tsx`
+2. `apps/web/components/analyze/PsdPlot.tsx`
+3. `apps/web/components/analyze/LinewidthPanel.tsx`
+4. `apps/web/components/analyze/CoreTrajectoryPlot.tsx`
+5. `apps/web/components/analyze/CoreOrbitMetricsPanel.tsx`
+6. `apps/web/components/analyze/SignalSelector.tsx`
+7. `apps/web/lib/analyze/stno.ts`
+
+## Wymagane zmiany
+
+### A. Zbudować osobny workbench STNO
+
+Zakładki:
+1. Time trace
+2. PSD
+3. Linewidth
+4. Core trajectory
+5. Sweep compare
+6. Export
+
+### B. Wprowadzić model danych wyniku
+
+Frontend potrzebuje spójnego typu, np.:
+
+```ts
+type StnoAnalysisArtifacts = {
+  timeTrace?: TimeTraceArtifact;
+  psd?: PsdArtifact;
+  linewidth?: LinewidthArtifact;
+  coreTrack?: CoreTrackArtifact;
+  summary?: StnoSummaryArtifact;
+};
+```
+
+### C. Dodać operacje interaktywne
+
+- wybór okna czasowego do analizy,
+- wybór komponentu sygnału,
+- log/lin skala PSD,
+- wybór okna dopasowania linewidth,
+- overlay wielu runów.
+
+## Kryteria akceptacji
+
+- użytkownik w UI widzi cały pipeline od sygnału do linewidth i orbity,
+- UI jest zdolne do porównań sweepów.
+
+## Szacowany zakres
+
+- 1500–3500 LOC frontend + testy.
+
+---
+
+# Problem F13 — CPU reference FDM nie ma pełnej parzystości STNO, bo brak potwierdzonego Oersteda
+
+**Krytyczność:** krytyczna  
+**Obszar:** backend / fallback / walidacja referencyjna
+
+## Stan obecny
+
+CPU reference FDM:
+- ma STT,
+- ma thermal,
+- ale nie ma potwierdzonego Oersteda,
+- capability commentary sugeruje, że `H_ant` jest zawsze zerowe.
+
+## Dlaczego to ważne
+
+CPU fallback jest zwykle:
+- referencją do testów,
+- backendem CI,
+- ścieżką deweloperską bez GPU.
+
+Bez Oersteda:
+- nie zrobisz pełnej regresji STNO na CPU,
+- nie porównasz CPU vs GPU dla pełnego modelu,
+- nie masz wiarygodnej ścieżki smoke testów.
+
+## Pliki do zmiany
+
+1. `crates/fullmag-runner/src/cpu_reference.rs`
+2. `crates/fullmag-engine/src/fdm_problem.rs`
+3. `crates/fullmag-engine/src/fdm_fields.rs`
+4. ewentualnie nowy moduł:
+   - `crates/fullmag-engine/src/oersted.rs`
+5. testy:
+   - `crates/fullmag-runner/tests/cpu_oersted_smoke.rs`
+   - `crates/fullmag-engine/tests/oersted_field.rs`
+
+## Wymagane zmiany
+
+### A. Zdefiniować konfigurację Oersteda w CPU engine
+
+Jeżeli engine jeszcze nie ma jawnego configu pola Oersteda, trzeba dodać strukturę w stylu:
+
+```rust
+pub struct OerstedCylinderConfig {
+    pub current_a: f64,
+    pub radius_m: f64,
+    pub center_m: [f64; 3],
+    pub axis: Axis,
+    pub waveform: TimeDependenceConfig,
+}
+```
+
+### B. Dodać obliczanie pola Oersteda
+
+Minimalny model analityczny dla nieskończonego cylindra przewodzącego:
+- dla \(r < R\): \(H_\phi \propto r\),
+- dla \(r \ge R\): \(H_\phi \propto 1/r\),
+
+z doborem orientacji wg osi przewodnika.
+
+### C. Wpiąć time dependence
+
+CPU engine musi umieć policzyć wartość chwilową `I(t)` dla:
+- constant,
+- sinusoidal,
+- pulse,
+- piecewise-linear.
+
+### D. Dodać to do `HEff`
+
+Oersted powinien być jawnie doliczany do efektywnego pola lokalnego.
+
+### E. Rozszerzyć capability matrix
+
+Jeśli CPU reference po wdrożeniu wspiera Oersteda, trzeba to odnotować.
+Jeżeli nie, trzeba bardzo jasno oznaczyć brak wsparcia i blokować feature w UI.
+
+## Kryteria akceptacji
+
+- CPU reference potrafi wykonać smoke test z Oersted AC/DC,
+- GPU i CPU dają zgodny trend jakościowy dla prostych przypadków,
+- capability matrix nie kłamie.
+
+## Szacowany zakres
+
+- engine + runner: 300–1000 LOC,
+- testy: 200–600 LOC.
+
+---
+
+# Problem F14 — native FEM nie ma potwierdzonego pełnego STT end-to-end
+
+**Krytyczność:** wysoka strategicznie  
+**Obszar:** backend / zakres produktu
+
+## Stan obecny
+
+Native FEM wrapper przenosi:
+- Oersteda,
+- temperaturę,
+
+ale nie ma potwierdzonego pełnego przepływu STT w sprawdzonym wrapperze.
+
+## Kluczowa decyzja produktowa
+
+Trzeba podjąć decyzję już teraz:
+
+### Wariant A — STNO v1 = tylko native FDM
+To jest najrozsądniejsza ścieżka dla szybkiego domknięcia produktu.
+
+### Wariant B — STNO v1 = FDM + FEM
+To wymaga znacznie większego zakresu.
+
+**Rekomendacja:**  
+Dla pierwszej wersji produkcyjnej formalnie zdefiniować:
+
+> „Produkcyjny STNO/MTJ jest wspierany na native FDM. FEM pozostaje eksperymentalny / partial support do czasu wdrożenia STT i benchmarków.”
+
+To jest uczciwsze niż udawanie pełnej parzystości.
+
+## Pliki do zmiany przy wariancie A
+
+1. `docs/physics/stno_vortex_mtj.md`
+2. `apps/web/lib/useRuntimeCapabilities.ts`
+3. frontend gating / badges
+
+## Pliki do zmiany przy wariancie B
+
+1. `crates/fullmag-runner/src/native_fem.rs`
+2. warstwa FFI / sys / C ABI FEM
+3. backend FEM kernels / assembly STT
+4. capability matrix
+5. testy FEM STT
+
+## Wymagane zmiany przy wariancie B
+
+### A. Przenieść STT przez native FEM wrapper
+### B. Dodać STT do capability declarations
+### C. Zaimplementować torques w solverze FEM
+### D. Zwalidować numerycznie z przypadkami prostymi i z native FDM
+
+## Kryteria akceptacji
+
+- albo jawne ograniczenie zakresu produktu do native FDM,
+- albo pełne wdrożenie i walidacja FEM STT.
+
+## Szacowany zakres
+
+- wariant A: 80–250 LOC,
+- wariant B: 800–3000+ LOC.
+
+---
+
+# Problem F15 — komentarze i opis plannera nadal sugerują węższy „phase 1” zakres niż realny stan runnerów
+
+**Krytyczność:** średnia, ale ważna architektonicznie  
+**Obszar:** docs-in-code / utrzymanie / zaufanie
+
+## Stan obecny
+
+W plannerze wciąż widać opis wskazujący na ograniczony „phase 1 executable path”, podczas gdy capability matrix i native runner już sygnalizują szersze wsparcie.
+
+## Skutek
+
+- nowy deweloper nie wie, który plik mówi prawdę,
+- łatwo o regresje i błędne decyzje architektoniczne,
+- dokumentacja w kodzie staje się myląca.
+
+## Pliki do zmiany
+
+1. `crates/fullmag-plan/src/lib.rs`
+2. `crates/fullmag-plan/src/fdm.rs`
+3. `crates/fullmag-runner/src/capabilities.rs`
+4. ewentualnie `readme.md`
+
+## Wymagane zmiany
+
+### A. Ustalić single source of truth
+
+Proponuję:
+- capability matrix = źródło prawdy wykonawczej,
+- planner comments = streszczenie zgodne z capability matrix,
+- docs physics = source of truth produktowy.
+
+### B. Zaktualizować komentarze
+
+Wszędzie, gdzie jest „Phase 1”, doprecyzować:
+- co jest semantic-only,
+- co jest executable,
+- na jakim backendzie,
+- czy dotyczy CPU, native FDM, native FEM.
+
+## Kryteria akceptacji
+
+- brak sprzeczności między commentami a capability matrix,
+- czytelna matryca wsparcia backendów.
+
+## Szacowany zakres
+
+- 30–120 LOC.
+
+---
+
+# Problem F16 — waveformy dla STNO są zbyt wąskie jak na realne eksperymenty
+
+**Krytyczność:** średnia do wysokiej  
+**Obszar:** fizyka pobudzeń / ergonomia
+
+## Stan obecny
+
+Dziś praktycznie mamy:
+- Constant,
+- Sinusoidal,
+- Pulse,
+- IR ma PiecewiseLinear.
+
+Brakuje z poziomu publicznego DSL wygodnych form takich jak:
+- chirp,
+- multi-tone,
+- AM envelope,
+- custom callable sampled waveform,
+- piecewise periodic burst.
+
+## Skutek
+
+Dla części kampanii STNO trzeba będzie pisać obejścia albo eksportować ręcznie punkty.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/energy.py`
+2. `packages/fullmag-py/src/fullmag/model/antenna.py`
+3. `crates/fullmag-ir/src/lib.rs` — tylko jeśli rozszerzamy beyond PWL
+4. `crates/fullmag-runner/src/native_fdm.rs`
+5. `crates/fullmag-runner/src/native_fem.rs`
+6. frontend waveform editor
+
+## Wymagane zmiany
+
+### Etap v1 minimalny
+- wdrożyć `PiecewiseLinear` w Pythonie i UI.
+
+### Etap v2 rozszerzony
+- dodać `Chirp`,
+- dodać `MultiTone`,
+- dodać sampled waveform z interpolacją.
+
+## Kryteria akceptacji
+
+- v1: PWL działa end-to-end,
+- v2: eksperymentalne waveformy mają testy i capability gating.
+
+## Szacowany zakres
+
+- v1: 100–300 LOC,
+- v2: 300–1000 LOC.
+
+---
+
+# Problem F17 — current modules / anteny mają wąski zakres oficjalnych typów
+
+**Krytyczność:** średnia  
+**Obszar:** pobudzenia / RF / rozszerzalność
+
+## Stan obecny
+
+W warstwie current modules / antenna widoczny jest wąski allow-list typów.
+
+## Skutek
+
+Dla części scenariuszy STNO to nie blokuje v1, ale ogranicza dalszy rozwój:
+- mikrostrip,
+- nanocontact niestandardowy,
+- złożone profile przestrzenne prądu.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/antenna.py`
+2. IR i runner — zależnie od decyzji zakresowej
+3. frontend waveform + geometry editors
+
+## Wymagane zmiany
+
+Na v1 nie traktowałbym tego jako blocker.  
+Ale trzeba jawnie opisać w roadmapie:
+- jakie profile przestrzenne prądu są wspierane,
+- które są planned, a które out-of-scope.
+
+## Kryteria akceptacji
+
+- brak niejawnych obietnic w docs/UI,
+- capability matrix odzwierciedla realny zakres.
+
+---
+
+# Problem F18 — brak pierwszoklasowych obserwabli STNO i artefaktów analitycznych
+
+**Krytyczność:** krytyczna  
+**Obszar:** artifacts / postprocessing / UX
+
+## Stan obecny
+
+Postprocessing utilities istnieją w Pythonie, ale nie widać kompletnego, produktowego systemu artefaktów STNO.
+
+## Co powinno powstawać w runie STNO
+
+Minimalny pakiet artefaktów:
+
+1. `m_avg.csv` lub `m_avg.parquet`
+2. `signal_probes.parquet`
+3. `core_track.parquet`
+4. `psd.npz` lub `psd.parquet`
+5. `linewidth.json`
+6. `stno_summary.json`
+
+## Brakujące cechy
+
+- standaryzowany format artefaktów,
+- metadata z jednostkami,
+- versioning schematu artefaktów,
+- możliwość porównania sweepów.
+
+## Pliki do zmiany
+
+Prawdopodobne miejsca:
+1. `crates/fullmag-runner/src/*artifacts*`
+2. `crates/fullmag-runner/src/*quantities*`
+3. `packages/fullmag-py/src/fullmag/analysis/*`
+4. frontend analyze components
+
+## Wymagane zmiany
+
+### A. Zdefiniować artefakty pierwszej klasy
+
+Na poziomie specyfikacji:
+- nazwa,
+- schema,
+- units,
+- provenance.
+
+### B. Dodać kontrolę w `Problem.outputs` lub osobnym `analysis_config`
+
+Użytkownik powinien móc zaznaczyć:
+- save average magnetization,
+- save probe traces,
+- save core track,
+- compute PSD,
+- fit linewidth.
+
+### C. Zaimplementować generację artefaktów
+
+Najpierw minimalnie w Python postprocess po runie,
+docelowo część w runnerze.
+
+## Kryteria akceptacji
+
+- każdy run STNO może automatycznie produkować zestandaryzowane artefakty,
+- frontend umie je odczytać bez ad-hoc parserów.
+
+## Szacowany zakres
+
+- spec + runner + frontend: 800–2500 LOC.
+
+---
+
+# Problem F19 — semantyka temperatury jest niejednoznaczna (`Problem.temperature` vs `ThermalNoise`)
+
+**Krytyczność:** wysoka  
+**Obszar:** model fizyczny / spójność API
+
+## Stan obecny
+
+Repo ma:
+- top-level `Problem.temperature`,
+- oraz publiczny byt `ThermalNoise`.
+
+To jest konstrukcyjnie podejrzane, bo użytkownik ma dwa sposoby opisu tej samej klasy zjawisk.
+
+## Skutek
+
+- ryzyko konfliktów,
+- niejasność, który parametr jest źródłem prawdy,
+- trudne UI i trudne testy.
+
+## Rekomendacja architektoniczna
+
+### Preferowany model produkcyjny
+
+Zostawić top-level:
+
+```python
+Problem(
+    ...
+    temperature=300.0,
+    thermal_seed=12345,
+)
+```
+
+a `ThermalNoise`:
+- oznaczyć jako deprecated,
+- lub usunąć z publicznego DSL po okresie przejściowym.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/problem.py`
+2. `packages/fullmag-py/src/fullmag/model/energy.py`
+3. `packages/fullmag-py/src/fullmag/__init__.py`
+4. docs / examples / tests
+
+## Kryteria akceptacji
+
+- istnieje tylko jeden kanoniczny sposób ustawiania temperatury i seedu,
+- użytkownik nie może wejść w stan konfliktowy.
+
+---
+
+# Problem F20 — brak pełnej, jawnej polityki reproducibility dla thermal seed
+
+**Krytyczność:** krytyczna dla badań ilościowych  
+**Obszar:** reprodukowalność / stochastic simulations
+
+## Stan obecny
+
+IR przewiduje `ThermalSeedConfig`, engine ma pojęcie `thermal_seed`, ale w sprawdzonych publicznych ścieżkach nie widać kompletnego, jawnego, produkcyjnego surfacingu seed policy end-to-end.
+
+## Skutek
+
+- trudniej odtworzyć wyniki,
+- porównania linewidth przy różnych commitach mogą być pozornie niestabilne,
+- testy regresyjne stochastyczne są trudne.
+
+## Pliki do zmiany
+
+1. `packages/fullmag-py/src/fullmag/model/problem.py`
+2. `crates/fullmag-ir/src/lib.rs`
+3. `crates/fullmag-plan/src/fdm.rs`
+4. `crates/fullmag-plan/src/fem.rs` jeśli dotyczy
+5. `crates/fullmag-runner/src/cpu_reference.rs`
+6. `crates/fullmag-runner/src/native_fdm.rs`
+7. `crates/fullmag-runner/src/native_fem.rs`
+8. `crates/fullmag-engine/src/fdm_problem.rs`
+
+## Wymagane zmiany
+
+### A. Publiczny API
+
+Dodać do `Problem`:
+
+```python
+thermal_seed: int | None = None
+```
+
+lub bardziej elastycznie:
+
+```python
+thermal: ThermalConfig | None = None
+```
+
+### B. Jasna polityka seedowania
+
+- `None` = nondeterministic/random seed,
+- `int` = deterministic,
+- opcjonalnie `seed_policy`:
+  - `"fixed"`
+  - `"from_time"`
+  - `"from_run_id"`
+
+### C. Propagacja przez wszystkie warstwy
+
+`Problem` → IR → plan → runner → engine/native backend
+
+### D. Ująć seed w metadanych artefaktów
+
+Każdy run STNO powinien zapisać seed w `summary.json`.
+
+## Kryteria akceptacji
+
+- dwa runy z tym samym seedem są bitowo lub statystycznie zgodne w akceptowalnym zakresie,
+- run bez seedu jest jawnie oznaczony jako nondeterministic.
+
+## Szacowany zakres
+
+- 150–500 LOC backend,
+- 50–150 LOC docs/tests.
+
+---
+
+# Problem F21 — capability matrix i preview quantities są niespójne między backendami
+
+**Krytyczność:** średnia do wysokiej  
+**Obszar:** UX / debug / analyze
+
+## Stan obecny
+
+CPU i native FDM różnią się zakresem preview/snapshot quantities:
+- CPU nie wystawia części pól,
+- native FDM jest bogatszy.
+
+## Skutek
+
+- UI musi wiedzieć, czego się spodziewać na danym backendzie,
+- porównanie wyników jest trudniejsze,
+- użytkownik nie wie, czemu na jednym backendzie widzi `HAni`, a na drugim nie.
+
+## Pliki do zmiany
+
+1. `crates/fullmag-runner/src/capabilities.rs`
+2. frontend capability gating
+3. docs runtime matrix
+
+## Wymagane zmiany
+
+### A. Jawny capability contract dla observables
+
+Nie tylko physics terms, ale także:
+- preview fields,
+- snapshot fields,
+- derived artifacts.
+
+### B. Frontend gating
+
+UI ma ukrywać / wyszarzać funkcje niewspierane przez backend.
+
+### C. Dążyć do minimalnej wspólnej bazy
+
+Dla STNO minimalna wspólna baza powinna obejmować:
+- average magnetization trace,
+- external field,
+- effective field summary,
+- core-track if available.
+
+## Kryteria akceptacji
+
+- użytkownik nie może uruchomić panelu, którego backend nie wspiera,
+- capability matrix obejmuje także analitykę i artefakty.
+
+---
+
+# Problem F22 — model MTJ jest nadal uproszczony i semantycznie niepełny jako „stack device”
+
+**Krytyczność:** średnia strategicznie  
+**Obszar:** model urządzenia / produktowość
+
+## Stan obecny
+
+Obecny DSL opisuje fizykę wolnej warstwy, STT i Oersteda, ale nie widać pełnej semantyki urządzenia MTJ jako stosu:
+- free layer,
+- reference layer / polarizer,
+- spacer / barrier,
+- geometria kontaktu,
+- stack-resolved current path.
+
+## Dlaczego to istotne
+
+Na v1 to nie musi blokować, jeśli uczciwie mówimy:
+> „To jest mikromagnetyczny model swobodnej warstwy z efektywnym STT i Oerstedem, a nie pełny TCAD stack model MTJ.”
+
+Ale dla dokumentacji i marketingu to rozróżnienie jest krytyczne.
+
+## Rekomendacja
+
+Na v1:
+- zostawić model efektywny,
+- jasno to opisać w docs.
+
+Na v2:
+- rozważyć `MtjDevice` / `NanocontactDevice` jako wysokopoziomowe byty.
+
+---
+
+# Problem F23 — brak spójnej polityki public API dla nowych bytów STNO
+
+**Krytyczność:** średnia  
+**Obszar:** API governance
+
+## Stan obecny
+
+Byty STNO pojawiają się w różnych miejscach, ale nie widać jednej polityki:
+- co jest stabilne,
+- co eksperymentalne,
+- co deprecowane.
+
+## Wymagane zmiany
+
+Wprowadzić oznaczenia:
+- stable,
+- experimental,
+- deprecated.
+
+Przykładowo:
+- `SlonczewskiSTT` — stable,
+- `OerstedCylinder` — stable,
+- `ThermalNoise` — deprecated albo experimental,
+- `linewidth_lorentzian` — deprecated alias po wdrożeniu właściwego fitu.
+
+---
+
+# Problem F24 — brak benchmarków ilościowych STNO i testów regresji fizycznej
+
+**Krytyczność:** krytyczna  
+**Obszar:** physics validation
+
+## Stan obecny
+
+Nie widać benchmark suite odpowiadającego na pytania:
+- jaki jest zakres częstotliwości gyro-mode dla referencyjnego dysku,
+- jak zależy od prądu,
+- jak zależy od temperatury,
+- jak zależy od amplitudy Oersteda,
+- jaki jest expected linewidth trend.
+
+## Co trzeba zrobić
+
+### Minimalny benchmark set
+
+1. **Vortex relax benchmark**
+   - sprawdza, że stan relaksuje do vortexu.
+
+2. **Gyrotropic mode frequency benchmark**
+   - ma expected range dla małego pobudzenia.
+
+3. **Oersted AC resonance benchmark**
+   - pik PSD w pobliżu trybu gyrotropowego.
+
+4. **STT threshold trend benchmark**
+   - wzrost amplitudy oscylacji po przekroczeniu progu.
+
+5. **Thermal broadening benchmark**
+   - linewidth rośnie jakościowo z temperaturą.
+
+## Pliki do dodania
+
+1. `benchmarks/stno_vortex/*`
+2. `tests/physics/stno/*`
+3. docs z expected envelope
+
+## Kryteria akceptacji
+
+- każdy benchmark ma tolerancję i seed policy,
+- benchmarki są uruchamiane co najmniej na nightly / release CI.
+
+---
+
+# Problem F25 — brak pełnego UI do analizy sweepów STNO
+
+**Krytyczność:** wysoka  
+**Obszar:** frontend / analiza kampanii symulacyjnych
+
+## Stan obecny
+
+Nie widać gotowego workflow do porównania wielu runów względem:
+- `current_density`,
+- `temperature`,
+- `oersted amplitude`,
+- `frequency drive`,
+- geometrii.
+
+## Co powinien umieć frontend
+
+- tabela runów,
+- wykres `f_peak(I)`,
+- wykres `linewidth(T)`,
+- mapa `PSD(f, I)`,
+- overlay orbit.
+
+## Pliki do zmiany
+
+1. `apps/web/components/analyze/StnoSweepWorkbench.tsx`
+2. `apps/web/lib/analyze/stnoSweep.ts`
+3. ewentualnie integracja z `parameter_sweep` w builderze
+
+## Kryteria akceptacji
+
+- sweepy STNO dają się analizować bez eksportu do zewnętrznych notebooków.
+
+---
+
+## 6. Priorytety — co jest realnym blockerem produkcyjności
+
+### P0 — blokery bezwzględne
+
+- F02 — builder manifest nie wystawia STT/temperature
+- F08 — brak testów STNO
+- F11 — brak pełnego UI authoring STNO
+- F12 — brak analyze workbench STNO
+- F13 — CPU fallback bez Oersteda lub bez jawnego ograniczenia
+- F18 — brak pierwszoklasowych artefaktów STNO
+- F20 — brak pełnej polityki reproducibility
+- F24 — brak benchmarków fizycznych
+
+### P1 — bardzo ważne
+
+- F01 — nieaktualny `EnergyTerm`
+- F04 — brak `PiecewiseLinear` w Pythonie
+- F05 — niespójny export surface
+- F06 — brak docs physics note
+- F09 — linewidth fitter nieprodukcyjny
+- F10 — tracker rdzenia heurystyczny
+- F14 — brak jasnej decyzji FDM-only vs FDM+FEM
+- F19 — semantyka temperatury niejednoznaczna
+
+### P2 — ważne, ale nie muszą blokować v1
+
+- F15 — dryf komentarzy plannerowych
+- F16 — bogatsze waveformy
+- F17 — szersze profile current modules
+- F21 — observables capability alignment
+- F22 — wyższy poziom semantyki MTJ stack
+- F23 — polityka stable/experimental/deprecated
+- F25 — UI sweep analysis
+
+---
+
+## 7. Zalecana architektura docelowa v1
+
+Żeby nie ugrzęznąć, rekomenduję **bardzo konkretny scope v1**:
+
+### 7.1. Co ogłaszamy jako wspierane produkcyjnie
+
+**STNO v1 = native FDM backend**
+
+Zakres:
+- vortex free-layer disk,
+- STT:
+  - Slonczewski,
+  - opcjonalnie Zhang–Li, jeśli ma testy,
+- OerstedCylinder:
+  - constant,
+  - sinusoidal,
+  - pulse,
+  - piecewise-linear,
+- temperatura:
+  - top-level `temperature`,
+  - `thermal_seed`,
+- analiza:
+  - time trace,
+  - PSD,
+  - peak frequency,
+  - Lorentzian linewidth fit,
+  - core trajectory,
+  - orbit radius,
+  - sweep compare.
+
+### 7.2. Co oznaczamy jako eksperymentalne
+
+- native FEM dla STNO,
+- `ThermalNoise` jako osobny byt, jeśli zostaje,
+- zaawansowane waveformy beyond PWL,
+- zaawansowane current modules.
+
+### 7.3. Co wycofujemy lub zamrażamy
+
+- nazwy sugerujące większą dokładność niż realna implementacja, np. obecne `linewidth_lorentzian`, jeśli nie robi fitu.
+
+---
+
+## 8. Bardzo szczegółowy plan wdrożenia — kilkudziesięcioetapowy
+
+Poniżej plan w kolejności, którą rekomenduję.  
+To nie jest lista „luźnych pomysłów”, tylko **plan wykonawczy**.
+
+---
+
+# Faza A — uporządkowanie kontraktu Python DSL
+
+## Krok 01 — zamrozić zakres v1 produktu
+
+**Cel:** uniknąć rozlania prac.
+
+### Zadania
+- formalnie zapisać w docs/repo issue:
+  - STNO v1 = native FDM,
+  - FEM = experimental,
+  - CPU reference = smoke/regression backend, docelowo z Oersted parity albo z jawnym ograniczeniem.
+
+### Pliki
+- `readme.md`
+- `docs/physics/stno_vortex_mtj.md`
+- ewentualny `docs/roadmap/stno_v1.md`
+
+### Wyjście
+- jasna decyzja zakresowa, zanim zacznie się refactor.
+
+---
+
+## Krok 02 — naprawić alias `EnergyTerm`
+
+### Zadania
+- rozszerzyć alias w `problem.py`,
+- dodać brakujące importy,
+- sprawdzić mypy/pyright.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+
+### Kod docelowy
+- alias zgodny z realnym zestawem klas.
+
+### Testy
+- nowy `test_energy_terms_contract.py`
+
+---
+
+## Krok 03 — zdecydować los `ThermalNoise`
+
+### Zadania
+- wybrać model kanoniczny:
+  - top-level temperature only,
+  - lub dual mode z deprecacją.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+- `packages/fullmag-py/src/fullmag/model/energy.py`
+- docs
+
+### Rekomendacja
+- top-level `temperature` + `thermal_seed`,
+- `ThermalNoise` oznaczyć deprecated.
+
+---
+
+## Krok 04 — dodać `thermal_seed` do publicznego `Problem`
+
+### Zadania
+- rozszerzyć dataclass `Problem`,
+- dodać walidację typu i zakresu,
+- dodać serializację do IR.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+
+### Przykład
+```python
+thermal_seed: int | None = None
+```
+
+---
+
+## Krok 05 — ujednolicić serializację thermal
+
+### Zadania
+- w `to_ir()` wysyłać:
+  - `temperature`,
+  - `thermal_seed` lub strukturę `thermal_seed_config`,
+- jeśli istnieje `ThermalNoise`, mapować go do top-level lub blokować.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+
+---
+
+## Krok 06 — wdrożyć `PiecewiseLinear` do Python DSL
+
+### Zadania
+- dodać klasę,
+- dodać walidację punktów,
+- wpiąć w `TimeDependence`.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/energy.py`
+
+### Testy
+- `test_time_dependence.py`
+
+---
+
+## Krok 07 — wyrównać waveformy current modules i Oersteda
+
+### Zadania
+- sprawdzić, czy oba używają wspólnego kontraktu,
+- jeśli nie, wydzielić wspólny model `Waveform`.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/energy.py`
+- `packages/fullmag-py/src/fullmag/model/antenna.py`
+
+---
+
+## Krok 08 — naprawić export surface `model.__all__`
+
+### Zadania
+- dodać STT i waveformy.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/__init__.py`
+
+---
+
+## Krok 09 — naprawić export surface root `fullmag.__init__`
+
+### Zadania
+- dodać brakujące byty publiczne.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/__init__.py`
+
+---
+
+## Krok 10 — dodać import smoke tests
+
+### Zadania
+- test importów top-level,
+- test importów z `fullmag.model`.
+
+### Pliki
+- nowy `packages/fullmag-py/tests/test_public_imports.py`
+
+---
+
+# Faza B — builder manifest i round-trip dla UI
+
+## Krok 11 — rozszerzyć `build_problem_builder_manifest` o `spin_torque`
+
+### Zadania
+- publikować `spin_torque` w manifeście,
+- opisać warianty `slonczewski` / `zhang_li`.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+
+---
+
+## Krok 12 — rozszerzyć manifest o `temperature` i `thermal_seed`
+
+### Zadania
+- publikować thermal config jako część problemu.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+
+---
+
+## Krok 13 — rozszerzyć builder scopes
+
+### Zadania
+- dodać:
+  - `spin_torque`,
+  - `thermal`,
+  - `signals`,
+  - `stno_analysis`.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+
+---
+
+## Krok 14 — zdefiniować frontendowe typy STNO state
+
+### Zadania
+- nowe typy TypeScript dla STT, Oersteda, thermal, probes, analysis.
+
+### Pliki
+- nowy `apps/web/lib/study-builder/stnoTypes.ts`
+
+---
+
+## Krok 15 — zintegrować STNO state z `types.ts`
+
+### Zadania
+- rozszerzyć model etapu / problemu o STNO fields.
+
+### Pliki
+- `apps/web/lib/study-builder/types.ts`
+
+---
+
+## Krok 16 — rozszerzyć `materialize.ts`
+
+### Zadania
+- składać STNO UI state do payloadu problemu.
+
+### Pliki
+- `apps/web/lib/study-builder/materialize.ts`
+
+---
+
+## Krok 17 — dodać walidację formularzy STNO
+
+### Zadania
+- zakresy, wymagane pola, sensowność jednostek.
+
+### Pliki
+- nowy `apps/web/lib/study-builder/stnoValidation.ts`
+
+---
+
+## Krok 18 — snapshot tests dla builder manifest
+
+### Zadania
+- round-trip Python manifest ↔ frontend state ↔ payload.
+
+### Pliki
+- backend + frontend tests
+
+---
+
+# Faza C — backend execution parity i polityka zakresu
+
+## Krok 19 — podjąć decyzję: CPU Oersted parity czy explicit unsupported
+
+### Zadania
+- jeśli ma być produkcyjny CPU smoke path: wdrożyć Oersted,
+- jeśli nie: capability/UI blokada i jawna dokumentacja.
+
+### Pliki
+- `crates/fullmag-runner/src/capabilities.rs`
+- docs/UI
+
+---
+
+## Krok 20 — zaimplementować Oersted w CPU reference
+
+### Zadania
+- config,
+- field evaluation,
+- time envelope,
+- integracja z HEff.
+
+### Pliki
+- `crates/fullmag-runner/src/cpu_reference.rs`
+- `crates/fullmag-engine/src/fdm_problem.rs`
+- `crates/fullmag-engine/src/fdm_fields.rs`
+- nowy `crates/fullmag-engine/src/oersted.rs`
+
+---
+
+## Krok 21 — dodać CPU tests dla Oersted AC/DC
+
+### Zadania
+- analityczne testy pola,
+- smoke test run.
+
+### Pliki
+- `crates/fullmag-engine/tests/oersted_field.rs`
+- `crates/fullmag-runner/tests/cpu_oersted_smoke.rs`
+
+---
+
+## Krok 22 — jawnie przenieść `thermal_seed` przez CPU runner
+
+### Zadania
+- sprawdzić, czy seed dochodzi do engine,
+- dodać jeśli brak.
+
+### Pliki
+- `crates/fullmag-runner/src/cpu_reference.rs`
+- `crates/fullmag-engine/src/fdm_problem.rs`
+
+---
+
+## Krok 23 — jawnie przenieść `thermal_seed` przez native FDM
+
+### Zadania
+- rozszerzyć plan description / FFI payload,
+- ustawić seed po stronie backendu.
+
+### Pliki
+- `crates/fullmag-runner/src/native_fdm.rs`
+- native FDM FFI / backend bindings
+
+---
+
+## Krok 24 — zaktualizować capability matrix dla stochastic reproducibility
+
+### Zadania
+- w capability contract można dodać pole typu:
+  - `supports_fixed_thermal_seed`.
+
+### Pliki
+- `crates/fullmag-ir/src/lib.rs`
+- `crates/fullmag-runner/src/capabilities.rs`
+
+---
+
+## Krok 25 — zdecydować o FEM scope
+
+### Zadania
+- albo jawnie ograniczyć STNO do native FDM,
+- albo rozpocząć implementację STT w native FEM.
+
+### Wyjście
+- jednoznaczna polityka produktu.
+
+---
+
+## Krok 26 — jeśli FEM ma wejść do v2: dodać STT do native FEM wrapper
+
+### Zadania
+- przenieść parametry STT,
+- dopisać capability.
+
+### Pliki
+- `crates/fullmag-runner/src/native_fem.rs`
+- warstwa sys/FFI FEM
+- solver FEM
+
+---
+
+## Krok 27 — benchmark zgodności FDM CPU vs native FDM
+
+### Zadania
+- prosty test jakościowy:
+  - bez Oersteda,
+  - z Oerstedem po wdrożeniu,
+  - z STT,
+  - z thermal.
+
+### Pliki
+- `tests/physics/stno/backend_parity/*`
+
+---
+
+# Faza D — artefakty i analiza produkcyjna
+
+## Krok 28 — zdefiniować specyfikację artefaktów STNO
+
+### Zadania
+- formaty,
+- schematy,
+- jednostki,
+- metadata.
+
+### Pliki
+- nowy `docs/specs/stno_artifacts.md`
+- runner / analysis schemas
+
+---
+
+## Krok 29 — dodać `analysis_config` lub rozszerzyć `outputs`
+
+### Zadania
+- użytkownik ma sterować:
+  - zapis time trace,
+  - zapis probe trace,
+  - zapis core track,
+  - liczenie PSD,
+  - liczenie linewidth.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/model/problem.py`
+- UI forms
+
+---
+
+## Krok 30 — dodać standaryzowany zapis `m_avg(t)`
+
+### Zadania
+- global average magnetization trace jako artefakt.
+
+### Pliki
+- runner artifacts pipeline
+- analysis loaders
+
+---
+
+## Krok 31 — dodać zapis lokalnych probe traces
+
+### Zadania
+- wskazane punkty / obszary pomiarowe w próbce.
+
+### Pliki
+- problem model,
+- runner,
+- artifacts,
+- UI probe editor
+
+---
+
+## Krok 32 — dodać core-track artifact
+
+### Zadania
+- track vortex core frame-by-frame,
+- zapisać:
+  - time,
+  - x,
+  - y,
+  - confidence,
+  - method.
+
+### Pliki
+- runner or postprocess pipeline
+- `analysis/vortex.py`
+
+---
+
+## Krok 33 — wdrożyć produkcyjny PSD pipeline
+
+### Zadania
+- detrend,
+- windowing,
+- Welch,
+- averaging,
+- unit-aware outputs.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/analysis/spectrum.py`
+- nowy `analysis/psd.py`
+
+---
+
+## Krok 34 — wdrożyć prawdziwy Lorentzian fitter
+
+### Zadania
+- implementacja model fitu,
+- zwracanie niepewności.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/analysis/fitting.py`
+- `analysis/spectrum.py`
+
+---
+
+## Krok 35 — wdrożyć solidny tracker rdzenia vortexu
+
+### Zadania
+- sub-pixel fit,
+- continuity,
+- confidence score.
+
+### Pliki
+- `packages/fullmag-py/src/fullmag/analysis/vortex.py`
+- `analysis/vortex_fit.py`
+
+---
+
+## Krok 36 — dodać `stno_summary.json`
+
+### Zadania
+- zebrać:
+  - peak frequency,
+  - linewidth,
+  - Q,
+  - orbit radius,
+  - temperature,
+  - seed,
+  - backend.
+
+### Pliki
+- artifacts pipeline
+
+---
+
+## Krok 37 — dodać offline loaders w Pythonie
+
+### Zadania
+- funkcje `load_stno_run`, `load_stno_sweep`.
+
+### Pliki
+- nowy `packages/fullmag-py/src/fullmag/analysis/io.py`
+
+---
+
+# Faza E — frontend STNO authoring UI
+
+## Krok 38 — panel STT
+
+### Zadania
+- formularz wariantowy:
+  - none,
+  - Slonczewski,
+  - Zhang–Li.
+
+### Pola
+- current density,
+- polarization vector,
+- degree,
+- lambda asymmetry,
+- epsilon prime,
+- beta.
+
+### Pliki
+- `apps/web/components/stno/SttPanel.tsx`
+
+---
+
+## Krok 39 — panel OerstedCylinder
+
+### Zadania
+- geometria cylindra,
+- orientacja,
+- amplitude/current,
+- waveform editor.
+
+### Pliki
+- `apps/web/components/stno/OerstedCylinderPanel.tsx`
+
+---
+
+## Krok 40 — panel waveform editor
+
+### Zadania
+- Constant,
+- Sinusoidal,
+- Pulse,
+- PiecewiseLinear,
+- z walidacją jednostek czasu i amplitudy.
+
+### Pliki
+- `apps/web/components/stno/WaveformEditor.tsx`
+
+---
+
+## Krok 41 — panel Thermal
+
+### Zadania
+- enable/disable,
+- temperature,
+- seed,
+- informacja o reproducibility.
+
+### Pliki
+- `apps/web/components/stno/ThermalPanel.tsx`
+
+---
+
+## Krok 42 — panel Signal Probes
+
+### Zadania
+- wybór średniej globalnej,
+- punktów lokalnych,
+- region averaging,
+- zapis komponentów `mx/my/mz`.
+
+### Pliki
+- `apps/web/components/stno/SignalProbePanel.tsx`
+
+---
+
+## Krok 43 — panel Analysis Config
+
+### Zadania
+- okno czasowe analizy,
+- PSD config,
+- linewidth fit config,
+- core tracking method.
+
+### Pliki
+- `apps/web/components/stno/StnoAnalysisPanel.tsx`
+
+---
+
+## Krok 44 — integracja authoring UI z runtime capabilities
+
+### Zadania
+- jeśli backend nie wspiera STT / Oersteda / thermal / seed:
+  - ukryć,
+  - zablokować,
+  - lub oznaczyć jako unsupported.
+
+### Pliki
+- `apps/web/lib/useRuntimeCapabilities.ts`
+- panele STNO
+
+---
+
+# Faza F — frontend analyze workbench
+
+## Krok 45 — `StnoAnalyzeWorkbench`
+
+### Zadania
+- główny kontener zakładek STNO.
+
+### Pliki
+- `apps/web/components/analyze/StnoAnalyzeWorkbench.tsx`
+
+---
+
+## Krok 46 — wykres time trace
+
+### Zadania
+- wybór sygnału,
+- zoom,
+- trimming,
+- overlay kilku przebiegów.
+
+### Pliki
+- `apps/web/components/analyze/StnoTimeTracePlot.tsx`
+
+---
+
+## Krok 47 — wykres PSD
+
+### Zadania
+- lin/log,
+- wybór składowej,
+- marker piku,
+- overlay runów.
+
+### Pliki
+- `apps/web/components/analyze/PsdPlot.tsx`
+
+---
+
+## Krok 48 — panel linewidth fit
+
+### Zadania
+- wybór okna fitu,
+- pokazanie wyniku i residuali.
+
+### Pliki
+- `apps/web/components/analyze/LinewidthPanel.tsx`
+
+---
+
+## Krok 49 — wykres trajektorii rdzenia
+
+### Zadania
+- XY orbit,
+- center fit,
+- radius,
+- eccentricity.
+
+### Pliki
+- `apps/web/components/analyze/CoreTrajectoryPlot.tsx`
+
+---
+
+## Krok 50 — panel sweep compare
+
+### Zadania
+- `f_peak(I)`,
+- `linewidth(T)`,
+- heatmap PSD vs parameter.
+
+### Pliki
+- `apps/web/components/analyze/StnoSweepWorkbench.tsx`
+
+---
+
+## Krok 51 — eksport wyników analizy
+
+### Zadania
+- CSV,
+- JSON,
+- PNG/SVG,
+- pakiet wynikowy.
+
+### Pliki
+- analyze export utilities
+
+---
+
+# Faza G — dokumentacja, przykłady i benchmarki
+
+## Krok 52 — napisać physics note STNO
+
+### Pliki
+- `docs/physics/stno_vortex_mtj.md`
+
+### Sekcje obowiązkowe
+- równania,
+- backend matrix,
+- ograniczenia,
+- units,
+- sign conventions.
+
+---
+
+## Krok 53 — napisać note observables
+
+### Pliki
+- `docs/physics/stno_observables.md`
+
+### Sekcje
+- sygnały,
+- PSD,
+- linewidth,
+- core tracking,
+- błędy interpretacyjne.
+
+---
+
+## Krok 54 — przepisać przykład STNO na pełny workflow
+
+### Pliki
+- `examples/stno_vortex_mtj_workflow.py`
+- ewentualne nowe przykłady rozdzielone funkcjonalnie
+
+---
+
+## Krok 55 — dodać benchmark vortex relax
+
+### Pliki
+- `benchmarks/stno_vortex/relax_*`
+
+---
+
+## Krok 56 — dodać benchmark gyro frequency
+
+### Pliki
+- `benchmarks/stno_vortex/gyro_mode_*`
+
+---
+
+## Krok 57 — dodać benchmark Oersted resonance
+
+### Pliki
+- `benchmarks/stno_vortex/oersted_resonance_*`
+
+---
+
+## Krok 58 — dodać benchmark STT threshold trend
+
+### Pliki
+- `benchmarks/stno_vortex/stt_threshold_*`
+
+---
+
+## Krok 59 — dodać benchmark thermal broadening
+
+### Pliki
+- `benchmarks/stno_vortex/thermal_linewidth_*`
+
+---
+
+## Krok 60 — wpiąć benchmarki do CI nightly/release
+
+### Zadania
+- smoke subset per PR,
+- heavy subset nightly.
+
+### Pliki
+- `.github/workflows/*`
+
+---
+
+# Faza H — porządkowanie produktu i release gates
+
+## Krok 61 — capability matrix jako single source of truth
+
+### Zadania
+- zsynchronizować planner comments, docs, UI.
+
+---
+
+## Krok 62 — oznaczyć experimental vs stable
+
+### Zadania
+- STNO native FDM = stable,
+- FEM STNO = experimental,
+- `ThermalNoise` = deprecated/experimental.
+
+---
+
+## Krok 63 — zdefiniować release gate dla STNO
+
+Release v1 można ogłosić dopiero, gdy przejdą:
+
+1. pełny Python API round-trip,
+2. UI authoring STNO,
+3. native FDM run smoke,
+4. PSD + linewidth + core tracking,
+5. benchmark suite P0/P1,
+6. docs physics.
+
+---
+
+## Krok 64 — dodać checklistę DoD do repo
+
+### Pliki
+- `docs/process/stno_definition_of_done.md`
+
+---
+
+## Krok 65 — wydać wersję z changelogiem STNO
+
+### Pliki
+- `CHANGELOG.md`
+- release notes
+
+---
+
+## 9. Konkretne mini-patche — przykładowe kierunki zmian
+
+### 9.1. `Problem` — thermal seed i builder manifest
+
+```python
+@dataclass(frozen=True)
+class Problem:
+    ...
+    spin_torque: SpinTorque | None = None
+    temperature: float | None = None
+    thermal_seed: int | None = None
+    ...
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            ...
+            **(self.spin_torque.to_ir_fields() if self.spin_torque is not None else {}),
+            **({"temperature": self.temperature} if self.temperature is not None else {}),
+            **({"thermal_seed": self.thermal_seed} if self.thermal_seed is not None else {}),
+        }
+```
+
+```python
+def build_problem_builder_manifest(problem: Problem) -> dict[str, object]:
+    return {
+        "problem": {
+            ...
+            "spin_torque": _to_builder_value(problem.spin_torque),
+            "temperature": problem.temperature,
+            "thermal_seed": problem.thermal_seed,
+        },
+        "editable_scopes": [
+            ...,
+            "spin_torque",
+            "thermal",
+            "signals",
+            "stno_analysis",
+        ],
+    }
+```
+
+### 9.2. `energy.py` — `PiecewiseLinear`
+
+```python
+@dataclass(frozen=True)
+class PiecewiseLinear:
+    points: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        if len(self.points) < 2:
+            raise ValueError("expected at least two points")
+        ts = [t for t, _ in self.points]
+        if any(t2 <= t1 for t1, t2 in zip(ts, ts[1:])):
+            raise ValueError("times must be strictly increasing")
+
+    def to_ir(self) -> dict[str, object]:
+        return {
+            "kind": "piecewise_linear",
+            "points": [[float(t), float(v)] for t, v in self.points],
+        }
+```
+
+### 9.3. `analysis/spectrum.py` — rozdzielenie estymatora od fitu
+
+```python
+def linewidth_halfmax(freq_hz: np.ndarray, psd: np.ndarray) -> float:
+    ...
+
+def fit_lorentzian_linewidth(
+    freq_hz: np.ndarray,
+    psd: np.ndarray,
+    *,
+    fit_window_hz: tuple[float, float] | None = None,
+) -> LinewidthFitResult:
+    ...
+```
+
+### 9.4. `analysis/vortex.py` — rich result
+
+```python
+@dataclass(frozen=True)
+class CoreTrackResult:
+    time_s: np.ndarray
+    x_m: np.ndarray
+    y_m: np.ndarray
+    confidence: np.ndarray
+    method: str
+    orbit_center_m: tuple[float, float] | None = None
+    orbit_radius_m: float | None = None
+    eccentricity: float | None = None
+```
+
+---
+
+## 10. Minimalny zestaw równań, które powinny trafić do docs i kodu opisowego
+
+### 10.1. LLG z efektywnym polem i torque
+
+\[
+\frac{d\mathbf{m}}{dt}
+=
+-\gamma \mu_0 \mathbf{m} \times \mathbf{H}_{\mathrm{eff}}
++
+\alpha \mathbf{m} \times \frac{d\mathbf{m}}{dt}
++
+\mathbf{T}_{\mathrm{STT}}
++
+\mathbf{T}_{\mathrm{thermal}}
+\]
+
+### 10.2. Slonczewski STT — forma efektywna
+
+Praktycznie w dokumentacji trzeba jasno opisać:
+- znaczenie `current_density`,
+- `spin_polarization`,
+- `degree`,
+- `lambda_asymmetry`,
+- `epsilon_prime`,
+- konwencję znaku prądu i orientacji polaryzacji.
+
+### 10.3. Zhang–Li STT
+
+\[
+\mathbf{T}_{\mathrm{ZL}}
+\sim
+(\mathbf{u}\cdot\nabla)\mathbf{m}
+-
+\beta \mathbf{m}\times (\mathbf{u}\cdot\nabla)\mathbf{m}
+\]
+
+### 10.4. Pole Oersteda dla cylindra
+
+Dla nieskończonego przewodnika cylindrycznego:
+
+\[
+H_\phi(r) \propto
+\begin{cases}
+r, & r < R \\
+1/r, & r \ge R
+\end{cases}
+\]
+
+z odpowiednim kierunkiem azymutalnym zależnym od osi przewodnika i znaku prądu.
+
+### 10.5. Termiczny poziom szumu
+
+W dokumentacji i kodzie trzeba spójnie opisać:
+- zależność od \(T\),
+- kroku czasowego,
+- objętości komórki,
+- tłumienia.
+
+---
+
+## 11. Kolejność PR-ów — jak to rozbić na wdrażalne porcje
+
+Poniższy podział pozwoli pracować bez wielkich, ryzykownych mega-PR-ów.
+
+### PR-01 — Python API cleanup
+- F01
+- F04
+- F05
+- część F19
+- część F20
+
+### PR-02 — Builder manifest + round-trip
+- F02
+- F03
+- snapshot tests
+
+### PR-03 — CPU Oersted parity lub explicit unsupported
+- F13
+- część F21
+
+### PR-04 — STNO artifacts spec + Python postprocess v1
+- F18
+- F09
+- F10
+
+### PR-05 — Frontend authoring STNO
+- F11
+- część F25
+
+### PR-06 — Frontend analyze STNO
+- F12
+- reszta F25
+
+### PR-07 — Docs + examples + release policy
+- F06
+- F07
+- F15
+- F23
+
+### PR-08 — Physics benchmarks
+- F24
+
+### PR-09 — Native FEM strategy
+- F14
+- lub docs-only scope restriction
+
+---
+
+## 12. Definition of Done dla „produkcyjny model STNO”
+
+Nie używałbym określenia „produkcyjny”, dopóki nie zajdą **wszystkie** poniższe warunki.
+
+### 12.1. Backend
+- native FDM wspiera STT + Oersted + thermal + seed end-to-end,
+- CPU fallback ma albo parity, albo jawne blokady i docs.
+
+### 12.2. API
+- top-level `fullmag` eksportuje komplet oficjalnych bytów STNO,
+- `Problem` ma spójny model thermal.
+
+### 12.3. UI
+- można w UI skonfigurować cały case STNO,
+- można w UI obejrzeć time trace / PSD / linewidth / core orbit.
+
+### 12.4. Testy
+- są testy Python, runner, frontend i benchmarki fizyczne.
+
+### 12.5. Dokumentacja
+- jest physics note,
+- jest observables note,
+- są przykłady end-to-end.
+
+### 12.6. Reproducibility
+- seed jest jawny,
+- summary artifact zapisuje pełne metadane runu.
+
+---
+
+## 13. Co wdrażać najpierw, jeśli celem jest szybkie „domknięcie produktu”
+
+Jeżeli zależy Wam na **najszybszym** dojściu do sensownego STNO v1, rekomenduję taką kolejność:
+
+1. F02 — builder manifest dla STT/thermal  
+2. F05 — export surface  
+3. F04 — PiecewiseLinear  
+4. F08 — testy Python STNO  
+5. F13 — CPU Oersted parity lub explicit unsupported  
+6. F18 — artefakty STNO  
+7. F09 — prawdziwy linewidth fitter  
+8. F10 — solidny vortex tracker  
+9. F11 — authoring UI  
+10. F12 — analyze UI  
+11. F06/F07 — docs i examples  
+12. F24 — benchmarki fizyczne
+
+To jest najkrótsza ścieżka od „mamy sporo backendu” do „mamy produkt”.
+
+---
+
+## 14. Ryzyka wdrożeniowe
+
+### R1 — za szybkie rozszerzanie scope na FEM
+Może zjeść dużo czasu bez dania wartości v1.
+
+### R2 — brak jasnej polityki thermal
+Jeżeli zostaną dwa równoległe modele (`temperature` i `ThermalNoise`), API będzie chaotyczne.
+
+### R3 — mylenie „example exists” z „feature is production-ready”
+To dziś największe ryzyko percepcyjne.
+
+### R4 — UI bez capability gating
+Może wystawiać funkcje, których backend nie umie wykonać.
+
+### R5 — brak benchmarków ilościowych
+Bez nich linewidth i częstotliwości będą wyglądały „ładnie”, ale nie będzie wiadomo, czy są wiarygodne.
+
+---
+
+## 15. Końcowa rekomendacja strategiczna
+
+Moja mocna rekomendacja jest taka:
+
+### A. Formalnie ogłoś STNO v1 jako **native FDM-first**
+Nie próbuj teraz sprzedawać tego jako pełne „FDM/FEM production STNO”.
+
+### B. Uczyń `Problem + manifest + frontend` pierwszoklasowym interfejsem
+Dziś to jest największy rozjazd między potencjałem backendu a realnym produktem.
+
+### C. Potraktuj analizę STNO jako osobny produkt
+PSD, linewidth, core track, sweep compare to nie są „drobiazgi”.
+To jest połowa wartości funkcji STNO.
+
+### D. Wprowadź benchmarki zanim padnie słowo „produkcyjny”
+Bez benchmarków będzie to nadal funkcja badawcza / eksperymentalna.
+
+---
+
+## 16. Podsumowanie końcowe
+
+### Co już macie
+- bardzo dobrą bazę backendową,
+- STT i Oersted obecne w architekturze,
+- istniejący przykład STNO,
+- native FDM najbliżej pełnej fizyki.
+
+### Czego jeszcze brakuje
+- pełnego round-tripu builder/UI,
+- kompletnego authoring i analyze UI,
+- CPU/FEM jasnej polityki zakresu,
+- artefaktów STNO,
+- porządnej analityki linewidth i vortex tracking,
+- benchmarków i dokumentacji.
+
+### Najważniejsza decyzja na teraz
+**Zamrozić v1 jako native FDM-first, domknąć API + UI + artifacts + tests, a dopiero potem rozszerzać FEM.**
+
+---
+
+## 17. Aneks — szybka checklista wdrożenia
+
+### Must-have przed v1
+- [ ] F02
+- [ ] F05
+- [ ] F08
+- [ ] F11
+- [ ] F12
+- [ ] F18
+- [ ] F20
+- [ ] F24
+
+### Should-have
+- [ ] F01
+- [ ] F04
+- [ ] F06
+- [ ] F09
+- [ ] F10
+- [ ] F13
+- [ ] F19
+
+### Can-wait
+- [ ] F16
+- [ ] F17
+- [ ] F21
+- [ ] F22
+- [ ] F23
+- [ ] F25
+- [ ] pełne FEM STT
+
+---
+
+## 18. Krótka notatka o pewności audytu
+
+Ten raport jest oparty na **publicznie sprawdzalnych warstwach repo**:
+- Python DSL,
+- IR,
+- planner,
+- runner capabilities,
+- example,
+- frontend types/analyze.
+
+Gdzie piszę „brak potwierdzonego wsparcia”, oznacza to dokładnie:
+> nie znalazłem wiarygodnego, publicznie sprawdzalnego przepływu w przejrzanych warstwach.
+
+To jest mocny audyt architektury produktu i integracji, ale nie jest formalnym dowodem poprawności każdego jądra numerycznego GPU.
+
+---

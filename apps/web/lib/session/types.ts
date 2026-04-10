@@ -794,9 +794,10 @@ export interface MagnetizationAsset {
   ui_label: string | null;
 }
 
+/** @deprecated Use MagnetizationAsset.preset_params directly. */
 export interface MagnetizationPresetState {
   preset_kind: string;
-  params: Record<string, unknown>;
+  preset_params: Record<string, unknown>;
   ui_label: string | null;
 }
 

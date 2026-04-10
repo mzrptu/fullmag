@@ -669,12 +669,12 @@ fn magnetization_asset_from_geometry(
         source_format: magnetization.source_format.clone(),
         dataset: magnetization.dataset.clone(),
         sample_index: magnetization.sample_index,
-        mapping: MagnetizationMapping::default(),
-        texture_transform: TextureTransform3D::default(),
-        preset_kind: None,
-        preset_params: None,
-        preset_version: None,
-        ui_label: None,
+        mapping: magnetization.mapping.clone().unwrap_or_default(),
+        texture_transform: magnetization.texture_transform.clone().unwrap_or_default(),
+        preset_kind: magnetization.preset_kind.clone(),
+        preset_params: magnetization.preset_params.clone(),
+        preset_version: magnetization.preset_version,
+        ui_label: magnetization.ui_label.clone(),
     }
 }
 
@@ -689,10 +689,15 @@ fn script_builder_magnetization_from_asset(
         source_format: asset.source_format.clone(),
         dataset: asset.dataset.clone(),
         sample_index: asset.sample_index,
+        mapping: Some(asset.mapping.clone()),
+        texture_transform: Some(asset.texture_transform.clone()),
+        preset_kind: asset.preset_kind.clone(),
+        preset_params: asset.preset_params.clone(),
+        preset_version: asset.preset_version,
+        ui_label: asset.ui_label.clone(),
     }
 }
 
-#[allow(dead_code)]
 pub fn magnetization_asset_for_preset(
     name: &str,
     preset_kind: &str,

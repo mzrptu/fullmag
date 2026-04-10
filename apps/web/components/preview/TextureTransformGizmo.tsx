@@ -19,7 +19,7 @@ interface Props {
 
 function toObject3DTransform(transform: TextureTransform3D) {
   const position = new THREE.Vector3(...transform.translation);
-  const quaternion = new THREE.Quaternion(...transform.rotationQuat);
+  const quaternion = new THREE.Quaternion(...transform.rotation_quat);
   const scale = new THREE.Vector3(...transform.scale);
   return { position, quaternion, scale };
 }
@@ -30,7 +30,7 @@ function snapshotGroupTransform(
 ): TextureTransform3D {
   return {
     translation: [group.position.x, group.position.y, group.position.z],
-    rotationQuat: [
+    rotation_quat: [
       group.quaternion.x,
       group.quaternion.y,
       group.quaternion.z,

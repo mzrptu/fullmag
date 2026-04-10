@@ -68,7 +68,7 @@ function visibleVolumeLabel(
 function toPreviewTextureTransform(value: SceneTextureTransform3D): PreviewTextureTransform3D {
   return {
     translation: [...value.translation] as [number, number, number],
-    rotationQuat: [...value.rotation_quat] as [number, number, number, number],
+    rotation_quat: [...value.rotation_quat] as [number, number, number, number],
     scale: [...value.scale] as [number, number, number],
     pivot: [...value.pivot] as [number, number, number],
   };
@@ -77,7 +77,7 @@ function toPreviewTextureTransform(value: SceneTextureTransform3D): PreviewTextu
 function toSceneTextureTransform(value: PreviewTextureTransform3D): SceneTextureTransform3D {
   return {
     translation: [...value.translation] as [number, number, number],
-    rotation_quat: [...value.rotationQuat] as [number, number, number, number],
+    rotation_quat: [...value.rotation_quat] as [number, number, number, number],
     scale: [...value.scale] as [number, number, number],
     pivot: [...value.pivot] as [number, number, number],
   };

@@ -1,13 +1,13 @@
 export interface TextureTransform3D {
   translation: [number, number, number];
-  rotationQuat: [number, number, number, number];
+  rotation_quat: [number, number, number, number];
   scale: [number, number, number];
   pivot: [number, number, number];
 }
 
 export const IDENTITY_TEXTURE_TRANSFORM: TextureTransform3D = {
   translation: [0, 0, 0],
-  rotationQuat: [0, 0, 0, 1],
+  rotation_quat: [0, 0, 0, 1],
   scale: [1, 1, 1],
   pivot: [0, 0, 0],
 };
@@ -15,7 +15,7 @@ export const IDENTITY_TEXTURE_TRANSFORM: TextureTransform3D = {
 export function cloneTextureTransform(value: TextureTransform3D): TextureTransform3D {
   return {
     translation: [...value.translation] as [number, number, number],
-    rotationQuat: [...value.rotationQuat] as [number, number, number, number],
+    rotation_quat: [...value.rotation_quat] as [number, number, number, number],
     scale: [...value.scale] as [number, number, number],
     pivot: [...value.pivot] as [number, number, number],
   };
@@ -39,7 +39,7 @@ export function fitTextureToBounds(
   ];
   return {
     translation: center,
-    rotationQuat: [0, 0, 0, 1],
+    rotation_quat: [0, 0, 0, 1],
     scale: [sx, sy, sz],
     pivot: [0, 0, 0],
   };

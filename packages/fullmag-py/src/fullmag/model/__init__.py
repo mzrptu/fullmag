@@ -22,6 +22,7 @@ from .energy import (
     InterfacialDMI,
     Magnetoelastic,
     OerstedCylinder,
+    PiecewiseLinear,
     Pulse,
     Sinusoidal,
     ThermalNoise,
@@ -134,4 +135,8 @@ __all__ = [
     "Union",
     "Zeeman",
     "backend",
+    "PiecewiseLinear",
+    "SlonczewskiSTT",
+    "ZhangLiSTT",
+    "SpinTorque",
 ]

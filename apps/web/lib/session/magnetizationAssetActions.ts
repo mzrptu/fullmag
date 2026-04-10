@@ -46,7 +46,7 @@ export function assignMagneticPreset(
     mapping: existing?.mapping ?? {
       space: "object",
       projection: "object_local",
-      clamp_mode: "clamp",
+      clamp_mode: "none",
     },
     texture_transform: existing?.texture_transform ?? {
       translation: [0, 0, 0],

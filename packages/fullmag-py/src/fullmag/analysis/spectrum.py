@@ -161,10 +161,14 @@ def linewidth_lorentzian(
     fmin: float = 0.0,
     fmax: float | None = None,
 ) -> dict[str, float]:
-    """Estimate linewidth by fitting a Lorentzian to the PSD peak.
+    """Estimate linewidth by half-maximum width crossing.
 
-    Uses a simple half-maximum width estimation.  For production use,
-    consider scipy.optimize.curve_fit with a Lorentzian model.
+    .. deprecated::
+        This function is a simple half-max estimator, not a proper Lorentzian
+        fit.  Use :func:`fullmag.analysis.fitting.fit_lorentzian_linewidth`
+        for production measurements, or
+        :func:`fullmag.analysis.fitting.linewidth_halfmax` as a named
+        replacement for this estimator.
 
     Parameters
     ----------
@@ -182,6 +186,13 @@ def linewidth_lorentzian(
     dict
         ``{"f_center": float, "fwhm": float, "peak_power": float}``
     """
+    import warnings
+    warnings.warn(
+        "linewidth_lorentzian is a half-max estimator, not a Lorentzian fit. "
+        "Use fullmag.analysis.fitting.fit_lorentzian_linewidth for production use.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     freqs = np.asarray(freqs)
     psd = np.asarray(psd)
 

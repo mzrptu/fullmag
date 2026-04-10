@@ -48,10 +48,11 @@ def _apply_inverse_transform(
         inv_quat /= norm
     pts = _rotate_points_by_quat(pts, inv_quat)
 
-    # 3. Add pivot back then undo scale
-    pts = pts + pivot
+    # 3. Undo scale FIRST, then add pivot back
+    #    Correct inverse: local = pivot + S^-1 * R^-1 * (world - translation - pivot)
     safe_scale = np.where(np.abs(scale) > 1e-30, scale, 1.0)
     pts = pts / safe_scale
+    pts = pts + pivot
 
     return pts
 
@@ -208,13 +209,16 @@ def prepare_initial_magnetization(
             local_pts = _apply_inverse_transform(mapped_pts, transform_ir)
         else:
             local_pts = mapped_pts
-        local_pts = _apply_clamp_mode(
-            local_pts,
-            clamp_mode=_mapping_clamp_mode(mapping_ir),
-        )
+
+        # For analytic presets operating in metric space, skip unit-box clamping.
+        # Clamp/repeat/mirror is only meaningful for image-based or normalized
+        # texture mappings, not for preset evaluators using physical coordinates.
+        clamp_mode = _mapping_clamp_mode(mapping_ir)
+        if clamp_mode != "none":
+            local_pts = _apply_clamp_mode(local_pts, clamp_mode=clamp_mode)
 
         preset_kind = str(spec["preset_kind"])
-        params = dict(spec.get("params", {}))
+        params = dict(spec.get("preset_params") or spec.get("params") or {})
 
         result = evaluate_preset_texture(preset_kind, params, local_pts.tolist())
         arr = np.array(result.values, dtype=np.float64)

@@ -1,5 +1,15 @@
 """Canonical Fullmag script generated from the model builder.
 
+STNO (Spin-Torque Nano-Oscillator) vortex MTJ workflow example.
+
+Demonstrates:
+  1. Problem authoring: geometry, material, initial magnetization.
+  2. Spin-transfer torque (Slonczewski STT for CPP/MTJ).
+  3. Oersted field from current-carrying pillar.
+  4. Thermal fluctuations (optional).
+  5. Spectral analysis: PSD, peak frequency, linewidth.
+  6. Vortex core tracking: orbit radius, phase, metrics.
+
 Source: stno_vortex_mtj_workflow.py
 Entrypoint: flat_workspace
 """
@@ -17,7 +27,7 @@ USE_SAVED_RELAXED_STATE = USE_SAVED_RELAXED_STATE and os.getenv("FULLMAG_USE_SAV
 
 study = fm.study("stno_vortex_mtj_workflow")
 
-# Engine
+# ── 1. Engine / runtime ──────────────────────────────────
 study.engine("fem")
 study.device("cpu", precision="double")
 study.universe(
@@ -29,7 +39,7 @@ study.universe(
 )
 study.interactive(True)
 
-# Geometry & Material (effective CoFeB/NiFe free layer)
+# ── 2. Geometry & Material (CoFeB/NiFe free layer) ───────
 free = study.geometry(
     # NOTE:
     # Wrap cylinder in a no-op Translate to force the generic OCC CSG meshing
@@ -50,7 +60,7 @@ free.m = (
     else fm.texture.vortex(circulation=+1, core_polarity=+1)
 )
 
-# Mesh
+# ── 3. Mesh ──────────────────────────────────────────────
 study.object_mesh_defaults(
     algorithm_2d=6,
     algorithm_3d=1,
@@ -77,18 +87,44 @@ free.mesh(
 )
 study.build_domain_mesh()
 
+# ── 4. Energy terms ──────────────────────────────────────
 study.demag(realization="poisson_robin")
 
 # Optional weak DC bias field (along +z)
 study.b_ext(0.02, theta=0, phi=0)
 
-# Solver
+# ── 5. Spin-transfer torque (Slonczewski, CPP/MTJ) ──────
+# Drive the vortex into gyration using a DC spin-polarized current.
+# J = 5e10 A/m² along +z, polarization = +z (fixed layer), P = 0.4
+stt = fm.SlonczewskiSTT(
+    current_density=(0.0, 0.0, 5e10),
+    spin_polarization=(0.0, 0.0, 1.0),
+    degree=0.4,
+    lambda_asymmetry=1.0,
+    epsilon_prime=0.0,
+)
+
+# ── 6. Oersted field from the STNO pillar ────────────────
+oersted = fm.OerstedCylinder(
+    current=5e-3,        # 5 mA DC current
+    radius=50e-9,        # same as free layer
+    center=(0.0, 0.0, 0.0),
+    axis=(0.0, 0.0, 1.0),
+    # Use sinusoidal modulation for AC drive (optional):
+    # time_dependence=fm.Sinusoidal(frequency_hz=500e6, phase_rad=0.0),
+)
+
+# ── 7. Temperature (optional thermal broadening) ─────────
+TEMPERATURE_K = 0.0  # Set to e.g. 300.0 for thermal fluctuations
+
+# ── 8. Solver ────────────────────────────────────────────
 study.solver(max_error=1e-6, integrator="rk45", g=2.115)
 
-# Outputs
+# ── 9. Outputs ───────────────────────────────────────────
 study.tableautosave(10e-12)
 
-# Run
+# ── Run stages (uncomment for execution) ─────────────────
+# Relaxation
 # if not USE_SAVED_RELAXED_STATE:
 #     relax_result = study.relax(
 #         tol=1e-5,
@@ -99,9 +135,10 @@ study.tableautosave(10e-12)
 #         relax_result.save_state(RELAXED_STATE_ZARR, format="zarr")
 #         relax_result.save_state(RELAXED_STATE_H5, format="h5")
 
+# Time evolution (100 ns STNO gyration)
 # study.run(100e-9)
 
-# # Optional spectral diagnostics
+# Eigenmodes (optional diagnostics)
 # study.eigenmodes(
 #     count=20,
 #     target="lowest",

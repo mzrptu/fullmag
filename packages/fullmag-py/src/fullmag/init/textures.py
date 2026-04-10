@@ -115,7 +115,7 @@ class TextureTransform3D:
 class TextureMapping:
     space: Literal["object", "world"] = "object"
     projection: str = "object_local"
-    clamp_mode: Literal["clamp", "repeat", "mirror"] = "clamp"
+    clamp_mode: Literal["clamp", "repeat", "mirror", "none"] = "none"
 
     def to_ir(self) -> dict[str, object]:
         return {
@@ -184,7 +184,7 @@ class PresetTexture:
         return {
             "kind": "preset_texture",
             "preset_kind": self.preset_kind,
-            "params": dict(self.params),
+            "preset_params": dict(self.params),
             "mapping": self.mapping.to_ir(),
             "texture_transform": self.transform.to_ir(),
             "ui_label": self.ui_label,

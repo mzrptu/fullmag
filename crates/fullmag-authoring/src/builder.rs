@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+use crate::scene::{MagnetizationMapping, TextureTransform3D};
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptBuilderSolverState {
     #[serde(default = "default_solver_integrator")]
@@ -363,6 +365,18 @@ pub struct ScriptBuilderMagnetizationState {
     pub dataset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_index: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<MagnetizationMapping>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture_transform: Option<TextureTransform3D>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_params: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_label: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

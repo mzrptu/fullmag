@@ -54,6 +54,65 @@ import { recordFrontendRender } from "@/lib/debug/frontendPerfDebug";
 const STABLE_ORIGIN: [number, number, number] = [0, 0, 0];
 
 const AIR_OBJECT_SEGMENT_ID = "__air__";
+const RENDER_MODE_DISPLAY_PRESETS: Record<
+  RenderMode,
+  {
+    opacity: number;
+    showArrows: boolean;
+    clipEnabled: boolean;
+    clipAxis: ClipAxis;
+    clipPos: number;
+    vectorDomainFilter: FemVectorDomainFilter;
+    ferromagnetVisibilityMode: FemFerromagnetVisibilityMode;
+    shrinkFactor: number;
+    qualityProfile: ViewportQualityProfileId;
+  }
+> = {
+  surface: {
+    opacity: 85,
+    showArrows: false,
+    clipEnabled: false,
+    clipAxis: "x",
+    clipPos: 50,
+    vectorDomainFilter: "auto",
+    ferromagnetVisibilityMode: "hide",
+    shrinkFactor: 1,
+    qualityProfile: "interactive",
+  },
+  "surface+edges": {
+    opacity: 72,
+    showArrows: false,
+    clipEnabled: false,
+    clipAxis: "x",
+    clipPos: 50,
+    vectorDomainFilter: "auto",
+    ferromagnetVisibilityMode: "hide",
+    shrinkFactor: 1,
+    qualityProfile: "interactive",
+  },
+  wireframe: {
+    opacity: 65,
+    showArrows: false,
+    clipEnabled: false,
+    clipAxis: "x",
+    clipPos: 50,
+    vectorDomainFilter: "auto",
+    ferromagnetVisibilityMode: "hide",
+    shrinkFactor: 1,
+    qualityProfile: "interactive",
+  },
+  points: {
+    opacity: 100,
+    showArrows: false,
+    clipEnabled: false,
+    clipAxis: "x",
+    clipPos: 50,
+    vectorDomainFilter: "auto",
+    ferromagnetVisibilityMode: "hide",
+    shrinkFactor: 1,
+    qualityProfile: "interactive",
+  },
+};
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -1578,7 +1637,7 @@ function FemMeshView3DInner({
     }
     const transform: TextureTransform3D = {
       translation: [...activeTextureTransform.translation] as [number, number, number],
-      rotationQuat: [...activeTextureTransform.rotationQuat] as [number, number, number, number],
+      rotation_quat: [...activeTextureTransform.rotation_quat] as [number, number, number, number],
       scale: [...activeTextureTransform.scale] as [number, number, number],
       pivot: [...activeTextureTransform.pivot] as [number, number, number],
     };
@@ -1618,7 +1677,7 @@ function FemMeshView3DInner({
         resolvedWorldTextureTransform.translation[1] - dynamicGeomCenter.y,
         resolvedWorldTextureTransform.translation[2] - dynamicGeomCenter.z,
       ] as [number, number, number],
-      rotationQuat: [...resolvedWorldTextureTransform.rotationQuat] as [number, number, number, number],
+      rotation_quat: [...resolvedWorldTextureTransform.rotation_quat] as [number, number, number, number],
       scale: [...resolvedWorldTextureTransform.scale] as [number, number, number],
       pivot: [
         resolvedWorldTextureTransform.pivot[0] - dynamicGeomCenter.x,
@@ -1639,7 +1698,7 @@ function FemMeshView3DInner({
           next.translation[1] + dynamicGeomCenter.y,
           next.translation[2] + dynamicGeomCenter.z,
         ] as [number, number, number],
-        rotationQuat: [...next.rotationQuat] as [number, number, number, number],
+        rotation_quat: [...next.rotation_quat] as [number, number, number, number],
         scale: [...next.scale] as [number, number, number],
         pivot: [
           next.pivot[0] + dynamicGeomCenter.x,
@@ -1662,7 +1721,7 @@ function FemMeshView3DInner({
           next.translation[1] + dynamicGeomCenter.y,
           next.translation[2] + dynamicGeomCenter.z,
         ] as [number, number, number],
-        rotationQuat: [...next.rotationQuat] as [number, number, number, number],
+        rotation_quat: [...next.rotation_quat] as [number, number, number, number],
         scale: [...next.scale] as [number, number, number],
         pivot: [
           next.pivot[0] + dynamicGeomCenter.x,
@@ -1763,18 +1822,92 @@ function FemMeshView3DInner({
     return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
   }, [faceAspectRatios, hoveredFace, qualityPerFace, wrapperFlags.enableHoverTooltip]);
   const applyToolbarRenderMode = useCallback((next: RenderMode) => {
+    const preset = RENDER_MODE_DISPLAY_PRESETS[next];
+    const resetDisplayState =
+      FRONTEND_DIAGNOSTIC_FLAGS.femViewport.resetDisplayStateOnRenderModeChange;
+
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
-      onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
+      if (resetDisplayState) {
+        onMeshPartViewStatePatch(toolbarStylePartIds, {
+          renderMode: next,
+          opacity: preset.opacity,
+        });
+      } else {
+        onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
+      }
       // Sync global meshRenderMode so chip display & serialization stay accurate.
       onRenderModeChange?.(next);
+    } else {
+      if (onRenderModeChange) {
+        onRenderModeChange(next);
+      } else {
+        setInternalRenderMode(next);
+      }
+      if (resetDisplayState) {
+        if (onOpacityChange) {
+          onOpacityChange(preset.opacity);
+        } else {
+          setInternalOpacity(preset.opacity);
+        }
+      }
+    }
+
+    if (!resetDisplayState) {
       return;
     }
-    if (onRenderModeChange) {
-      onRenderModeChange(next);
+    if (onClipEnabledChange) {
+      onClipEnabledChange(preset.clipEnabled);
     } else {
-      setInternalRenderMode(next);
+      setInternalClipEnabled(preset.clipEnabled);
     }
-  }, [hasMeshParts, onMeshPartViewStatePatch, onRenderModeChange, toolbarStylePartIds]);
+    if (onClipAxisChange) {
+      onClipAxisChange(preset.clipAxis);
+    } else {
+      setInternalClipAxis(preset.clipAxis);
+    }
+    if (onClipPosChange) {
+      onClipPosChange(preset.clipPos);
+    } else {
+      setInternalClipPos(preset.clipPos);
+    }
+    if (onShowArrowsChange) {
+      onShowArrowsChange(preset.showArrows);
+    } else {
+      setInternalShowArrows(preset.showArrows);
+    }
+    if (onVectorDomainFilterChange) {
+      onVectorDomainFilterChange(preset.vectorDomainFilter);
+    } else {
+      setInternalVectorDomainFilter(preset.vectorDomainFilter);
+    }
+    if (onFerromagnetVisibilityModeChange) {
+      onFerromagnetVisibilityModeChange(preset.ferromagnetVisibilityMode);
+    } else {
+      setInternalFerromagnetVisibilityMode(preset.ferromagnetVisibilityMode);
+    }
+    if (onShrinkFactorChange) {
+      onShrinkFactorChange(preset.shrinkFactor);
+    } else {
+      setInternalShrinkFactor(preset.shrinkFactor);
+    }
+    setQualityProfile(preset.qualityProfile);
+    updateSharedPreviewMaxPoints(PREVIEW_MAX_POINTS_DEFAULT);
+    setOpenPopover(null);
+  }, [
+    hasMeshParts,
+    onClipAxisChange,
+    onClipEnabledChange,
+    onClipPosChange,
+    onFerromagnetVisibilityModeChange,
+    onMeshPartViewStatePatch,
+    onOpacityChange,
+    onRenderModeChange,
+    onShowArrowsChange,
+    onShrinkFactorChange,
+    onVectorDomainFilterChange,
+    toolbarStylePartIds,
+    updateSharedPreviewMaxPoints,
+  ]);
   const applyToolbarOpacity = useCallback((next: number) => {
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarStylePartIds, { opacity: next });
