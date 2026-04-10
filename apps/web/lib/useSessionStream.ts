@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { currentLiveApiClient } from "./liveApiClient";
 import { recordFrontendDebugEvent } from "./workspace/navigation-debug";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "./debug/frontendDiagnosticFlags";
 
 /* ── Re-export all types ── */
 export type {
@@ -167,9 +168,10 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       const hasSessionState = Boolean(stateRef.current?.session);
       const ageMs = bootstrapCacheAge(cacheKey);
       const shouldFetchBootstrap =
-        !hasSessionState ||
-        ageMs == null ||
-        ageMs > BOOTSTRAP_RECONNECT_TTL_MS;
+        FRONTEND_DIAGNOSTIC_FLAGS.session.enableLiveBootstrapFetch &&
+        (!hasSessionState ||
+          ageMs == null ||
+          ageMs > BOOTSTRAP_RECONNECT_TTL_MS);
 
       if (shouldFetchBootstrap) {
         recordFrontendDebugEvent("live-stream", "bootstrap_fetch_scheduled", {
@@ -201,6 +203,14 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
           connectionGeneration,
           ageMs,
         });
+      }
+
+      if (!FRONTEND_DIAGNOSTIC_FLAGS.session.enableLiveWebSocket) {
+        recordFrontendDebugEvent("live-stream", "ws_disabled_by_diagnostic_flag", {
+          connectionGeneration,
+        });
+        setConnection("disconnected");
+        return;
       }
 
       const ws = client.connectWebSocket();

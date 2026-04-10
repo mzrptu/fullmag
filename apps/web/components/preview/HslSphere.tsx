@@ -17,7 +17,7 @@
  * reference sphere must swap Y/Z when sampling the HSL map for FEM/FDM.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Text, Billboard, Line } from "@react-three/drei";
@@ -77,7 +77,6 @@ function CameraSync({
   mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera; controls?: any } | null>;
 }) {
   const { camera, invalidate } = useThree();
-  const syncRafRef = useRef<number | null>(null);
   const syncCamera = useCallback(() => {
     const main = mainCameraRef.current;
     if (!main) {
@@ -92,41 +91,24 @@ function CameraSync({
 
   useEffect(() => {
     let frameId: number | null = null;
-    let boundControls: {
-      addEventListener?: (type: string, listener: () => void) => void;
-      removeEventListener?: (type: string, listener: () => void) => void;
-    } | null = null;
-    const scheduleSync = () => {
-      if (syncRafRef.current !== null) {
-        return;
+    const lastQuaternion = new THREE.Quaternion();
+    let initialized = false;
+    const tick = () => {
+      const main = mainCameraRef.current;
+      if (main) {
+        if (!initialized || !lastQuaternion.equals(main.camera.quaternion)) {
+          lastQuaternion.copy(main.camera.quaternion);
+          initialized = true;
+          syncCamera();
+        }
       }
-      syncRafRef.current = requestAnimationFrame(() => {
-        syncRafRef.current = null;
-        syncCamera();
-      });
+      frameId = requestAnimationFrame(tick);
     };
-
-    const attachToControls = () => {
-      const controls = mainCameraRef.current?.controls;
-      if (!controls || typeof controls.addEventListener !== "function") {
-        frameId = requestAnimationFrame(attachToControls);
-        return;
-      }
-      boundControls = controls;
-      controls.addEventListener("change", scheduleSync);
-      scheduleSync();
-    };
-
-    attachToControls();
+    frameId = requestAnimationFrame(tick);
     return () => {
       if (frameId !== null) {
         cancelAnimationFrame(frameId);
       }
-      if (syncRafRef.current !== null) {
-        cancelAnimationFrame(syncRafRef.current);
-        syncRafRef.current = null;
-      }
-      boundControls?.removeEventListener?.("change", scheduleSync);
     };
   }, [mainCameraRef, syncCamera]);
 

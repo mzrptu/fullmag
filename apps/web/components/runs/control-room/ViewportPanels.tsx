@@ -5,6 +5,7 @@ import { memo, useMemo, useCallback } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { MAGNETIC_PRESET_CATALOG } from "@/lib/magnetizationPresetCatalog";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
 import { cn } from "@/lib/utils";
 import type { TextureTransform3D as PreviewTextureTransform3D } from "@/lib/textureTransform";
 import type { TextureGizmoMode } from "../../preview/TextureTransformGizmo";
@@ -111,6 +112,9 @@ function ViewportChip({
 
 export const ViewportBar = memo(function ViewportBar() {
   const ctx = useControlRoom();
+  if (!FRONTEND_DIAGNOSTIC_FLAGS.shell.showViewportBar) {
+    return null;
+  }
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const selectedDisplayIsGlobalScalar =
     ctx.preview?.kind === "global_scalar" || ctx.quantityDescriptor?.kind === "global_scalar";
@@ -406,6 +410,9 @@ export const ViewportBar = memo(function ViewportBar() {
 /* ── Telemetry HUD: subscribes only to transport context ── */
 const TelemetryHUD = memo(function TelemetryHUD({ solverSettings }: { solverSettings: { torqueTolerance?: string | number } }) {
   const transport = useTransport();
+  if (!FRONTEND_DIAGNOSTIC_FLAGS.viewportChrome.showTelemetryHud) {
+    return null;
+  }
   return (
     <div className="viewportOverlay absolute top-3 left-1/2 -translate-x-1/2 flex items-center justify-center gap-4 z-10 pointer-events-none text-center font-mono text-[0.7rem] font-bold tracking-wide text-foreground/80 bg-background/60 backdrop-blur-md px-5 py-1.5 rounded-full border border-border/30 shadow-md">
       <span>Step {transport.effectiveStep.toLocaleString()}</span>
@@ -421,6 +428,7 @@ const TelemetryHUD = memo(function TelemetryHUD({ solverSettings }: { solverSett
 
 export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   const ctx = useControlRoom();
+  const minimalViewportSelectionPath = FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.useMinimalViewportSelectionPath;
   const setSelectedObjectId = ctx.setSelectedObjectId;
   const setSelectedSidebarNodeId = ctx.setSelectedSidebarNodeId;
   const meshParts = ctx.meshParts;
@@ -579,7 +587,7 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   );
   const handlePreviewMaxPointsChange = useCallback(
     (nextMaxPoints: number) => void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints }),
-    [ctx.updatePreview],
+    [ctx],
   );
   const hasExactScopeSegment = useMemo(
     () => {
@@ -614,7 +622,9 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
     !globalScalarPreview;
   // Use classic FDM mesh view ONLY if no unstructured mesh data is available
   const isFdmMeshActive = ctx.effectiveViewMode === "Mesh" && !ctx.isFemBackend && !ctx.femMeshData;
-  const showFdm3D = isFdm3DActive || isFdmMeshActive;
+  const showFdm3D =
+    (isFdm3DActive && FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableFdm3D) ||
+    (isFdmMeshActive && FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableFdmMeshWorkspace);
   const showFemBoundsPreview =
     ctx.isFemBackend &&
     !ctx.femMeshData &&
@@ -624,7 +634,58 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   /* ── Determine what goes into the conditional slot ── */
   let conditionalContent: React.ReactNode = null;
 
-  if (globalScalarPreview) {
+  if (minimalViewportSelectionPath) {
+    if (ctx.femMeshData) {
+      conditionalContent = (
+        <ViewportErrorBoundary label="Minimal FEM Wireframe Viewport">
+          <FemMeshView3D
+            topologyKey={ctx.femTopologyKey ?? undefined}
+            meshData={ctx.femMeshData}
+            colorField="none"
+            toolbarMode={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showToolbar ? "visible" : "hidden"}
+            renderMode={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceWireframe ? "wireframe" : ctx.meshRenderMode}
+            opacity={1}
+            clipEnabled={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceDisableClip ? false : ctx.meshClipEnabled}
+            clipAxis={ctx.meshClipAxis}
+            clipPos={ctx.meshClipPos}
+            showArrows={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceHideArrows ? false : false}
+            showOrientationLegend={false}
+            worldExtent={ctx.worldExtent}
+            worldCenter={ctx.worldCenter}
+          />
+        </ViewportErrorBoundary>
+      );
+    } else if (
+      FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableBoundsPreview &&
+      displayObjectOverlays.length > 0
+    ) {
+      conditionalContent = (
+        <BoundsPreview3D
+          objectOverlays={displayObjectOverlays}
+          selectedObjectId={selectedFemObjectId}
+          focusObjectRequest={ctx.focusObjectRequest}
+          worldExtent={ctx.worldExtent}
+          worldCenter={ctx.worldCenter}
+          onRequestObjectSelect={handleRequestObjectSelect}
+          onGeometryTranslate={ctx.applyGeometryTranslation}
+        />
+      );
+    } else {
+      conditionalContent = (
+        <div className="flex h-full w-full items-center justify-center opacity-70">
+          <EmptyState
+            title="Minimal Diagnostic View"
+            description="Aktywny jest tymczasowy tryb diagnostyczny frontendu. Pozostawiono tylko prosty viewport."
+            tone="info"
+            compact
+          />
+        </div>
+      );
+    }
+  } else if (
+    globalScalarPreview &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableGlobalScalarCard
+  ) {
     conditionalContent = (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="flex min-w-[280px] max-w-[520px] flex-col gap-4 rounded-2xl border border-border/50 bg-card/70 p-8 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur">
@@ -666,7 +727,8 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
     spatialPreview &&
     spatialPreview.spatial_kind === "grid" &&
     spatialPreview.type === "2D" &&
-    spatialPreview.scalar_field.length > 0
+    spatialPreview.scalar_field.length > 0 &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableGridScalar2D
   ) {
     conditionalContent = (
       <PreviewScalarField2D
@@ -679,7 +741,11 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         max={spatialPreview.max}
       />
     );
-  } else if (ctx.effectiveViewMode === "Mesh" && ctx.femMeshData) {
+  } else if (
+    ctx.effectiveViewMode === "Mesh" &&
+    ctx.femMeshData &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableFemMeshWorkspace
+  ) {
     conditionalContent = (
       <ViewportErrorBoundary label="FEM Mesh Viewport">
       <FemMeshView3D
@@ -688,10 +754,10 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         quantityId={ctx.requestedPreviewQuantity}
         quantityOptions={femQuantityOptions}
         colorField="none"
-        toolbarMode="visible" // Mesh workspace should show tools!
-        renderMode={ctx.meshRenderMode}
+        toolbarMode={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showToolbar ? "visible" : "hidden"}
+        renderMode={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceWireframe ? "wireframe" : ctx.meshRenderMode}
         opacity={ctx.meshOpacity}
-        clipEnabled={ctx.meshClipEnabled}
+        clipEnabled={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceDisableClip ? false : ctx.meshClipEnabled}
         clipAxis={ctx.meshClipAxis}
         clipPos={ctx.meshClipPos}
         previewMaxPoints={ctx.requestedPreviewMaxPoints}
@@ -735,7 +801,11 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
       />
       </ViewportErrorBoundary>
     );
-  } else if (ctx.effectiveViewMode === "3D" && ctx.femMeshData) {
+  } else if (
+    ctx.effectiveViewMode === "3D" &&
+    ctx.femMeshData &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableFem3D
+  ) {
     conditionalContent = (
       <ViewportErrorBoundary label="FEM 3D Viewport">
       <FemMeshView3D
@@ -746,12 +816,12 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         quantityOptions={femQuantityOptions}
         colorField={ctx.femColorField}
         showOrientationLegend={ctx.femMagnetization3DActive}
-        renderMode={ctx.meshRenderMode}
+        renderMode={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceWireframe ? "wireframe" : ctx.meshRenderMode}
         opacity={ctx.meshOpacity}
-        clipEnabled={ctx.meshClipEnabled}
+        clipEnabled={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceDisableClip ? false : ctx.meshClipEnabled}
         clipAxis={ctx.meshClipAxis}
         clipPos={ctx.meshClipPos}
-        showArrows={ctx.femShouldShowArrows}
+        showArrows={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceHideArrows ? false : ctx.femShouldShowArrows}
         arrowColorMode={ctx.femArrowColorMode}
         arrowMonoColor={ctx.femArrowMonoColor}
         arrowAlpha={ctx.femArrowAlpha}
@@ -805,7 +875,11 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
       />
       </ViewportErrorBoundary>
     );
-  } else if (ctx.effectiveViewMode === "2D" && ctx.femMeshData) {
+  } else if (
+    ctx.effectiveViewMode === "2D" &&
+    ctx.femMeshData &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableFemSlice2D
+  ) {
     conditionalContent = (
       <FemMeshSlice2D
         meshData={ctx.femMeshData}
@@ -819,7 +893,11 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         selectedAntennaId={selectedAntennaName}
       />
     );
-  } else if (ctx.effectiveViewMode === "2D" && !showFdm3D) {
+  } else if (
+    ctx.effectiveViewMode === "2D" &&
+    !showFdm3D &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableFdmSlice2D
+  ) {
     conditionalContent = (
       <MagnetizationSlice2D
         grid={ctx.previewGrid}
@@ -831,9 +909,15 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         sliceIndex={ctx.sliceIndex}
       />
     );
-  } else if (ctx.effectiveViewMode === "Analyze") {
+  } else if (
+    ctx.effectiveViewMode === "Analyze" &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableAnalyzeViewport
+  ) {
     conditionalContent = <AnalyzeViewport />;
-  } else if (showFemBoundsPreview) {
+  } else if (
+    showFemBoundsPreview &&
+    FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.enableBoundsPreview
+  ) {
     conditionalContent = (
       <BoundsPreview3D
         objectOverlays={displayObjectOverlays}
@@ -860,12 +944,12 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 relative overflow-hidden [&>*]:min-w-0 [&>*]:min-h-0 [&>*:not(.viewportOverlay)]:flex-1 [&>*:not(.viewportOverlay)]:w-full">
       <TelemetryHUD solverSettings={ctx.solverSettings} />
-      {antennaPreviewBadgeVisible ? (
+      {FRONTEND_DIAGNOSTIC_FLAGS.viewportChrome.showAntennaPreviewBadge && antennaPreviewBadgeVisible ? (
         <div className="viewportOverlay absolute right-3 top-3 z-10 rounded-full border border-cyan-400/25 bg-background/70 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-cyan-200 shadow-md backdrop-blur-md">
           physics 2.5D · preview extruded
         </div>
       ) : null}
-      {ctx.isFemBackend ? (
+      {FRONTEND_DIAGNOSTIC_FLAGS.viewportChrome.showFemSelectionBadges && ctx.isFemBackend ? (
         <div className="viewportOverlay absolute right-3 top-14 z-10 flex items-center gap-2">
           <div className="pointer-events-auto rounded-full border border-border/40 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-md backdrop-blur-md">
             {ctx.visibleMeshPartIds.length}/{ctx.meshParts.length || 0} parts visible
@@ -928,7 +1012,7 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
             </div>
           ) : null}
         </div>
-      ) : ctx.selectedObjectId ? (
+      ) : FRONTEND_DIAGNOSTIC_FLAGS.viewportChrome.showFdmSelectionBadges && ctx.selectedObjectId ? (
         <div className="viewportOverlay absolute right-3 top-14 z-10 flex items-center gap-2">
           <button
             type="button"

@@ -149,7 +149,6 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   clipAxis,
   clipPos,
   dynamicGeomCenter,
-  dynamicGeomSize,
   dynamicMaxDim,
   effectiveShowArrows,
   arrowField,
@@ -172,6 +171,25 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   onFaceHover,
   onFaceUnhover,
   onFaceContextMenu,
+  showSceneGeometry = true,
+  showPerPartGeometry = true,
+  showAirGeometry = true,
+  showMagneticGeometry = true,
+  showSurfacePass = true,
+  showSurfaceHiddenEdgesPass = true,
+  showSurfaceVisibleEdgesPass = true,
+  showVolumeHiddenEdgesPass = true,
+  showVolumeVisibleEdgesPass = true,
+  showPointsPass = true,
+  enableGeometryCompaction = true,
+  enableGeometryNormals = true,
+  enableGeometryVertexColors = true,
+  enableGeometryPointerInteractions = true,
+  enableGeometryHoverInteractions = true,
+  showArrowLayer = true,
+  showSelectionHighlight = true,
+  showAntennaOverlays = true,
+  showSceneAxes = true,
 }: {
   meshData: FemMeshData;
   hasMeshParts: boolean;
@@ -193,7 +211,6 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   clipAxis: ClipAxis;
   clipPos: number;
   dynamicGeomCenter: THREE.Vector3;
-  dynamicGeomSize: [number, number, number];
   dynamicMaxDim: number;
   effectiveShowArrows: boolean;
   arrowField: FemColorField;
@@ -216,10 +233,29 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   onFaceHover?: (e: any) => void;
   onFaceUnhover?: (e: any) => void;
   onFaceContextMenu?: (e: any) => void;
+  showSceneGeometry?: boolean;
+  showPerPartGeometry?: boolean;
+  showAirGeometry?: boolean;
+  showMagneticGeometry?: boolean;
+  showSurfacePass?: boolean;
+  showSurfaceHiddenEdgesPass?: boolean;
+  showSurfaceVisibleEdgesPass?: boolean;
+  showVolumeHiddenEdgesPass?: boolean;
+  showVolumeVisibleEdgesPass?: boolean;
+  showPointsPass?: boolean;
+  enableGeometryCompaction?: boolean;
+  enableGeometryNormals?: boolean;
+  enableGeometryVertexColors?: boolean;
+  enableGeometryPointerInteractions?: boolean;
+  enableGeometryHoverInteractions?: boolean;
+  showArrowLayer?: boolean;
+  showSelectionHighlight?: boolean;
+  showAntennaOverlays?: boolean;
+  showSceneAxes?: boolean;
 }) {
   return (
     <>
-      {hasMeshParts
+      {showSceneGeometry && showPerPartGeometry && hasMeshParts
         ? visibleLayers.map((layer) => (
             <FemGeometry
               key={layer.part.id}
@@ -243,11 +279,22 @@ export const FemViewportScene = React.memo(function FemViewportScene({
               onFaceHover={onFaceHover}
               onFaceUnhover={onFaceUnhover}
               onFaceContextMenu={onFaceContextMenu}
+              showSurfacePass={showSurfacePass}
+              showSurfaceHiddenEdgesPass={showSurfaceHiddenEdgesPass}
+              showSurfaceVisibleEdgesPass={showSurfaceVisibleEdgesPass}
+              showVolumeHiddenEdgesPass={showVolumeHiddenEdgesPass}
+              showVolumeVisibleEdgesPass={showVolumeVisibleEdgesPass}
+              showPointsPass={showPointsPass}
+              enableGeometryCompaction={enableGeometryCompaction}
+              enableGeometryNormals={enableGeometryNormals}
+              enableGeometryVertexColors={enableGeometryVertexColors}
+              enableGeometryPointerInteractions={enableGeometryPointerInteractions}
+              enableGeometryHoverInteractions={enableGeometryHoverInteractions}
             />
           ))
         : null}
 
-      {!hasMeshParts && shouldRenderAirGeometry ? (
+      {showSceneGeometry && showAirGeometry && !hasMeshParts && shouldRenderAirGeometry ? (
         <FemGeometry
           meshData={meshData}
           field={meshData.quantityDomain === "full_domain" ? field : "none"}
@@ -265,10 +312,21 @@ export const FemViewportScene = React.memo(function FemViewportScene({
           onFaceHover={onFaceHover}
           onFaceUnhover={onFaceUnhover}
           onFaceContextMenu={onFaceContextMenu}
+          showSurfacePass={showSurfacePass}
+          showSurfaceHiddenEdgesPass={showSurfaceHiddenEdgesPass}
+          showSurfaceVisibleEdgesPass={showSurfaceVisibleEdgesPass}
+          showVolumeHiddenEdgesPass={showVolumeHiddenEdgesPass}
+          showVolumeVisibleEdgesPass={showVolumeVisibleEdgesPass}
+          showPointsPass={showPointsPass}
+          enableGeometryCompaction={enableGeometryCompaction}
+          enableGeometryNormals={enableGeometryNormals}
+          enableGeometryVertexColors={enableGeometryVertexColors}
+          enableGeometryPointerInteractions={enableGeometryPointerInteractions}
+          enableGeometryHoverInteractions={enableGeometryHoverInteractions}
         />
       ) : null}
 
-      {!hasMeshParts && shouldRenderMagneticGeometry ? (
+      {showSceneGeometry && showMagneticGeometry && !hasMeshParts && shouldRenderMagneticGeometry ? (
         <FemGeometry
           meshData={meshData}
           field={magneticVisibilityMode === "ghost" ? "none" : field}
@@ -288,27 +346,42 @@ export const FemViewportScene = React.memo(function FemViewportScene({
           onFaceHover={onFaceHover}
           onFaceUnhover={onFaceUnhover}
           onFaceContextMenu={onFaceContextMenu}
+          showSurfacePass={showSurfacePass}
+          showSurfaceHiddenEdgesPass={showSurfaceHiddenEdgesPass}
+          showSurfaceVisibleEdgesPass={showSurfaceVisibleEdgesPass}
+          showVolumeHiddenEdgesPass={showVolumeHiddenEdgesPass}
+          showVolumeVisibleEdgesPass={showVolumeVisibleEdgesPass}
+          showPointsPass={showPointsPass}
+          enableGeometryCompaction={enableGeometryCompaction}
+          enableGeometryNormals={enableGeometryNormals}
+          enableGeometryVertexColors={enableGeometryVertexColors}
+          enableGeometryPointerInteractions={enableGeometryPointerInteractions}
+          enableGeometryHoverInteractions={enableGeometryHoverInteractions}
         />
       ) : null}
 
-      <FemArrows
-        meshData={meshData}
-        field={arrowField}
-        arrowDensity={arrowDensity}
-        colorMode={arrowColorMode}
-        monoColor={arrowMonoColor}
-        alpha={arrowAlpha}
-        lengthScale={arrowLengthScale}
-        thickness={arrowThickness}
-        center={dynamicGeomCenter}
-        maxDim={dynamicMaxDim}
-        visible={effectiveShowArrows}
-        activeNodeMask={arrowActiveNodeMask}
-        boundaryFaceIndices={arrowBoundaryFaceIndices}
-      />
-      <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={dynamicGeomCenter} />
+      {showArrowLayer ? (
+        <FemArrows
+          meshData={meshData}
+          field={arrowField}
+          arrowDensity={arrowDensity}
+          colorMode={arrowColorMode}
+          monoColor={arrowMonoColor}
+          alpha={arrowAlpha}
+          lengthScale={arrowLengthScale}
+          thickness={arrowThickness}
+          center={dynamicGeomCenter}
+          maxDim={dynamicMaxDim}
+          visible={effectiveShowArrows}
+          activeNodeMask={arrowActiveNodeMask}
+          boundaryFaceIndices={arrowBoundaryFaceIndices}
+        />
+      ) : null}
+      {showSelectionHighlight ? (
+        <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={dynamicGeomCenter} />
+      ) : null}
 
-      {antennaOverlays.length > 0 && !Boolean(focusedEntityId) ? (
+      {showAntennaOverlays && antennaOverlays.length > 0 && !Boolean(focusedEntityId) ? (
         <AntennaOverlayMeshes
           overlays={antennaOverlays}
           geomCenter={dynamicGeomCenter}
@@ -317,7 +390,9 @@ export const FemViewportScene = React.memo(function FemViewportScene({
         />
       ) : null}
 
-      <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
+      {showSceneAxes ? (
+        <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
+      ) : null}
     </>
   );
 });

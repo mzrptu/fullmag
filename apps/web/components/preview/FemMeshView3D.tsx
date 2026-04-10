@@ -48,6 +48,8 @@ import TextureTransformGizmo, {
   type TexturePreviewProxy,
 } from "./TextureTransformGizmo";
 import type { TextureTransform3D } from "@/lib/textureTransform";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
+import { recordFrontendRender } from "@/lib/debug/frontendPerfDebug";
 
 const STABLE_ORIGIN: [number, number, number] = [0, 0, 0];
 
@@ -554,6 +556,14 @@ function FemMeshView3DInner({
   onTextureTransformChange,
   onTextureTransformCommit,
 }: Props) {
+  if (FRONTEND_DIAGNOSTIC_FLAGS.renderDebug.enableRenderLogging) {
+    recordFrontendRender("FemMeshView3DInner", {
+      nNodes: meshData.nNodes,
+      nElements: meshData.nElements,
+      showSceneGeometry: FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSceneGeometry,
+      showPerPartGeometry: FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showPerPartGeometry,
+    });
+  }
   const [internalRenderMode, setInternalRenderMode] = useState<RenderMode>("surface");
   const [field, setField] = useState<FemColorField>(colorField);
   const [internalArrowColorMode, setInternalArrowColorMode] = useState<FemArrowColorMode>(
@@ -647,11 +657,34 @@ function FemMeshView3DInner({
     [airSegmentVisible],
   );
   const supportsAirboxOnlyVectors = meshData.quantityDomain === "full_domain";
+  const wrapperFlags = FRONTEND_DIAGNOSTIC_FLAGS.femWrapper;
+  const selectionOnlyInteractionMode =
+    FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableSelectionOnlyInteractionMode;
+  const geometryPointerInteractionsEnabled =
+    wrapperFlags.enableInteractiveState &&
+    selectionOnlyInteractionMode &&
+    FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryPointerInteractions;
+  const geometryHoverInteractionsEnabled =
+    geometryPointerInteractionsEnabled &&
+    FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryHoverInteractions;
+  const geometryContextMenuEnabled =
+    geometryPointerInteractionsEnabled && wrapperFlags.enableContextMenu;
   const effectiveVectorDomainFilter: FemVectorDomainFilter =
     vectorDomainFilter === "airbox_only" && !supportsAirboxOnlyVectors
       ? "auto"
       : vectorDomainFilter;
   const partRenderDataById = useMemo(() => {
+    if (!wrapperFlags.enablePartDerivedModel) {
+      return new Map<
+        string,
+        {
+          boundaryFaceIndices: number[] | null;
+          elementIndices: number[] | null;
+          nodeMask: Uint8Array | null;
+          surfaceFaces: [number, number, number][] | null;
+        }
+      >();
+    }
     const cache = new Map<
       string,
       {
@@ -671,9 +704,9 @@ function FemMeshView3DInner({
       });
     }
     return cache;
-  }, [meshData.boundaryFaces.length, meshData.nElements, meshData.nNodes, meshParts]);
+  }, [meshData.boundaryFaces.length, meshData.nElements, meshData.nNodes, meshParts, wrapperFlags.enablePartDerivedModel]);
   const visibleLayers = useMemo<RenderLayer[]>(() => {
-    if (!hasMeshParts) {
+    if (!wrapperFlags.enablePartDerivedModel || !hasMeshParts) {
       return [];
     }
     const layers: RenderLayer[] = [];
@@ -789,6 +822,7 @@ function FemMeshView3DInner({
     partRenderDataById,
     selectedEntityId,
     selectedObjectId,
+    wrapperFlags.enablePartDerivedModel,
   ]);
   const partExplorerGroups = useMemo(
     () => [
@@ -886,6 +920,9 @@ function FemMeshView3DInner({
         )
       : !magneticSegments.some((segment) => segment.object_id === selectedObjectId));
   const magneticBoundaryFaceIndices = useMemo(() => {
+    if (!wrapperFlags.enableVectorDerivedModel) {
+      return null;
+    }
     if (missingExactScopeSegment) {
       return null;
     }
@@ -907,8 +944,12 @@ function FemMeshView3DInner({
     missingExactScopeSegment,
     selectedObjectId,
     visibleMagneticIds,
+    wrapperFlags.enableVectorDerivedModel,
   ]);
   const magneticElementIndices = useMemo(() => {
+    if (!wrapperFlags.enableVectorDerivedModel) {
+      return null;
+    }
     if (missingExactScopeSegment) {
       return null;
     }
@@ -930,21 +971,31 @@ function FemMeshView3DInner({
     missingExactScopeSegment,
     selectedObjectId,
     visibleMagneticIds,
+    wrapperFlags.enableVectorDerivedModel,
   ]);
   const airBoundaryFaceIndices = useMemo(
     () =>
+      !wrapperFlags.enableVectorDerivedModel
+        ? null
+        :
       collectSegmentBoundaryFaceIndicesByIds(
         objectSegments,
         Math.floor(meshData.boundaryFaces.length / 3),
         airSegmentIds,
       ),
-    [airSegmentIds, meshData.boundaryFaces.length, objectSegments],
+    [airSegmentIds, meshData.boundaryFaces.length, objectSegments, wrapperFlags.enableVectorDerivedModel],
   );
   const airElementIndices = useMemo(
-    () => collectSegmentElementIndicesByIds(objectSegments, meshData.nElements, airSegmentIds),
-    [airSegmentIds, meshData.nElements, objectSegments],
+    () =>
+      !wrapperFlags.enableVectorDerivedModel
+        ? null
+        : collectSegmentElementIndicesByIds(objectSegments, meshData.nElements, airSegmentIds),
+    [airSegmentIds, meshData.nElements, objectSegments, wrapperFlags.enableVectorDerivedModel],
   );
   const magneticArrowNodeMask = useMemo(() => {
+    if (!wrapperFlags.enableVectorDerivedModel) {
+      return null;
+    }
     if (hasMeshParts) {
       const visibleMagneticLayers = visibleLayers.filter((layer) => layer.isMagnetic);
       if (visibleMagneticLayers.length === 0) {
@@ -990,8 +1041,12 @@ function FemMeshView3DInner({
     meshData.nNodes,
     visibleLayers,
     visibleMagneticIds,
+    wrapperFlags.enableVectorDerivedModel,
   ]);
   const fullDomainArrowNodeMask = useMemo(() => {
+    if (!wrapperFlags.enableVectorDerivedModel) {
+      return null;
+    }
     if (meshData.quantityDomain !== "full_domain") {
       return null;
     }
@@ -1021,8 +1076,11 @@ function FemMeshView3DInner({
       return allOnes;
     }
     return combined;
-  }, [hasMeshParts, meshData.nNodes, meshData.quantityDomain, visibleLayers]);
+  }, [hasMeshParts, meshData.nNodes, meshData.quantityDomain, visibleLayers, wrapperFlags.enableVectorDerivedModel]);
   const airArrowNodeMask = useMemo(() => {
+    if (!wrapperFlags.enableVectorDerivedModel) {
+      return null;
+    }
     if (hasMeshParts) {
       const airLayers = visibleLayers.filter((layer) => layer.part.role === "air");
       if (airLayers.length === 0) {
@@ -1042,7 +1100,7 @@ function FemMeshView3DInner({
     }
     const nodeMask = collectSegmentNodeMask(objectSegments, meshData.nNodes, airSegmentIds);
     return nodeMask ?? new Uint8Array(meshData.nNodes);
-  }, [airSegmentIds, hasMeshParts, meshData.nNodes, objectSegments, visibleLayers]);
+  }, [airSegmentIds, hasMeshParts, meshData.nNodes, objectSegments, visibleLayers, wrapperFlags.enableVectorDerivedModel]);
   const resolvedVectorDomain: "magnetic_only" | "full_domain" | "airbox_only" = useMemo(() => {
     if (effectiveVectorDomainFilter === "airbox_only") {
       return "airbox_only";
@@ -1115,6 +1173,9 @@ function FemMeshView3DInner({
     return Math.max(minBudget, Math.min(baseArrowDensity, scaled));
   }, [baseArrowDensity, baselineArrowNodeCount, visibleArrowNodeCount]);
   const runtimeQualityProfile = useMemo<ViewportQualityProfileId>(() => {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceLowQualityProfile) {
+      return "interactive-lite";
+    }
     if (captureActive) {
       return "capture";
     }
@@ -1442,6 +1503,13 @@ function FemMeshView3DInner({
   }, [ctxMenu]);
 
   const { dynamicGeomCenter, dynamicGeomSize, dynamicMaxDim } = useMemo(() => {
+    if (!wrapperFlags.enableBoundsDerivedModel) {
+      return {
+        dynamicGeomCenter: new THREE.Vector3(0, 0, 0),
+        dynamicGeomSize: [1, 1, 1] as [number, number, number],
+        dynamicMaxDim: 1,
+      };
+    }
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     
@@ -1501,6 +1569,7 @@ function FemMeshView3DInner({
     shouldRenderAirGeometry,
     shouldRenderMagneticGeometryResolved,
     visibleLayers,
+    wrapperFlags.enableBoundsDerivedModel,
   ]);
 
   const resolvedWorldTextureTransform = useMemo(() => {
@@ -1537,6 +1606,9 @@ function FemMeshView3DInner({
   }, [activeTextureTransform, selectedObjectOverlay]);
 
   const sceneTextureTransform = useMemo(() => {
+    if (!wrapperFlags.enableTextureTransformModel) {
+      return null;
+    }
     if (!resolvedWorldTextureTransform) {
       return null;
     }
@@ -1554,7 +1626,7 @@ function FemMeshView3DInner({
         resolvedWorldTextureTransform.pivot[2] - dynamicGeomCenter.z,
       ] as [number, number, number],
     } as TextureTransform3D;
-  }, [dynamicGeomCenter.x, dynamicGeomCenter.y, dynamicGeomCenter.z, resolvedWorldTextureTransform]);
+  }, [dynamicGeomCenter.x, dynamicGeomCenter.y, dynamicGeomCenter.z, resolvedWorldTextureTransform, wrapperFlags.enableTextureTransformModel]);
 
   const handleTextureTransformLiveChange = useCallback(
     (next: TextureTransform3D) => {
@@ -1605,6 +1677,9 @@ function FemMeshView3DInner({
   const lastFittedGeomRef = useRef<string | null>(null);
   
   useEffect(() => {
+    if (!wrapperFlags.enableCameraFitEffect) {
+      return;
+    }
     const m = dynamicMaxDim;
     const c = dynamicGeomCenter;
     const sig = `${m.toFixed(4)}_${c.x.toFixed(4)}_${c.y.toFixed(4)}_${c.z.toFixed(4)}`;
@@ -1612,7 +1687,7 @@ function FemMeshView3DInner({
       lastFittedGeomRef.current = sig;
       setCameraFitGeneration((g) => g + 1);
     }
-  }, [dynamicMaxDim, dynamicGeomCenter]);
+  }, [dynamicMaxDim, dynamicGeomCenter, wrapperFlags.enableCameraFitEffect]);
 
   const axesWorldExtent = dynamicGeomSize;
   const axesCenter = [0, 0, 0] as [number, number, number];
@@ -1656,6 +1731,7 @@ function FemMeshView3DInner({
   }, []);
 
   const takeScreenshot = useCallback(async () => {
+    if (!wrapperFlags.enableScreenshotCapture) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const previousProfile = qualityProfileRef.current;
@@ -1670,7 +1746,7 @@ function FemMeshView3DInner({
     setCaptureActive(false);
     setQualityProfile(previousProfile);
     setCaptureOverlayHidden(false);
-  }, []);
+  }, [wrapperFlags.enableScreenshotCapture]);
 
   const faceAspectRatios = useMemo(
     () => computeFaceAspectRatios(meshData.nodes, meshData.boundaryFaces),
@@ -1678,11 +1754,14 @@ function FemMeshView3DInner({
   );
 
   const hoveredFaceInfo = useMemo(() => {
+    if (!wrapperFlags.enableHoverTooltip) {
+      return null;
+    }
     if (!hoveredFace) return null;
     const idx = hoveredFace.idx;
     const ar = faceAspectRatios[idx] ?? 0;
     return { faceIdx: idx, ar, sicn: qualityPerFace?.[idx] };
-  }, [faceAspectRatios, hoveredFace, qualityPerFace]);
+  }, [faceAspectRatios, hoveredFace, qualityPerFace, wrapperFlags.enableHoverTooltip]);
   const applyToolbarRenderMode = useCallback((next: RenderMode) => {
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
@@ -1740,12 +1819,23 @@ function FemMeshView3DInner({
       setHoveredFace(null);
     }
   }, [interactionActive]);
+  useEffect(() => {
+    if (geometryPointerInteractionsEnabled) {
+      return;
+    }
+    setHoveredFace(null);
+    setCtxMenu(null);
+    setSelectedFaces([]);
+  }, [geometryPointerInteractionsEnabled]);
   const overlayItems = useMemo<ViewportOverlayDescriptor[]>(() => {
+    if (!wrapperFlags.enableOverlayItemsModel) {
+      return [];
+    }
     if (captureOverlayHidden) {
       return [];
     }
     const items: ViewportOverlayDescriptor[] = [];
-    if (toolbarMode !== "hidden") {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showToolbar && toolbarMode !== "hidden") {
       items.push({
         id: "toolbar",
         anchor: "top-left",
@@ -1898,7 +1988,7 @@ function FemMeshView3DInner({
         ),
       });
     }
-    if (missingExactScopeSegment && selectedObjectId) {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showWarnings && missingExactScopeSegment && selectedObjectId) {
       items.push({
         id: "segment-warning",
         anchor: "top-left",
@@ -1912,7 +2002,7 @@ function FemMeshView3DInner({
         ),
       });
     }
-    if (missingMagneticMask) {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showWarnings && missingMagneticMask) {
       items.push({
         id: "mask-warning",
         anchor: "top-left",
@@ -1926,22 +2016,24 @@ function FemMeshView3DInner({
         ),
       });
     }
-    items.push({
-      id: "gizmo-stack",
-      anchor: "top-right",
-      priority: 3,
-      render: () => (
-        <div className="flex flex-col items-end gap-2">
-          <ViewCube
-            sceneRef={viewCubeSceneRef}
-            onRotate={handleViewCubeRotate}
-            onReset={() => setCameraPreset("reset")}
-            embedded
-          />
-        </div>
-      ),
-    });
-    if (hasMeshParts && partExplorerOpen) {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showViewCube) {
+      items.push({
+        id: "gizmo-stack",
+        anchor: "top-right",
+        priority: 3,
+        render: () => (
+          <div className="flex flex-col items-end gap-2">
+            <ViewCube
+              sceneRef={viewCubeSceneRef}
+              onRotate={handleViewCubeRotate}
+              onReset={() => setCameraPreset("reset")}
+              embedded
+            />
+          </div>
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showPartExplorer && hasMeshParts && partExplorerOpen) {
       items.push({
         id: "part-explorer",
         anchor: "right",
@@ -1993,7 +2085,7 @@ function FemMeshView3DInner({
           ),
       });
     }
-    if (legendOpen) {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showFieldLegend && legendOpen) {
       items.push({
         id: "field-legend",
         anchor: "bottom-left",
@@ -2020,7 +2112,7 @@ function FemMeshView3DInner({
         ),
       });
     }
-    if (effectiveShowOrientationLegend) {
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showOrientationSphere && effectiveShowOrientationLegend) {
       items.push({
         id: "orientation-legend",
         anchor: "bottom-left",
@@ -2035,40 +2127,42 @@ function FemMeshView3DInner({
         ),
       });
     }
-    items.push({
-      id: "selection-hud",
-      anchor: "bottom-center",
-      priority: 5,
-      render: ({ variant }) => (
-        <>
-          <FemSelectionHUD
-            compact={variant !== "full"}
-            nNodes={meshData.nNodes}
-            nElements={meshData.nElements}
-            nFaces={meshData.boundaryFaces.length / 3}
-            clipEnabled={clipEnabled}
-            clipAxis={clipAxis}
-            clipPos={clipPos}
-            selectedFacesCount={selectedFaces.length}
-          />
-          {onRefine ? (
-            <FemRefineToolbar
-              className={variant === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSelectionHud) {
+      items.push({
+        id: "selection-hud",
+        anchor: "bottom-center",
+        priority: 5,
+        render: ({ variant }) => (
+          <>
+            <FemSelectionHUD
+              compact={variant !== "full"}
+              nNodes={meshData.nNodes}
+              nElements={meshData.nElements}
+              nFaces={meshData.boundaryFaces.length / 3}
+              clipEnabled={clipEnabled}
+              clipAxis={clipAxis}
+              clipPos={clipPos}
               selectedFacesCount={selectedFaces.length}
-              onRefine={(factor) => {
-                onRefine(selectedFaces, factor);
-                setSelectedFaces([]);
-              }}
-              onCoarsen={(factor) => {
-                onRefine(selectedFaces, factor);
-                setSelectedFaces([]);
-              }}
-              onClear={() => setSelectedFaces([])}
             />
-          ) : null}
-        </>
-      ),
-    });
+            {onRefine ? (
+              <FemRefineToolbar
+                className={variant === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
+                selectedFacesCount={selectedFaces.length}
+                onRefine={(factor) => {
+                  onRefine(selectedFaces, factor);
+                  setSelectedFaces([]);
+                }}
+                onCoarsen={(factor) => {
+                  onRefine(selectedFaces, factor);
+                  setSelectedFaces([]);
+                }}
+                onClear={() => setSelectedFaces([])}
+              />
+            ) : null}
+          </>
+        ),
+      });
+    }
     return items;
   }, [
     applyToolbarColorField,
@@ -2080,6 +2174,7 @@ function FemMeshView3DInner({
     arrowAlpha,
     arrowLengthScale,
     arrowThickness,
+    arrowsBlockReason,
     baseArrowDensity,
     cameraProjection,
     captureOverlayHidden,
@@ -2100,6 +2195,7 @@ function FemMeshView3DInner({
     hasMeshParts,
     inspectedMeshPart,
     inspectedPartQuality,
+    interactionActive,
     labeledMode,
     legendField,
     legendOpen,
@@ -2145,14 +2241,19 @@ function FemMeshView3DInner({
     supportsAirboxOnlyVectors,
     takeScreenshot,
     toolbarColorField,
+    toolbarColorFieldMixed,
     toolbarMode,
     toolbarOpacity,
+    toolbarOpacityMixed,
     toolbarRenderMode,
+    toolbarRenderModeMixed,
+    toolbarScopeLabel,
     effectiveVectorDomainFilter,
     ferromagnetVisibilityMode,
     updateSharedPreviewMaxPoints,
     viewCubeSceneRef,
     visibleLayers.length,
+    wrapperFlags.enableOverlayItemsModel,
   ]);
   return (
     <div className="relative flex flex-1 w-[100%] h-[100%] min-w-0 min-h-0 bg-background overflow-hidden rounded-md fem-canvas-container">
@@ -2165,7 +2266,7 @@ function FemMeshView3DInner({
         navigation={navigationMode}
         qualityProfile={runtimeQualityProfile}
         renderPolicy={{
-          mode: "demand",
+          mode: "always",
           hidden: false,
           interactionActive,
         }}
@@ -2176,16 +2277,24 @@ function FemMeshView3DInner({
         onViewCubeRotate={handleViewCubeRotate}
         onResetView={() => setCameraPreset("reset")}
         renderDefaultGizmos={false}
-        onPointerMissed={() => setSelectedFaces([])}
+        onPointerMissed={geometryPointerInteractionsEnabled ? () => setSelectedFaces([]) : undefined}
         onCanvasContextMenu={(e) => e.preventDefault()}
         onCanvasCreated={({ gl }) => {
           canvasRef.current = gl.domElement;
         }}
+        diagnosticOverrides={{
+          enableControls: selectionOnlyInteractionMode ? false : true,
+          forceFrameloopMode: "always",
+        }}
       >
         {!missingExactScopeSegment ? (
           <>
-          <CameraAutoFit maxDim={dynamicMaxDim} generation={cameraFitGeneration} controlsRef={controlsRef} />
-          <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={dynamicGeomSize} />
+          {FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showCameraAutoFit && wrapperFlags.enableCameraFitEffect ? (
+            <CameraAutoFit maxDim={dynamicMaxDim} generation={cameraFitGeneration} controlsRef={controlsRef} />
+          ) : null}
+          {FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showClipPlanesHelper ? (
+            <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={dynamicGeomSize} />
+          ) : null}
           <FemViewportScene
             meshData={meshData}
             hasMeshParts={hasMeshParts}
@@ -2211,7 +2320,6 @@ function FemMeshView3DInner({
             clipAxis={clipAxis}
             clipPos={clipPos}
             dynamicGeomCenter={dynamicGeomCenter}
-            dynamicGeomSize={dynamicGeomSize}
             dynamicMaxDim={dynamicMaxDim}
             effectiveShowArrows={effectiveShowArrows}
             arrowField={arrowField}
@@ -2230,15 +2338,37 @@ function FemMeshView3DInner({
             onAntennaTranslate={onAntennaTranslate}
             axesWorldExtent={axesWorldExtent}
             axesCenter={axesCenter}
-            onFaceClick={handleFaceClick}
-            onFaceHover={interactionActive ? undefined : handleFaceHover}
-            onFaceUnhover={handleFaceUnhover}
-            onFaceContextMenu={handleFaceContextMenu}
+            onFaceClick={geometryPointerInteractionsEnabled ? handleFaceClick : undefined}
+            onFaceHover={geometryHoverInteractionsEnabled && !interactionActive ? handleFaceHover : undefined}
+            onFaceUnhover={geometryHoverInteractionsEnabled ? handleFaceUnhover : undefined}
+            onFaceContextMenu={geometryContextMenuEnabled ? handleFaceContextMenu : undefined}
+            showSceneGeometry={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSceneGeometry}
+            showPerPartGeometry={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showPerPartGeometry}
+            showAirGeometry={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showAirGeometry}
+            showMagneticGeometry={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showMagneticGeometry}
+            showSurfacePass={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSurfacePass}
+            showSurfaceHiddenEdgesPass={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSurfaceHiddenEdgesPass}
+            showSurfaceVisibleEdgesPass={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSurfaceVisibleEdgesPass}
+            showVolumeHiddenEdgesPass={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showVolumeHiddenEdgesPass}
+            showVolumeVisibleEdgesPass={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showVolumeVisibleEdgesPass}
+            showPointsPass={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showPointsPass}
+            enableGeometryCompaction={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryCompaction}
+            enableGeometryNormals={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryNormals}
+            enableGeometryVertexColors={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryVertexColors}
+            enableGeometryPointerInteractions={geometryPointerInteractionsEnabled}
+            enableGeometryHoverInteractions={geometryHoverInteractionsEnabled}
+            showArrowLayer={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showArrowLayer}
+            showSelectionHighlight={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSelectionHighlight}
+            showAntennaOverlays={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showAntennaOverlays}
+            showSceneAxes={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSceneAxes}
           />
           </>
         ) : null}
 
-        {sceneTextureTransform && activeTransformScope === "texture" ? (
+        {wrapperFlags.enableTextureTransformGizmo &&
+        FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showTextureTransformGizmo &&
+        sceneTextureTransform &&
+        activeTransformScope === "texture" ? (
           <TextureTransformGizmo
             transform={sceneTextureTransform}
             mode={textureGizmoMode}
@@ -2249,13 +2379,18 @@ function FemMeshView3DInner({
           />
         ) : null}
       </ScientificViewportShell>
-      {!captureOverlayHidden ? <ViewportOverlayManager items={overlayItems} /> : null}
+      {!captureOverlayHidden && wrapperFlags.enableOverlayManager ? <ViewportOverlayManager items={overlayItems} /> : null}
 
-      {!captureOverlayHidden ? (
+      {!captureOverlayHidden &&
+      geometryHoverInteractionsEnabled &&
+      wrapperFlags.enableHoverTooltip &&
+      FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showHoverTooltip ? (
         <FemHoverTooltip hoveredFace={hoveredFace} hoveredFaceInfo={hoveredFaceInfo} />
       ) : null}
 
-      {!captureOverlayHidden ? (
+      {!captureOverlayHidden &&
+      geometryContextMenuEnabled &&
+      FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showContextMenu ? (
         <FemContextMenu
           ctxMenu={ctxMenu}
           clipEnabled={clipEnabled}

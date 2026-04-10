@@ -43,6 +43,7 @@ import { ViewportIconAction } from "./ViewportIconAction";
 import { ViewportPopoverPanel, ViewportPopoverRow, ViewportPopoverTrigger } from "./ViewportPopoverPanel";
 import { ViewportOverlayLayout } from "./ViewportOverlayLayout";
 import { ViewportStatusChip } from "./ViewportStatusChips";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
 
 // ─── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -786,15 +787,17 @@ function MagnetizationView3DInner({
 
   const toolbarOptionClassName =
     "appearance-none border border-transparent bg-transparent text-muted-foreground text-[0.65rem] font-semibold uppercase px-2 py-1 rounded cursor-pointer transition-colors hover:bg-muted/40 hover:text-foreground data-[active=true]:border-primary/45 data-[active=true]:bg-primary/18 data-[active=true]:text-primary";
+  const fdmViewportFlags = FRONTEND_DIAGNOSTIC_FLAGS.fdmViewport;
 
   return (
     <div className="relative flex flex-col h-full">
       {/* ── Overlay Layout ────────────────────────────────────── */}
       <ViewportOverlayLayout>
         <ViewportOverlayLayout.TopLeft>
+          {fdmViewportFlags.showToolbar || fdmViewportFlags.showStatusChip ? (
           <ViewportToolbar3D>
             {/* Render mode */}
-            {!geometryMode && (
+            {fdmViewportFlags.showToolbar && !geometryMode && (
               <ViewportToolGroup label="Render">
                 <ViewportIconAction
                   icon={<ArrowUpRight size={14} />}
@@ -811,10 +814,10 @@ function MagnetizationView3DInner({
               </ViewportToolGroup>
             )}
 
-            <ViewportToolSeparator />
+            {fdmViewportFlags.showToolbar ? <ViewportToolSeparator /> : null}
 
             {/* Color field (only voxel) */}
-            {settings.renderMode === "voxel" && (
+            {fdmViewportFlags.showToolbar && settings.renderMode === "voxel" && (
               <ViewportToolGroup label="Color">
                 <ViewportPopoverTrigger preferredHorizontal="left">
                   <ViewportIconAction
@@ -840,13 +843,15 @@ function MagnetizationView3DInner({
               </ViewportToolGroup>
             )}
 
-            {settings.renderMode === "voxel" && <ViewportToolSeparator />}
+            {fdmViewportFlags.showToolbar && settings.renderMode === "voxel" ? <ViewportToolSeparator /> : null}
 
-            <ViewportStatusChip color="info">{fieldLabel ?? "M"}</ViewportStatusChip>
+            {fdmViewportFlags.showStatusChip ? (
+              <ViewportStatusChip color="info">{fieldLabel ?? "M"}</ViewportStatusChip>
+            ) : null}
 
-            <ViewportToolSeparator />
+            {fdmViewportFlags.showToolbar && fdmViewportFlags.showStatusChip ? <ViewportToolSeparator /> : null}
 
-            <ViewportToolGroup>
+            {fdmViewportFlags.showToolbar ? <ViewportToolGroup>
               {/* Display settings Popover */}
               <ViewportPopoverTrigger preferredHorizontal="left">
                 <ViewportIconAction
@@ -959,12 +964,13 @@ function MagnetizationView3DInner({
                 onClick={captureSnapshot}
                 title="Snapshot"
               />
-            </ViewportToolGroup>
+            </ViewportToolGroup> : null}
           </ViewportToolbar3D>
+          ) : null}
         </ViewportOverlayLayout.TopLeft>
 
         <ViewportOverlayLayout.TopRight>
-          {viewportVisible && (
+          {fdmViewportFlags.showViewCube && viewportVisible && (
             <ViewCube
               sceneRef={viewCubeSceneRef}
               onRotate={handleViewCubeRotate}
@@ -974,11 +980,13 @@ function MagnetizationView3DInner({
         </ViewportOverlayLayout.TopRight>
 
         <ViewportOverlayLayout.BottomLeft>
-          {viewportVisible && !geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" /> : null}
+          {fdmViewportFlags.showOrientationSphere && viewportVisible && !geometryMode ? (
+            <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" />
+          ) : null}
         </ViewportOverlayLayout.BottomLeft>
 
         {/* ── 3dsmax-style interaction mode toolbar (only when texture gizmo available) ── */}
-        {(activeTextureTransform || activeTransformScope === "texture") && (
+        {fdmViewportFlags.showTextureModeToolbar && (activeTextureTransform || activeTransformScope === "texture") && (
           <ViewportOverlayLayout.BottomCenter>
             <div className="pointer-events-auto flex items-center gap-px rounded-lg border border-border/40 bg-background/80 backdrop-blur-md shadow-md px-1 py-1">
               {/* Scope Toggle */}

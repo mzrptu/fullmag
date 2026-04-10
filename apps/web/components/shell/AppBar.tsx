@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import FullmagLogo from "../brand/FullmagLogo";
 import type { WorkspaceMode } from "../runs/control-room/context-hooks";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
+import { useRouter } from "next/navigation";
 
 export interface AppBarProps {
   problemName: string;
@@ -64,13 +65,28 @@ function quickSyncBadge(
 }
 
 export default function AppBar(props: AppBarProps) {
+  const router = useRouter();
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const setPhysicsDocsOpen = useWorkspaceStore((s) => s.setPhysicsDocsOpen);
 
   const appMenu: MenuItem[] = [
-    { label: "Preferences", icon: <Settings size={14} />, action: () => setSettingsOpen(true) },
+    {
+      label: "Preferences",
+      icon: <Settings size={14} />,
+      action: () => {
+        setSettingsOpen(false);
+        router.push("/settings");
+      },
+    },
     { label: "Documentation", icon: <BookOpen size={14} />, action: () => setPhysicsDocsOpen(true) },
-    { label: "About Fullmag", icon: <Info size={14} />, action: () => setSettingsOpen(true) },
+    {
+      label: "About Fullmag",
+      icon: <Info size={14} />,
+      action: () => {
+        setSettingsOpen(false);
+        router.push("/settings");
+      },
+    },
   ];
 
   const quickActions = [

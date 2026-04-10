@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X, Monitor, Cpu, Sliders, Keyboard, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
+import { useRouter } from "next/navigation";
 
 interface SettingsSectionProps {
   title: string;
@@ -173,6 +174,7 @@ function AboutTab() {
 }
 
 function SettingsDialogInner({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
 
   return (
@@ -213,13 +215,25 @@ function SettingsDialogInner({ onClose }: { onClose: () => void }) {
             <h3 className="text-[0.9rem] font-semibold">
               {TABS.find((t) => t.id === activeTab)?.label}
             </h3>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-            >
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  router.push("/settings");
+                }}
+                className="rounded-md border border-border/60 px-2 py-1 text-[0.72rem] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              >
+                Open Full Settings
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-auto p-5">
             {activeTab === "appearance" && <AppearanceTab />}

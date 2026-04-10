@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import {
+  ApiHttpError,
   currentLiveApiClient,
   type GpuTelemetryDevice,
   type GpuTelemetryResponse,
@@ -17,6 +18,7 @@ import {
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import { useWorkspaceStore } from "../../../lib/workspace/workspace-store";
 import { recordFrontendDebugEvent } from "../../../lib/workspace/navigation-debug";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "../../../lib/debug/frontendDiagnosticFlags";
 import type {
   ArtifactEntry,
   DisplaySelection,
@@ -505,6 +507,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const builderAutoPushGateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const builderAutoPushGateUntilRef = useRef(0);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
+  const nonRetryableBuilderPushSignatureRef = useRef<string | null>(null);
   const [builderAutoPushGateVersion, setBuilderAutoPushGateVersion] = useState(0);
   const [meshSelection, setMeshSelection] = useState<MeshSelectionSnapshot>({
     selectedFaceIndices: [],
@@ -1139,6 +1142,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     builderHydratedSessionRef.current = null;
     lastBuilderPushSignatureRef.current = null;
+    nonRetryableBuilderPushSignatureRef.current = null;
     pendingMeshConfigSignatureRef.current = null;
     setLastBuiltMeshConfigSignature(null);
     setSolverSettingsHydrated(false);
@@ -1429,6 +1433,12 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   }, [modelBuilderGraph, workspaceHydrationKey]);
 
   useEffect(() => {
+    if (!FRONTEND_DIAGNOSTIC_FLAGS.session.enableSceneDraftAutoPush) {
+      recordFrontendDebugEvent("scene-sync", "auto_push_disabled_by_diagnostic_flag", {
+        workspaceStatus,
+      });
+      return;
+    }
     if (!workspaceHydrationKey || !scriptBuilder) {
       return;
     }
@@ -1440,6 +1450,9 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (lastBuilderPushSignatureRef.current === localBuilderSignature) {
+      return;
+    }
+    if (nonRetryableBuilderPushSignatureRef.current === localBuilderSignature) {
       return;
     }
     const startupGateActive =
@@ -1470,10 +1483,21 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
         })
         .catch((builderError) => {
           console.warn("Failed to persist scene document draft", builderError);
+          const nonRetryable =
+            builderError instanceof ApiHttpError &&
+            builderError.status >= 400 &&
+            builderError.status < 500;
           recordFrontendDebugEvent("scene-sync", "auto_push_failed", {
             workspaceStatus,
             message: builderError instanceof Error ? builderError.message : String(builderError),
+            nonRetryable,
           });
+          if (nonRetryable) {
+            // Avoid retry storms for invalid local scene payloads (e.g. unsupported asset kinds).
+            nonRetryableBuilderPushSignatureRef.current = localBuilderSignature;
+            lastBuilderPushSignatureRef.current = localBuilderSignature;
+            return;
+          }
           lastBuilderPushSignatureRef.current = null;
         });
     }, 250);

@@ -5,6 +5,8 @@ import { FemMeshData, FemColorField, RenderMode } from "../FemMeshView3D";
 import { computeFaceAspectRatios, qualityColor, sicnQualityColor, divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
 import { RENDER_POLICIES_V2 } from "../shared/renderPolicyV2";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
+import { recordFrontendPerfSample } from "@/lib/debug/frontendPerfDebug";
 
 interface FemGeometryProps {
   meshData: FemMeshData;
@@ -28,6 +30,17 @@ interface FemGeometryProps {
   onFaceHover?: (e: any) => void;
   onFaceUnhover?: (e: any) => void;
   onFaceContextMenu?: (e: any) => void;
+  showSurfacePass?: boolean;
+  showSurfaceHiddenEdgesPass?: boolean;
+  showSurfaceVisibleEdgesPass?: boolean;
+  showVolumeHiddenEdgesPass?: boolean;
+  showVolumeVisibleEdgesPass?: boolean;
+  showPointsPass?: boolean;
+  enableGeometryCompaction?: boolean;
+  enableGeometryNormals?: boolean;
+  enableGeometryVertexColors?: boolean;
+  enableGeometryPointerInteractions?: boolean;
+  enableGeometryHoverInteractions?: boolean;
 }
 
 function flattenBoundaryFaces(customBoundaryFaces: readonly [number, number, number][]): Uint32Array {
@@ -213,6 +226,17 @@ export const FemGeometry = memo(function FemGeometry({
   onFaceHover,
   onFaceUnhover,
   onFaceContextMenu,
+  showSurfacePass = true,
+  showSurfaceHiddenEdgesPass = true,
+  showSurfaceVisibleEdgesPass = true,
+  showVolumeHiddenEdgesPass = true,
+  showVolumeVisibleEdgesPass = true,
+  showPointsPass = true,
+  enableGeometryCompaction = true,
+  enableGeometryNormals = true,
+  enableGeometryVertexColors = true,
+  enableGeometryPointerInteractions = true,
+  enableGeometryHoverInteractions = true,
 }: FemGeometryProps) {
   const { invalidate } = useThree();
   const {
@@ -255,6 +279,32 @@ export const FemGeometry = memo(function FemGeometry({
     pointsVertexMap,
     displayedToOriginalFace,
   } = useMemo(() => {
+    const perfEnabled = FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryPerfLogging;
+    const totalStart = perfEnabled ? performance.now() : 0;
+    const marks: Record<string, number> = {};
+    const mark = (name: string) => {
+      if (perfEnabled) {
+        marks[name] = performance.now();
+      }
+    };
+    const sample = (phase: string, start: number, extra?: Record<string, number | string | boolean | null>) => {
+      if (!perfEnabled) return;
+      recordFrontendPerfSample({
+        scope: "FemGeometry",
+        phase,
+        durationMs: performance.now() - start,
+        timestampMs: performance.now(),
+        meta: {
+          renderMode,
+          field,
+          nNodes,
+          nElements,
+          ...extra,
+        },
+      });
+    };
+
+    mark("start");
     const boundaryFaces = customBoundaryFaces
       ? flattenBoundaryFaces(customBoundaryFaces)
       : meshBoundaryFaces;
@@ -267,6 +317,7 @@ export const FemGeometry = memo(function FemGeometry({
     const preferredElementIndices = Array.isArray(displayElementIndices) && displayElementIndices.length > 0
       ? displayElementIndices
       : null;
+    mark("post-inputs");
 
     // Compute unclipped bounding box for stable centering. When the mesh includes
     // a shared air-domain shell, prefer the visible magnetic-object surfaces so
@@ -309,6 +360,7 @@ export const FemGeometry = memo(function FemGeometry({
     const cX = (minX + maxX) / 2, cY = (minY + maxY) / 2, cZ = (minZ + maxZ) / 2;
     const size = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
     const ms = Math.max(size.x, size.y, size.z);
+    mark("post-bounds");
     
     // Center positions
     const subX = centerX ?? cX;
@@ -317,6 +369,7 @@ export const FemGeometry = memo(function FemGeometry({
     for (let i = 0; i < nNodes * 3; i += 3) {
       positions[i] -= subX; positions[i + 1] -= subY; positions[i + 2] -= subZ;
     }
+    mark("post-center");
 
     const isVolumetric = elements.length >= 4;
     const doVolumeClip = isVolumetric && clipEnabled;
@@ -366,6 +419,7 @@ export const FemGeometry = memo(function FemGeometry({
           return cx <= posReal;
         })
       : baseElementOffsets;
+    mark("post-selection");
 
     if (doShrink) {
       const keptTets: number[] = [];
@@ -450,7 +504,7 @@ export const FemGeometry = memo(function FemGeometry({
       const compactCount = usedNodeSet.size;
 
       // Compact positions when rendering a per-part subset (saves memory + CPU for normals/wireframe)
-      if (compactCount > 0 && compactCount < nNodes * 0.9) {
+      if (enableGeometryCompaction && compactCount > 0 && compactCount < nNodes * 0.9) {
         const usedNodesSorted = Array.from(usedNodeSet).sort((a, b) => a - b);
         const globalToLocal = new Int32Array(nNodes).fill(-1);
         for (let i = 0; i < compactCount; i++) {
@@ -493,14 +547,20 @@ export const FemGeometry = memo(function FemGeometry({
         }
       }
     }
+    mark("post-topology");
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(finalPositions, 3));
     if (finalIndices) {
       geom.setIndex(new THREE.BufferAttribute(finalIndices, 1));
     }
-    geom.computeVertexNormals();
-    geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(finalPositions.length), 3));
+    if (enableGeometryNormals) {
+      geom.computeVertexNormals();
+    }
+    if (enableGeometryVertexColors) {
+      geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(finalPositions.length), 3));
+    }
+    mark("post-geometry");
 
     // Only build wireframe edges when the render mode needs them
     const needsEdges = renderMode === "surface+edges" || renderMode === "wireframe";
@@ -529,6 +589,7 @@ export const FemGeometry = memo(function FemGeometry({
         registerEdge(cIdx, d);
       }
     }
+    mark("post-wireframe");
 
     let tetraWireGeom: THREE.BufferGeometry | null = null;
     if (tetraEdgePairs.length > 0 && !doShrink) {
@@ -569,7 +630,49 @@ export const FemGeometry = memo(function FemGeometry({
       }
       ptsGeom = new THREE.BufferGeometry();
       ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
-      ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
+      if (enableGeometryVertexColors) {
+        ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
+      }
+    }
+    mark("post-points");
+
+    if (perfEnabled) {
+      const phases: Array<[string, string]> = [
+        ["inputs", "post-inputs"],
+        ["bounds", "post-bounds"],
+        ["center", "post-center"],
+        ["selection", "post-selection"],
+        ["topology", "post-topology"],
+        ["geometry", "post-geometry"],
+        ["wireframePrep", "post-wireframe"],
+        ["pointsPrep", "post-points"],
+      ];
+      let prev = marks.start ?? totalStart;
+      for (const [phase, endKey] of phases) {
+        const end = marks[endKey];
+        if (typeof end === "number") {
+          recordFrontendPerfSample({
+            scope: "FemGeometry",
+            phase,
+            durationMs: end - prev,
+            timestampMs: end,
+            meta: {
+              renderMode,
+              field,
+              nNodes,
+              nElements,
+              compacted: Boolean(vMap),
+              clipped: Boolean(clipEnabled),
+            },
+          });
+          prev = end;
+        }
+      }
+      sample("topologyTotal", totalStart, {
+        compacted: Boolean(vMap),
+        clipped: Boolean(clipEnabled),
+        points: Boolean(ptsGeom),
+      });
     }
 
     return {
@@ -602,6 +705,10 @@ export const FemGeometry = memo(function FemGeometry({
     clipPos,
     displayBoundaryFaceIndices,
     displayElementIndices,
+    enableGeometryCompaction,
+    enableGeometryNormals,
+    enableGeometryVertexColors,
+    field,
     renderMode,
     shrinkFactor,
   ]);
@@ -613,7 +720,26 @@ export const FemGeometry = memo(function FemGeometry({
 
   // ── Color update ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!geometry) return;
+    if (!geometry || !enableGeometryVertexColors) return;
+    const perfEnabled = FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryPerfLogging;
+    const totalStart = perfEnabled ? performance.now() : 0;
+    const mark = (phase: string, start: number, extra?: Record<string, number | string | boolean | null>) => {
+      if (!perfEnabled) return;
+      recordFrontendPerfSample({
+        scope: "FemGeometry",
+        phase,
+        durationMs: performance.now() - start,
+        timestampMs: performance.now(),
+        meta: {
+          renderMode,
+          field,
+          nNodes,
+          nElements,
+          ...extra,
+        },
+      });
+    };
+    const baseColorStart = perfEnabled ? performance.now() : 0;
     let baseColors: Float32Array;
     const cacheableField = field !== "quality" && field !== "sicn";
     if (cacheableField) {
@@ -659,8 +785,10 @@ export const FemGeometry = memo(function FemGeometry({
         qualityPerFace,
       );
     }
+    mark("colorBaseCompute", baseColorStart);
     
     // Sub-select or map colors
+    const meshApplyStart = perfEnabled ? performance.now() : 0;
     const colorAttr = geometry.getAttribute("color") as THREE.BufferAttribute;
     if (vertexMap) {
       for (let i = 0; i < vertexMap.length; i++) {
@@ -676,8 +804,14 @@ export const FemGeometry = memo(function FemGeometry({
       }
     }
     colorAttr.needsUpdate = true;
+    mark("colorMeshApply", meshApplyStart, { mapped: Boolean(vertexMap) });
     if (pointsGeometry) {
-      const pointsColorAttr = pointsGeometry.getAttribute("color") as THREE.BufferAttribute;
+      const pointsApplyStart = perfEnabled ? performance.now() : 0;
+      const pointsColorAttr = pointsGeometry.getAttribute("color") as THREE.BufferAttribute | undefined;
+      if (!pointsColorAttr) {
+        invalidate();
+        return;
+      }
       if (pointsVertexMap) {
         for (let i = 0; i < pointsVertexMap.length; i += 1) {
           const orig = pointsVertexMap[i];
@@ -687,8 +821,10 @@ export const FemGeometry = memo(function FemGeometry({
         }
       }
       pointsColorAttr.needsUpdate = true;
+      mark("colorPointsApply", pointsApplyStart, { mapped: Boolean(pointsVertexMap) });
     }
     invalidate();
+    mark("colorTotal", totalStart);
   }, [
     baseVertexColorCache,
     customBoundaryFaces,
@@ -697,13 +833,16 @@ export const FemGeometry = memo(function FemGeometry({
     geometry,
     invalidate,
     meshBoundaryFaces,
+    nElements,
     nNodes,
     nodes,
     pointsGeometry,
     pointsVertexMap,
     qualityPerFace,
+    renderMode,
     uniformColor,
     vertexMap,
+    enableGeometryVertexColors,
   ]);
 
   // ── Notify parent about geometry center (proper useEffect, not useMemo side-effect) ─
@@ -744,10 +883,10 @@ export const FemGeometry = memo(function FemGeometry({
     };
   }, [edgesGeometry, geometry, pointsGeometry, tetraEdgesGeometry]);
 
-  const showSurface = renderMode === "surface" || renderMode === "surface+edges";
+  const showSurface = (renderMode === "surface" || renderMode === "surface+edges") && showSurfacePass;
   const showWire = renderMode === "surface+edges";
   const showVolumeWire = renderMode === "wireframe";
-  const showPoints = renderMode === "points";
+  const showPoints = renderMode === "points" && showPointsPass;
 
   const isTransparent = opacity < 100;
   const opacityVal = opacity / 100;
@@ -812,86 +951,119 @@ export const FemGeometry = memo(function FemGeometry({
         <mesh 
           geometry={geometry}
           renderOrder={surfacePolicy.renderOrder}
-          onClick={handleMappedFaceClick}
-          onPointerOver={handleMappedFaceHover}
-          onPointerOut={onFaceUnhover}
-          onContextMenu={handleMappedFaceContextMenu}
+          onClick={enableGeometryPointerInteractions ? handleMappedFaceClick : undefined}
+          onPointerOver={
+            enableGeometryPointerInteractions && enableGeometryHoverInteractions
+              ? handleMappedFaceHover
+              : undefined
+          }
+          onPointerOut={
+            enableGeometryPointerInteractions && enableGeometryHoverInteractions
+              ? onFaceUnhover
+              : undefined
+          }
+          onContextMenu={enableGeometryPointerInteractions ? handleMappedFaceContextMenu : undefined}
         >
-          <meshStandardMaterial
-            vertexColors
-            side={surfacePolicy.side}
-            flatShading={false}
-            roughness={highlight ? 0.34 : 0.52}
-            metalness={highlight ? 0.08 : 0.03}
-            emissive={highlight ? resolvedHighlightEmissive : "#000000"}
-            emissiveIntensity={highlight ? (usesNeutralSelectionHighlight ? 0.12 : 0.34) : 0.02}
-            transparent={surfacePolicy.transparent}
-            opacity={opacityVal}
-            depthWrite={surfacePolicy.depthWrite}
-            depthTest={surfacePolicy.depthTest}
-            polygonOffset={surfacePolicy.polygonOffset}
-            polygonOffsetFactor={surfacePolicy.polygonOffsetFactor}
-            polygonOffsetUnits={surfacePolicy.polygonOffsetUnits}
-          />
+          {enableGeometryNormals ? (
+            <meshStandardMaterial
+              vertexColors={enableGeometryVertexColors}
+              color={enableGeometryVertexColors ? undefined : uniformColor ?? "#94a3b8"}
+              side={surfacePolicy.side}
+              flatShading={false}
+              roughness={highlight ? 0.34 : 0.52}
+              metalness={highlight ? 0.08 : 0.03}
+              emissive={highlight ? resolvedHighlightEmissive : "#000000"}
+              emissiveIntensity={highlight ? (usesNeutralSelectionHighlight ? 0.12 : 0.34) : 0.02}
+              transparent={surfacePolicy.transparent}
+              opacity={opacityVal}
+              depthWrite={surfacePolicy.depthWrite}
+              depthTest={surfacePolicy.depthTest}
+              polygonOffset={surfacePolicy.polygonOffset}
+              polygonOffsetFactor={surfacePolicy.polygonOffsetFactor}
+              polygonOffsetUnits={surfacePolicy.polygonOffsetUnits}
+            />
+          ) : (
+            <meshBasicMaterial
+              vertexColors={enableGeometryVertexColors}
+              color={enableGeometryVertexColors ? undefined : uniformColor ?? "#94a3b8"}
+              side={surfacePolicy.side}
+              transparent={surfacePolicy.transparent}
+              opacity={opacityVal}
+              depthWrite={surfacePolicy.depthWrite}
+              depthTest={surfacePolicy.depthTest}
+              polygonOffset={surfacePolicy.polygonOffset}
+              polygonOffsetFactor={surfacePolicy.polygonOffsetFactor}
+              polygonOffsetUnits={surfacePolicy.polygonOffsetUnits}
+            />
+          )}
         </mesh>
       )}
       
       {showWire && edgesGeometry && (
         <>
-          <lineSegments geometry={edgesGeometry} renderOrder={hiddenEdgePolicy.renderOrder}>
-            <lineBasicMaterial
-              color={resolvedEdgeColor}
-              opacity={(highlight ? 0.22 : 0.12) * opacityVal}
-              transparent={hiddenEdgePolicy.transparent}
-              depthWrite={hiddenEdgePolicy.depthWrite}
-              depthTest={hiddenEdgePolicy.depthTest}
-            />
-          </lineSegments>
-          <lineSegments geometry={edgesGeometry} renderOrder={edgePolicy.renderOrder}>
-            <lineBasicMaterial
-              color={resolvedEdgeColor}
-              opacity={(highlight ? 0.95 : 0.58) * opacityVal}
-              transparent={edgePolicy.transparent}
-              depthWrite={edgePolicy.depthWrite}
-              depthTest={edgePolicy.depthTest}
-            />
-          </lineSegments>
+          {showSurfaceHiddenEdgesPass ? (
+            <lineSegments geometry={edgesGeometry} renderOrder={hiddenEdgePolicy.renderOrder}>
+              <lineBasicMaterial
+                color={resolvedEdgeColor}
+                opacity={(highlight ? 0.22 : 0.12) * opacityVal}
+                transparent={hiddenEdgePolicy.transparent}
+                depthWrite={hiddenEdgePolicy.depthWrite}
+                depthTest={hiddenEdgePolicy.depthTest}
+              />
+            </lineSegments>
+          ) : null}
+          {showSurfaceVisibleEdgesPass ? (
+            <lineSegments geometry={edgesGeometry} renderOrder={edgePolicy.renderOrder}>
+              <lineBasicMaterial
+                color={resolvedEdgeColor}
+                opacity={(highlight ? 0.95 : 0.58) * opacityVal}
+                transparent={edgePolicy.transparent}
+                depthWrite={edgePolicy.depthWrite}
+                depthTest={edgePolicy.depthTest}
+              />
+            </lineSegments>
+          ) : null}
         </>
       )}
 
       {showVolumeWire && (tetraEdgesGeometry ?? edgesGeometry) != null && (
         <>
-          <lineSegments
-            geometry={(tetraEdgesGeometry ?? edgesGeometry)!}
-            renderOrder={hiddenEdgePolicy.renderOrder}
-          >
-            <lineBasicMaterial
-              color={resolvedEdgeColor}
-              opacity={(highlight ? 0.16 : 0.09) * opacityVal}
-              transparent={hiddenEdgePolicy.transparent}
-              depthWrite={hiddenEdgePolicy.depthWrite}
-              depthTest={hiddenEdgePolicy.depthTest}
-            />
-          </lineSegments>
-          <lineSegments
-            geometry={(tetraEdgesGeometry ?? edgesGeometry)!}
-            renderOrder={edgePolicy.renderOrder}
-          >
-            <lineBasicMaterial
-              color={resolvedEdgeColor}
-              opacity={(highlight ? 0.72 : 0.32) * opacityVal}
-              transparent={edgePolicy.transparent}
-              depthWrite={edgePolicy.depthWrite}
-              depthTest={edgePolicy.depthTest}
-            />
-          </lineSegments>
+          {showVolumeHiddenEdgesPass ? (
+            <lineSegments
+              geometry={(tetraEdgesGeometry ?? edgesGeometry)!}
+              renderOrder={hiddenEdgePolicy.renderOrder}
+            >
+              <lineBasicMaterial
+                color={resolvedEdgeColor}
+                opacity={(highlight ? 0.16 : 0.09) * opacityVal}
+                transparent={hiddenEdgePolicy.transparent}
+                depthWrite={hiddenEdgePolicy.depthWrite}
+                depthTest={hiddenEdgePolicy.depthTest}
+              />
+            </lineSegments>
+          ) : null}
+          {showVolumeVisibleEdgesPass ? (
+            <lineSegments
+              geometry={(tetraEdgesGeometry ?? edgesGeometry)!}
+              renderOrder={edgePolicy.renderOrder}
+            >
+              <lineBasicMaterial
+                color={resolvedEdgeColor}
+                opacity={(highlight ? 0.72 : 0.32) * opacityVal}
+                transparent={edgePolicy.transparent}
+                depthWrite={edgePolicy.depthWrite}
+                depthTest={edgePolicy.depthTest}
+              />
+            </lineSegments>
+          ) : null}
         </>
       )}
 
       {showPoints && pointsGeometry && (
         <points geometry={pointsGeometry} renderOrder={pointPolicy.renderOrder}>
           <pointsMaterial 
-            vertexColors 
+            vertexColors={enableGeometryVertexColors}
+            color={enableGeometryVertexColors ? undefined : uniformColor ?? "#94a3b8"}
             size={maxDim * 0.008 * (highlight ? 1.15 : 1)}
             sizeAttenuation 
             transparent={pointPolicy.transparent}

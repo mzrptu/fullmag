@@ -62,6 +62,8 @@ import SettingsDialog from "../workspace/overlays/SettingsDialog";
 import PhysicsDocsDrawer from "../workspace/overlays/PhysicsDocsDrawer";
 import BottomUtilityDock from "../workspace/shell/BottomUtilityDock";
 import { useActiveStageLayout, useWorkspaceStore } from "@/lib/workspace/workspace-store";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
+import { recordFrontendRender } from "@/lib/debug/frontendPerfDebug";
 import {
   appendNode,
   createMacroNode,
@@ -183,6 +185,11 @@ function resolveStudyAnchorNodeId(
 /* ── Inner shell (consumes context) ── */
 
 export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMode?: WorkspaceMode }) {
+  if (FRONTEND_DIAGNOSTIC_FLAGS.renderDebug.enableRenderLogging) {
+    recordFrontendRender("ControlRoomShell", {
+      initialWorkspaceMode: initialWorkspaceMode ?? "study",
+    });
+  }
   const ctx = useControlRoom();
   const sidebarCollapsed = ctx.sidebarCollapsed;
   const setSidebarCollapsed = ctx.setSidebarCollapsed;
@@ -997,6 +1004,30 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     </>
   );
 
+  const minimalFrontendMode = FRONTEND_DIAGNOSTIC_FLAGS.shell.useViewportOnlyShell;
+
+  if (minimalFrontendMode) {
+    return (
+      <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
+        {FRONTEND_DIAGNOSTIC_FLAGS.shell.showBackendErrorNotice && activeBackendError ? (
+          <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">
+            <BackendErrorNotice
+              error={activeBackendError}
+              onDismiss={() => setDismissedBackendErrorAt(activeBackendError.timestampUnixMs)}
+            />
+          </div>
+        ) : null}
+        <div className="flex flex-1 min-h-0 min-w-0 bg-background">
+          <div className="flex flex-col flex-1 min-h-0 min-w-0">
+            {FRONTEND_DIAGNOSTIC_FLAGS.shell.showViewportBar ? <ViewportBar /> : null}
+            {FRONTEND_DIAGNOSTIC_FLAGS.shell.showPreviewNotices ? previewNotices : null}
+            <ViewportCanvasArea />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
       <AppBar
@@ -1023,7 +1054,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         onPerspectiveChange={handleStageChange}
         onSimAction={ctx.handleSimulationAction}
       />
-      <RibbonBar
+      {FRONTEND_DIAGNOSTIC_FLAGS.shell.showRibbonBar ? <RibbonBar
         workspaceMode={ctx.workspaceMode}
         viewMode={ctx.effectiveViewMode}
         isFemBackend={ctx.isFemBackend}
@@ -1079,8 +1110,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         onObjectAddInteraction={handleObjectAddInteraction}
         onAssignMagnetizationPreset={handleAssignMagnetizationPreset}
         onSetTextureTransformMode={handleSetTextureTransformMode}
-      />
-      {activeBackendError ? (
+      /> : null}
+      {FRONTEND_DIAGNOSTIC_FLAGS.shell.showBackendErrorNotice && activeBackendError ? (
         <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">
           <BackendErrorNotice
             error={activeBackendError}
@@ -1093,7 +1124,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         className="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden"
         resizeTargetMinimumSize={{ coarse: 40, fine: 12 }}
       >
-        {!ctx.sidebarCollapsed && (
+        {FRONTEND_DIAGNOSTIC_FLAGS.shell.showSidebar && !ctx.sidebarCollapsed && (
           <>
             <Panel
               id="workspace-sidebar"
@@ -1127,8 +1158,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
             >
                 <div className="flex flex-row h-full min-h-0 min-w-0 overflow-hidden bg-background flex-1 relative">
                   <div className="flex flex-col flex-1 min-w-0 min-h-0">
-                    <ViewportBar />
-                    {previewNotices}
+                    {FRONTEND_DIAGNOSTIC_FLAGS.shell.showViewportBar ? <ViewportBar /> : null}
+                    {FRONTEND_DIAGNOSTIC_FLAGS.shell.showPreviewNotices ? previewNotices : null}
                     <ViewportCanvasArea />
                   </div>
                 </div>
@@ -1144,7 +1175,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
               collapsible
               collapsedSize="3%"
             >
-              <BottomUtilityDock
+              {FRONTEND_DIAGNOSTIC_FLAGS.shell.showBottomDock ? <BottomUtilityDock
                 session={ctx.session ?? null}
                 run={ctx.run ?? null}
                 liveState={ctx.effectiveLiveState ?? null}
@@ -1160,13 +1191,13 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
                 activity={ctx.activity}
                 meshWorkspace={ctx.meshWorkspace}
                 workspaceStatus={ctx.workspaceStatus}
-              />
+              /> : null}
             </Panel>
           </PanelGroup>
         </Panel>
 
         {/* ── Right inspector (mode-specific) ── */}
-        {rightInspectorOpen ? (
+        {FRONTEND_DIAGNOSTIC_FLAGS.shell.showRightInspector && rightInspectorOpen ? (
           <>
             <PanelResizeHandle className="h-full w-2 bg-transparent cursor-ew-resize flex items-center justify-center transition-colors relative hover:bg-muted/50 active:bg-muted/50 after:content-[''] after:absolute after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:w-[2px] after:h-9 after:rounded-full after:bg-border hover:after:bg-primary active:after:bg-primary z-50" />
             <Panel
@@ -1185,7 +1216,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         ) : null}
       </PanelGroup>
 
-      <StatusBar
+      {FRONTEND_DIAGNOSTIC_FLAGS.shell.showStatusBar ? <StatusBar
         connection={ctx.connection}
         step={ctx.effectiveLiveState?.step ?? ctx.run?.total_steps ?? 0}
         stepDisplay={fmtStepValue(ctx.effectiveLiveState?.step ?? ctx.run?.total_steps ?? 0, ctx.hasSolverTelemetry)}
@@ -1238,7 +1269,7 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
           : ctx.totalCells && ctx.totalCells > 0
             ? `${ctx.totalCells.toLocaleString()} cells`
             : undefined}
-      />
+      /> : null}
 
       <MeshBuildModal
         open={meshBuildDialogOpen}
@@ -1256,8 +1287,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       />
 
       {/* ── Workspace overlays (settings, docs) ── */}
-      <SettingsDialog />
-      <PhysicsDocsDrawer />
+      {FRONTEND_DIAGNOSTIC_FLAGS.shell.showWorkspaceOverlays ? <SettingsDialog /> : null}
+      {FRONTEND_DIAGNOSTIC_FLAGS.shell.showWorkspaceOverlays ? <PhysicsDocsDrawer /> : null}
     </div>
   );
 }
