@@ -344,6 +344,12 @@ fn geometry_override_value(geo: &ScriptBuilderGeometryEntry) -> Value {
             "source_format": geo.magnetization.source_format,
             "dataset": geo.magnetization.dataset,
             "sample_index": geo.magnetization.sample_index,
+            "mapping": geo.magnetization.mapping,
+            "texture_transform": geo.magnetization.texture_transform,
+            "preset_kind": geo.magnetization.preset_kind,
+            "preset_params": geo.magnetization.preset_params,
+            "preset_version": geo.magnetization.preset_version,
+            "ui_label": geo.magnetization.ui_label,
         }),
     );
     map.insert(
@@ -959,6 +965,12 @@ mod tests {
                     source_format: Some("ovf".to_string()),
                     dataset: Some("values".to_string()),
                     sample_index: Some(3),
+                    mapping: None,
+                    texture_transform: None,
+                    preset_kind: None,
+                    preset_params: None,
+                    preset_version: None,
+                    ui_label: None,
                 },
                 physics_stack: vec![
                     ScriptBuilderMagneticInteractionEntry {
@@ -1096,6 +1108,25 @@ mod tests {
     }
 
     #[test]
+    fn scene_document_validation_accepts_preset_texture_asset_kind() {
+        let mut scene = scene_document_from_script_builder(&sample_builder());
+        scene.magnetization_assets[0].kind = "preset_texture".to_string();
+        scene.magnetization_assets[0].mapping.clamp_mode = "none".to_string();
+        scene.magnetization_assets[0].preset_kind = Some("vortex".to_string());
+        scene.magnetization_assets[0].preset_params = Some(serde_json::json!({
+            "circulation": 1,
+            "core_polarity": 1,
+            "core_radius": 10e-9,
+            "plane": "xy"
+        }));
+        scene.magnetization_assets[0].preset_version = Some(1);
+        scene.magnetization_assets[0].ui_label = Some("Vortex".to_string());
+        let builder = scene_document_to_script_builder(&scene)
+            .expect("preset_texture magnetization kind should validate");
+        assert_eq!(builder.geometries[0].magnetization.kind, "preset_texture");
+    }
+
+    #[test]
     fn scene_document_validation_rejects_unsupported_asset_kind() {
         let mut scene = scene_document_from_script_builder(&sample_builder());
         scene.magnetization_assets[0].kind = "procedural".to_string();
@@ -1146,6 +1177,38 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(1)
+        );
+        assert_eq!(
+            projection
+                .rewrite_overrides
+                .get("geometries")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(Value::as_object)
+                .and_then(|geo| geo.get("magnetization"))
+                .and_then(Value::as_object)
+                .and_then(|mag| mag.get("mapping"))
+                .and_then(Value::as_object)
+                .and_then(|mapping| mapping.get("space"))
+                .and_then(Value::as_str),
+            Some("object")
+        );
+        assert_eq!(
+            projection
+                .rewrite_overrides
+                .get("geometries")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(Value::as_object)
+                .and_then(|geo| geo.get("magnetization"))
+                .and_then(Value::as_object)
+                .and_then(|mag| mag.get("texture_transform"))
+                .and_then(Value::as_object)
+                .and_then(|transform| transform.get("translation"))
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+                .and_then(Value::as_f64),
+            Some(0.0)
         );
     }
 

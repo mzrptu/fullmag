@@ -8,6 +8,7 @@
 import type {
   FftWindow,
   LinewidthResult,
+  LorentzianFitResult,
   VortexSpectrumConfig,
   VortexSpectrumResult,
   VortexTimeSample,
@@ -203,5 +204,195 @@ export function estimateLinewidth(
     f_center_hz: frequencies[peakIdx],
     fwhm_hz: frequencies[iHigh] - frequencies[iLow],
     peak_power: peakPower,
+  };
+}
+
+/* ── Lorentzian + linear background fit ────────── */
+
+/**
+ * Lorentzian model: S(f) = B0 + B1·f + A / (1 + ((f - f0) / γ)²)
+ * where FWHM = 2γ.
+ */
+function lorentzianModel(
+  f: number,
+  f0: number,
+  gamma: number,
+  A: number,
+  B0: number,
+  B1: number,
+): number {
+  return B0 + B1 * f + A / (1 + ((f - f0) / gamma) ** 2);
+}
+
+/**
+ * Simple Gauss–Newton–like iterative Lorentzian fit (client-side, no scipy).
+ *
+ * Uses Levenberg–Marquardt-style damped least-squares with analytical Jacobian.
+ * Parameters: [f0, γ, A, B0, B1]
+ */
+export function fitLorentzianLinewidth(
+  frequencies: number[],
+  psd: number[],
+  opts?: { fMinHz?: number; fMaxHz?: number; maxIter?: number },
+): LorentzianFitResult | null {
+  const fMin = opts?.fMinHz ?? 0;
+  const fMax = opts?.fMaxHz ?? Infinity;
+  const maxIter = opts?.maxIter ?? 200;
+
+  // Filter to range
+  const idx: number[] = [];
+  for (let i = 0; i < frequencies.length; i++) {
+    if (frequencies[i] >= fMin && frequencies[i] <= fMax) idx.push(i);
+  }
+  if (idx.length < 6) return null;
+
+  const f = idx.map((i) => frequencies[i]);
+  const y = idx.map((i) => psd[i]);
+  const n = f.length;
+
+  // Initial guesses
+  let peakIdx = 0;
+  for (let i = 1; i < n; i++) {
+    if (y[i] > y[peakIdx]) peakIdx = i;
+  }
+  const f0_init = f[peakIdx];
+  const A_init = y[peakIdx];
+  const B0_init = Math.min(...y);
+
+  // FWHM from half-max crossing
+  const halfMax = (A_init + B0_init) / 2;
+  let iLo = peakIdx;
+  let iHi = peakIdx;
+  while (iLo > 0 && y[iLo] >= halfMax) iLo--;
+  while (iHi < n - 1 && y[iHi] >= halfMax) iHi++;
+  let gamma_init = Math.max((f[iHi] - f[iLo]) / 2, (f[1] - f[0]) * 2);
+
+  // params: [f0, gamma, A, B0, B1]
+  const p = [f0_init, gamma_init, A_init - B0_init, B0_init, 0];
+  let lambda = 1e-3;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Compute residuals and Jacobian
+    const r = new Array(n);
+    // J[i][j] = ∂model/∂p_j at f[i]
+    const J: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      const fi = f[i];
+      const [f0, g, A, B0, B1] = p;
+      const u = (fi - f0) / g;
+      const denom = 1 + u * u;
+      const modelVal = B0 + B1 * fi + A / denom;
+      r[i] = y[i] - modelVal;
+
+      // Partial derivatives
+      const dLdf0 = (2 * A * (fi - f0)) / (g * g * denom * denom);
+      const dLdg = (2 * A * (fi - f0) ** 2) / (g ** 3 * denom ** 2);
+      const dLdA = -1 / denom;
+      const dLdB0 = -1;
+      const dLdB1 = -fi;
+      J.push([dLdf0, dLdg, dLdA, dLdB0, dLdB1]);
+    }
+
+    // J^T J + λI
+    const np = 5;
+    const JtJ: number[][] = Array.from({ length: np }, () =>
+      new Array(np).fill(0),
+    );
+    const JtR = new Array(np).fill(0);
+
+    for (let i = 0; i < n; i++) {
+      for (let a = 0; a < np; a++) {
+        JtR[a] += J[i][a] * r[i];
+        for (let b = 0; b < np; b++) {
+          JtJ[a][b] += J[i][a] * J[i][b];
+        }
+      }
+    }
+
+    // Add damping
+    for (let a = 0; a < np; a++) {
+      JtJ[a][a] *= 1 + lambda;
+    }
+
+    // Solve 5x5 system via Gauss elimination
+    const aug = JtJ.map((row, i) => [...row, JtR[i]]);
+    for (let col = 0; col < np; col++) {
+      let maxRow = col;
+      for (let row = col + 1; row < np; row++) {
+        if (Math.abs(aug[row][col]) > Math.abs(aug[maxRow][col])) maxRow = row;
+      }
+      [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+      if (Math.abs(aug[col][col]) < 1e-30) break;
+      for (let row = col + 1; row < np; row++) {
+        const factor = aug[row][col] / aug[col][col];
+        for (let j = col; j <= np; j++) {
+          aug[row][j] -= factor * aug[col][j];
+        }
+      }
+    }
+    const dp = new Array(np).fill(0);
+    for (let row = np - 1; row >= 0; row--) {
+      let s = aug[row][np];
+      for (let col = row + 1; col < np; col++) {
+        s -= aug[row][col] * dp[col];
+      }
+      dp[row] = Math.abs(aug[row][row]) > 1e-30 ? s / aug[row][row] : 0;
+    }
+
+    // Trial update
+    const pTrial = p.map((v, i) => v + dp[i]);
+
+    // Enforce gamma > 0
+    if (pTrial[1] <= 0) pTrial[1] = gamma_init * 0.1;
+    if (pTrial[2] < 0) pTrial[2] = 0;
+
+    // Compute new cost
+    let cost0 = 0;
+    let cost1 = 0;
+    for (let i = 0; i < n; i++) {
+      cost0 += r[i] ** 2;
+      const rNew = y[i] - lorentzianModel(f[i], pTrial[0], pTrial[1], pTrial[2], pTrial[3], pTrial[4]);
+      cost1 += rNew ** 2;
+    }
+
+    if (cost1 < cost0) {
+      for (let j = 0; j < np; j++) p[j] = pTrial[j];
+      lambda *= 0.5;
+    } else {
+      lambda *= 2;
+    }
+
+    // Convergence check
+    const dpNorm = Math.sqrt(dp.reduce((s, v) => s + v * v, 0));
+    const pNorm = Math.sqrt(p.reduce((s, v) => s + v * v, 0));
+    if (dpNorm < 1e-10 * (pNorm + 1e-30)) break;
+  }
+
+  const [f0, gamma, A, B0, B1] = p;
+  const fwhm = 2 * Math.abs(gamma);
+
+  // R²
+  let ssTot = 0;
+  let ssRes = 0;
+  let yMean = 0;
+  for (let i = 0; i < n; i++) yMean += y[i];
+  yMean /= n;
+  for (let i = 0; i < n; i++) {
+    ssTot += (y[i] - yMean) ** 2;
+    const pred = lorentzianModel(f[i], f0, gamma, A, B0, B1);
+    ssRes += (y[i] - pred) ** 2;
+  }
+  const r2 = ssTot > 0 ? 1 - ssRes / ssTot : null;
+
+  return {
+    f0_hz: f0,
+    fwhm_hz: fwhm,
+    q_factor: fwhm > 0 ? f0 / fwhm : 0,
+    amplitude: A,
+    background_offset: B0,
+    background_slope: B1,
+    fit_r2: r2,
+    fit_window_hz: [f[0], f[n - 1]],
+    method: "lorentzian_lm_client",
   };
 }

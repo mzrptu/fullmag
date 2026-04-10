@@ -230,6 +230,7 @@ pub(crate) fn build_problem_and_state(
         zhang_li_stt: None,
         slonczewski_stt: None,
         sot: None,
+        oersted_cylinder: None,
     };
     let resolved_demag_realization = if !plan.enable_demag {
         None

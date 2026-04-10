@@ -27,7 +27,7 @@ def _default_mapping() -> dict[str, object]:
     return {
         "space": "object",
         "projection": "object_local",
-        "clamp_mode": "clamp",
+        "clamp_mode": "none",
     }
 
 

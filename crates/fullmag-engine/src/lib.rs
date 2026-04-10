@@ -56,8 +56,9 @@ pub use fdm_problem::ExchangeLlgProblem;
 
 pub use fdm_types::{
     AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, EngineError,
-    EvaluationRequest, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters, Result,
-    SlonczewskiSttConfig, SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
+    EvaluationRequest, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters,
+    OerstedCylinderConfig, Result, SlonczewskiSttConfig, SotConfig, TimeIntegrator,
+    UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 
 // ── Vector math utilities ─────────────────────────────────────────────

@@ -13,6 +13,8 @@ interface Props {
   mode: TextureGizmoMode;
   visible?: boolean;
   previewProxy?: TexturePreviewProxy;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
   onLiveChange?: (next: TextureTransform3D) => void;
   onCommit?: (next: TextureTransform3D) => void;
 }
@@ -111,6 +113,8 @@ export default function TextureTransformGizmo({
   mode,
   visible = true,
   previewProxy = "box",
+  onDragStart,
+  onDragEnd,
   onLiveChange,
   onCommit,
 }: Props) {
@@ -140,6 +144,7 @@ export default function TextureTransformGizmo({
       disableRotations={mode !== "rotate"}
       disableSliders={false}
       disableScaling={mode !== "scale"}
+      onDragStart={onDragStart}
       onDrag={() => {
         const group = groupRef.current;
         if (!group || !onLiveChange) {
@@ -148,6 +153,7 @@ export default function TextureTransformGizmo({
         onLiveChange(snapshotGroupTransform(group, transform.pivot));
       }}
       onDragEnd={() => {
+        onDragEnd?.();
         const group = groupRef.current;
         if (!group || !onCommit) {
           return;

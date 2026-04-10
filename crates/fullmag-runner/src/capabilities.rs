@@ -56,6 +56,7 @@ pub(crate) fn capabilities_for_fdm_engine(engine: FdmEngine) -> BackendCapabilit
                 "stt".to_string(),
                 "sot".to_string(),
                 "magnetoelastic".to_string(),
+                "oersted".to_string(),
             ],
             supported_demag_realizations: vec!["tensor_fft_newell".to_string()],
             // NOTE: H_ani and H_dmi are computed but folded into H_eff;

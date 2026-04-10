@@ -516,6 +516,7 @@ fn materialize_equilibrium(
         zhang_li_stt: None,
         slonczewski_stt: None,
         sot: None,
+        oersted_cylinder: None,
     };
     let resolved_demag = resolved_demag_realization(plan);
     let mut problem = match resolved_demag {

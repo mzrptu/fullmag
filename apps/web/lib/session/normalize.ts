@@ -1274,7 +1274,7 @@ function normalizeSceneDocument(raw: any): SceneDocument | null {
           mapping: {
             space: String(asset?.mapping?.space ?? "object"),
             projection: String(asset?.mapping?.projection ?? "object_local"),
-            clamp_mode: String(asset?.mapping?.clamp_mode ?? "clamp"),
+            clamp_mode: String(asset?.mapping?.clamp_mode ?? "none"),
           },
           texture_transform: {
             translation: normalizeVec3(asset?.texture_transform?.translation) ?? [0, 0, 0],

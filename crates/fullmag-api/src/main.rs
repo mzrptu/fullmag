@@ -13,7 +13,7 @@ use base64::Engine;
 use fullmag_authoring::{SceneDocument, ScriptBuilderInitialState};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -1785,9 +1785,15 @@ async fn update_current_live_scene(
     State(state): State<Arc<AppState>>,
     Json(mut scene_document): Json<SceneDocument>,
 ) -> Result<Json<SceneDocument>, ApiError> {
-    eprintln!(
-        "[fullmag-api] RX <- frontend scene update revision={} version={}",
-        scene_document.revision, scene_document.version
+    info!(
+        target: "fullmag_api::scene_sync",
+        direction = "rx",
+        revision = scene_document.revision,
+        version = %scene_document.version,
+        objects = scene_document.objects.len(),
+        magnetization_assets = scene_document.magnetization_assets.len(),
+        summary = %scene_magnetization_summary(&scene_document),
+        "frontend scene update received"
     );
     let (scene_document, session_state_messages, public_json) = {
         let mut current = state.current_live_state.write().await;
@@ -1810,7 +1816,20 @@ async fn update_current_live_scene(
             .unwrap_or_else(|| scene_document.revision.saturating_add(1));
         scene_document.version = "scene.v1".to_string();
         scene_document.revision = next_revision;
-        let builder_state = scene_document_builder_projection(&scene_document)?;
+        let builder_state = match scene_document_builder_projection(&scene_document) {
+            Ok(state) => state,
+            Err(err) => {
+                info!(
+                    target: "fullmag_api::scene_sync",
+                    direction = "reject",
+                    revision = scene_document.revision,
+                    summary = %scene_magnetization_summary(&scene_document),
+                    error = %err.message,
+                    "frontend scene update rejected"
+                );
+                return Err(err);
+            }
+        };
         snapshot.builder_adapter = Some(builder_state);
         snapshot.scene_document = Some(scene_document.clone());
         let session_state_messages = build_current_live_ws_messages(&state, snapshot)?;
@@ -1820,11 +1839,42 @@ async fn update_current_live_scene(
 
     *state.current_live_public_snapshot.write().await = Some(public_json);
     send_current_live_ws_messages(&state, session_state_messages);
-    eprintln!(
-        "[fullmag-api] TX -> frontend scene update committed revision={}",
-        scene_document.revision
+    info!(
+        target: "fullmag_api::scene_sync",
+        direction = "tx",
+        revision = scene_document.revision,
+        summary = %scene_magnetization_summary(&scene_document),
+        "frontend scene update committed"
     );
     Ok(Json(scene_document))
+}
+
+fn scene_magnetization_summary(scene: &SceneDocument) -> String {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut interesting = Vec::new();
+    for asset in &scene.magnetization_assets {
+        *counts.entry(asset.kind.clone()).or_insert(0) += 1;
+        if asset.kind == "preset_texture" || asset.kind == "random" || asset.kind == "uniform" {
+            let preset_param_keys = asset
+                .preset_params
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .map(|map| map.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            interesting.push(format!(
+                "{}:{}:{}:{:?}",
+                asset.id,
+                asset.kind,
+                asset
+                    .preset_kind
+                    .as_ref()
+                    .map(String::as_str)
+                    .unwrap_or("-"),
+                preset_param_keys
+            ));
+        }
+    }
+    format!("counts={counts:?}; assets={interesting:?}")
 }
 
 async fn list_physics_docs(

@@ -341,6 +341,7 @@ fn build_contexts_and_states(
                 zhang_li_stt: None,
                 slonczewski_stt: None,
                 sot: None,
+                oersted_cylinder: None,
             },
             layer.native_active_mask.clone(),
         )

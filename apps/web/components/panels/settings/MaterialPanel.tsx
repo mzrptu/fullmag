@@ -792,7 +792,7 @@ export default function MaterialPanel({
                       if (parameter.type === "vector3") {
                         const vector = Array.isArray(rawValue) ? rawValue : [0, 0, 0];
                         return (
-                          <div key={parameter.key} className="grid grid-cols-3 gap-2">
+                          <div key={parameter.key} className="grid grid-cols-1 gap-2 md:grid-cols-3">
                             {[0, 1, 2].map((axis) => (
                               <TextField
                                 key={`${parameter.key}-${axis}`}
@@ -920,7 +920,7 @@ export default function MaterialPanel({
                     <div className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
                       Mapping
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                       <SelectField
                         label="Space"
                         value={textureMapping.space}
@@ -979,7 +979,7 @@ export default function MaterialPanel({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
                         key={`tx-translation-${axis}-${textureTransform.translation[axis]}`}
@@ -994,7 +994,7 @@ export default function MaterialPanel({
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                     {[0, 1, 2, 3].map((axis) => (
                       <TextField
                         key={`tx-rotation-${axis}-${textureTransform.rotation_quat[axis]}`}
@@ -1006,7 +1006,7 @@ export default function MaterialPanel({
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
                         key={`tx-scale-${axis}-${textureTransform.scale[axis]}`}
@@ -1020,7 +1020,7 @@ export default function MaterialPanel({
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
                         key={`tx-pivot-${axis}-${textureTransform.pivot[axis]}`}

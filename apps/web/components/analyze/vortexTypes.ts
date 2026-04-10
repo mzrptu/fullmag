@@ -31,6 +31,41 @@ export interface LinewidthResult {
   peak_power: number;
 }
 
+/**
+ * Production Lorentzian fit result — mirrors Python `LinewidthFitResult`.
+ *
+ * Fit model: S(f) = B0 + B1·f + A / (1 + ((f - f0) / γ)²)
+ * where FWHM = 2γ.
+ */
+export interface LorentzianFitResult {
+  f0_hz: number;
+  fwhm_hz: number;
+  q_factor: number;
+  amplitude: number;
+  background_offset: number;
+  background_slope: number;
+  fit_r2: number | null;
+  fit_window_hz: [number, number];
+  method: string;
+}
+
+/** Sub-pixel vortex core track result for a single frame. */
+export interface CoreTrackResult {
+  x: number;           // [m]
+  y: number;           // [m]
+  confidence: number;  // [0, 1]
+  method: string;
+  residual: number | null;
+}
+
+/** Derived orbit metrics from a vortex core trajectory. */
+export interface OrbitMetrics {
+  mean_radius_m: number;
+  orbit_center: [number, number];
+  ellipticity: number;
+  angular_frequency_hz: number | null;
+}
+
 /** Vortex core trajectory point (if vortex tracking is active). */
 export interface VortexCorePoint {
   time: number;

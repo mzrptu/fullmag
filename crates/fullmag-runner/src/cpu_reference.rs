@@ -7,7 +7,8 @@ use fullmag_engine::{
     magnetoelastic::{MagnetoelasticParams, PrescribedStrainField},
     AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem,
     ExchangeLlgState, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters,
-    SlonczewskiSttConfig, SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
+    OerstedCylinderConfig, SlonczewskiSttConfig, SotConfig, TimeIntegrator,
+    UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 use fullmag_ir::{
     ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR, RelaxationAlgorithmIR,
@@ -99,6 +100,30 @@ fn build_slon_stt(plan: &FdmPlanIR, cell_dz: f64) -> Option<SlonczewskiSttConfig
         epsilon_prime: plan.stt_epsilon_prime.unwrap_or(0.0),
         degree: plan.stt_degree.unwrap_or(1.0),
         thickness: cell_dz,
+    })
+}
+
+/// Build an `OerstedCylinderConfig` from plan fields if Oersted is requested.
+fn build_oersted(plan: &FdmPlanIR) -> Option<OerstedCylinderConfig> {
+    if !plan.has_oersted_cylinder {
+        return None;
+    }
+    let current = plan.oersted_current?;
+    let radius = plan.oersted_radius?;
+    if radius <= 0.0 {
+        return None;
+    }
+    Some(OerstedCylinderConfig {
+        current,
+        radius,
+        center: plan.oersted_center.unwrap_or([0.0, 0.0, 0.0]),
+        axis: plan.oersted_axis.unwrap_or([0.0, 0.0, 1.0]),
+        time_dep_kind: plan.oersted_time_dep_kind,
+        time_dep_freq: plan.oersted_time_dep_freq,
+        time_dep_phase: plan.oersted_time_dep_phase,
+        time_dep_offset: plan.oersted_time_dep_offset,
+        time_dep_t_on: plan.oersted_time_dep_t_on,
+        time_dep_t_off: plan.oersted_time_dep_t_off,
     })
 }
 
@@ -236,6 +261,7 @@ pub(crate) fn build_snapshot_problem_and_state(
             zhang_li_stt: build_zl_stt(plan),
             slonczewski_stt: build_slon_stt(plan, plan.cell_size[2]),
             sot: build_sot(plan),
+            oersted_cylinder: build_oersted(plan),
         },
         plan.active_mask.clone(),
     )
@@ -374,6 +400,7 @@ pub(crate) fn execute_reference_fdm(
             zhang_li_stt: build_zl_stt(plan),
             slonczewski_stt: build_slon_stt(plan, plan.cell_size[2]),
             sot: build_sot(plan),
+            oersted_cylinder: build_oersted(plan),
         },
         plan.active_mask.clone(),
     )

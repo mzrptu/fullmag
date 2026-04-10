@@ -653,6 +653,7 @@ function FemMeshView3DInner({
   const [openPopover, setOpenPopover] = useState<"quantity" | "color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
   const [qualityProfile, setQualityProfile] = useState<ViewportQualityProfileId>("interactive");
   const [interactionActive, setInteractionActive] = useState(false);
+  const [textureGizmoDragging, setTextureGizmoDragging] = useState(false);
   const [captureActive, setCaptureActive] = useState(false);
   const [captureOverlayHidden, setCaptureOverlayHidden] = useState(false);
   
@@ -1960,6 +1961,11 @@ function FemMeshView3DInner({
     setCtxMenu(null);
     setSelectedFaces([]);
   }, [geometryPointerInteractionsEnabled]);
+  useEffect(() => {
+    if (activeTransformScope !== "texture" && textureGizmoDragging) {
+      setTextureGizmoDragging(false);
+    }
+  }, [activeTransformScope, textureGizmoDragging]);
   const overlayItems = useMemo<ViewportOverlayDescriptor[]>(() => {
     if (!wrapperFlags.enableOverlayItemsModel) {
       return [];
@@ -2416,7 +2422,8 @@ function FemMeshView3DInner({
           canvasRef.current = gl.domElement;
         }}
         diagnosticOverrides={{
-          enableControls: selectionOnlyInteractionMode ? false : true,
+          enableControls:
+            selectionOnlyInteractionMode || textureGizmoDragging ? false : true,
           forceFrameloopMode: "always",
         }}
       >
@@ -2506,6 +2513,8 @@ function FemMeshView3DInner({
             transform={sceneTextureTransform}
             mode={textureGizmoMode}
             previewProxy={activeTexturePreviewProxy}
+            onDragStart={() => setTextureGizmoDragging(true)}
+            onDragEnd={() => setTextureGizmoDragging(false)}
             onLiveChange={handleTextureTransformLiveChange}
             onCommit={handleTextureTransformCommit}
             visible

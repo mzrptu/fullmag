@@ -1,0 +1,200 @@
+---
+title: "Fullmag — diagnoza i plan refaktoryzacji: tekstura magnetyczna + gizmo transform"
+date: "2026-04-10"
+author: "OpenAI"
+repo: "MateuszZelent/fullmag"
+format: "mdx"
+---
+
+# Fullmag — diagnoza i plan refaktoryzacji: tekstura magnetyczna + gizmo transform
+
+## 1. Zakres
+
+Raport obejmuje dwa zgłoszone problemy:
+
+1. domyślny `vortex` (preset texture) renderuje się błędnie,
+2. transform gizmo koliduje ze sterowaniem kamerą i nie daje przewidywalnej edycji środka tekstury.
+
+Analiza była wykonana na aktualnym stanie repozytorium (2026-04-10), z przeglądem ścieżki:
+
+`UI (SceneDocument) -> /v1/live/current/scene -> authoring Rust -> ScriptBuilder -> runtime initial_state -> evaluate_preset_texture`.
+
+## 2. Werdykt
+
+To nie jest jeden błąd. To jest **zestaw niespójności kontraktu** między frontendem, authoringiem i runtime:
+
+1. backend waliduje `SceneDocument` tak, że odrzuca `preset_texture`,
+2. semantyka przestrzeni transformacji tekstury jest mieszana (`object` vs `world`),
+3. domyślne `clamp_mode` jest niespójne między modułami,
+4. sterowanie gizmo nie ma twardej arbitrażu inputu z kamerą.
+
+## 3. Potwierdzone przyczyny
+
+## 3.1. Krytyczne: backend odrzuca `preset_texture` przy scene push
+
+Dowód w kodzie:
+
+- `fullmag/crates/fullmag-authoring/src/validation.rs:58-66`
+
+Walidator dopuszcza tylko:
+
+- `uniform`, `random`, `file`, `sampled`
+
+i zwraca:
+
+- `unsupported magnetization asset kind 'preset_texture'`
+
+Skutek:
+
+- UI aktualizuje `texture_transform`, ale backend odrzuca dokument,
+- więc orientacja magnetyzacji na węzłach nie jest przeliczana po zmianie tekstury,
+- użytkownik widzi pozorną edycję w UI bez rzeczywistego efektu fizycznego.
+
+Uwaga:
+
+- model danych `MagnetizationAsset` już ma pola presetowe (`preset_kind`, `preset_params`, `mapping`, `texture_transform`) w `fullmag/crates/fullmag-authoring/src/scene.rs:128-157`,
+- czyli walidacja jest opóźniona względem modelu.
+
+## 3.2. Krytyczne: niespójność przestrzeni `mapping` vs `texture_transform`
+
+W runtime:
+
+- `fullmag/packages/fullmag-py/src/fullmag/runtime/initial_state.py:197-210`
+
+najpierw punkty są mapowane do przestrzeni `mapping.space`, potem dopiero idzie `inverse texture transform`.
+
+W UI FEM transform jest edytowany jako world/scene-offset:
+
+- `fullmag/apps/web/components/preview/FemMeshView3D.tsx:1667-1734`
+
+Dodatkowo `fitTextureToObject` ustawia transform na podstawie world bounds:
+
+- `fullmag/apps/web/lib/session/magnetizationAssetActions.ts:115-132`
+
+To jest bezpieczne tylko wtedy, gdy semantyka transformu jest jawnie world-space. Tymczasem domyślne `mapping.space` jest zwykle `object`.
+
+Skutek:
+
+- dla obiektów przesuniętych/obracanych transform może działać jakby był liczony w innej przestrzeni niż sampler,
+- domyślny vortex może być przesunięty lub zniekształcony względem oczekiwań.
+
+## 3.3. Ważne: niespójne defaulty `clamp_mode`
+
+Występują równolegle dwa domyślne kontrakty:
+
+- `clamp_mode: "none"` w ścieżkach presetowych frontendu (np. `magnetizationAssetActions.ts:46-50`),
+- `clamp_mode: "clamp"` w normalizacji/scene defaults:
+  - `fullmag/apps/web/lib/session/normalize.ts:1274-1278`
+  - `fullmag/apps/web/lib/session/sceneDocument.ts:85-89`
+  - `fullmag/packages/fullmag-py/src/fullmag/runtime/scene_document.py:26-31`
+  - `fullmag/crates/fullmag-authoring/src/scene.rs:531-533`
+
+Skutek:
+
+- identyczna scena może zachowywać się różnie zależnie od ścieżki round-trip,
+- presety analityczne (vortex/skyrmion) mogą być niechcący „unit-box clamped”.
+
+## 3.4. Ważne: kolizja gizmo i kamery
+
+`TextureTransformGizmo` nie ma jawnego locku kontrolek kamery podczas drag:
+
+- `fullmag/apps/web/components/preview/TextureTransformGizmo.tsx:133-156`
+
+`ScientificViewportShell` renderuje `OrbitControls/TrackballControls`, ale nie ma centralnego locka „gizmo drag active”:
+
+- `fullmag/apps/web/components/preview/shared/ScientificViewportShell.tsx:87-133`, `274-281`
+
+Skutek:
+
+- przy aktywnych kontrolkach kamera i gizmo reagują równocześnie,
+- użytkownik dostaje konflikt: przesuwanie strzałki = obrót/przesunięcie kamery.
+
+## 4. Ocena hipotezy użytkownika
+
+Hipoteza „to problem koordynatów” jest trafna.
+
+Dokładniej:
+
+- to problem **kontraktu przestrzeni współrzędnych** plus **nieprzepuszczania preset_texture przez backend scene update**.
+
+## 5. Plan refaktoryzacji i naprawy
+
+## P0 (blokery, najpierw)
+
+1. Rozszerzyć walidację authoring o `preset_texture`.
+- plik: `fullmag/crates/fullmag-authoring/src/validation.rs`
+- akceptacja: `POST /v1/live/current/scene` nie odrzuca dokumentu z `kind: preset_texture`.
+
+2. Dodać test walidacji pozytywnej dla `preset_texture`.
+- plik: `fullmag/crates/fullmag-authoring/src/adapters.rs` (testy) + dedykowany test w validation.
+
+## P1 (spójna semantyka transform)
+
+1. Ustalić i zapisać jeden kontrakt:
+- `texture_transform` jest definiowany w **tej samej przestrzeni co `mapping.space`**.
+
+2. Wprowadzić adaptery przestrzeni tylko w UI:
+- jeśli `mapping.space === "object"`, UI konwertuje world gizmo <-> object local,
+- backend runtime pozostaje prosty i deterministyczny.
+
+3. Poprawić `fitTextureToObject`:
+- dla `mapping.space === "object"` fit ma liczyć center/scale w object-local,
+- dla `mapping.space === "world"` fit ma liczyć world.
+
+4. Ujednolicić pivot policy:
+- translacja i pivot muszą dawać intuicyjną rotację wokół środka tekstury po przesunięciu.
+
+## P2 (spójne defaulty danych)
+
+1. Ujednolicić domyślne `clamp_mode` dla presetów analitycznych na `none`.
+- normalize + scene defaults + rust defaults.
+
+2. Dodać migrację runtime:
+- jeśli `kind == preset_texture` i `clamp_mode` brak, wymuś `none` (wsteczna kompatybilność).
+
+## P3 (input arbitration: gizmo vs kamera)
+
+1. Dodać centralny `ViewportInputMode`:
+- `camera`, `selection`, `gizmo_drag`.
+
+2. Na `gizmo_drag`:
+- twardo wyłączyć orbit/trackball controls,
+- wyłączyć hover/picking geometry,
+- przywrócić po `onDragEnd`.
+
+3. W `TextureTransformGizmo` dodać callbacki:
+- `onDragStart`, `onDragEnd` (do lock/unlock inputu).
+
+## 6. Plan testów akceptacyjnych
+
+1. Scene push:
+- ustaw preset `vortex`, zmień `translation` i `rotation`, `POST /scene` = 200,
+- brak `unsupported magnetization asset kind`.
+
+2. Poprawność koordynatów:
+- obiekt przesunięty od (0,0,0), `mapping.space=object`, vortex center trafia środek obiektu,
+- ten sam przypadek dla `mapping.space=world` daje oczekiwane przesunięcie globalne.
+
+3. Clamp:
+- brak jawnego clamp_mode dla presetów analitycznych nie zniekształca profilu (domyślnie `none`).
+
+4. Interakcja:
+- podczas drag gizmo kamera nie reaguje,
+- po zakończeniu drag kamera działa normalnie,
+- brak konfliktu z hover/picking.
+
+## 7. Dług techniczny po naprawie
+
+Po wdrożeniu P0-P3 zostanie niski dług techniczny:
+
+1. brak dedykowanego benchmarku wydajności „live transform -> resample m0” dla dużych FEM,
+2. brak precyzyjnego kontraktu UX dla pivot (czy auto-centrować przy każdym fit, czy nie),
+3. warto dodać osobny dokument specyfikujący semantykę `mapping + texture_transform` wzorem ADR.
+
+## 8. Rekomendowana kolejność wdrożenia
+
+1. P0 (walidacja + testy) — bez tego reszta nie ma sensu, bo backend odrzuca scenę.
+2. P1 (semantyka przestrzeni transform) — naprawa meritum „złych koordynatów”.
+3. P3 (gizmo/camera arbitration) — naprawa UX i precyzji edycji.
+4. P2 (defaulty i migracje) — domknięcie spójności i odporności na round-trip.
+

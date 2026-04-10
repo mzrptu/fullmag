@@ -83,6 +83,26 @@ function toSceneTextureTransform(value: PreviewTextureTransform3D): SceneTexture
   };
 }
 
+function offsetTextureTransform(
+  value: PreviewTextureTransform3D,
+  offset: [number, number, number],
+): PreviewTextureTransform3D {
+  return {
+    translation: [
+      value.translation[0] + offset[0],
+      value.translation[1] + offset[1],
+      value.translation[2] + offset[2],
+    ],
+    rotation_quat: [...value.rotation_quat] as [number, number, number, number],
+    scale: [...value.scale] as [number, number, number],
+    pivot: [
+      value.pivot[0] + offset[0],
+      value.pivot[1] + offset[1],
+      value.pivot[2] + offset[2],
+    ],
+  };
+}
+
 function ViewportChip({
   label,
   value,
@@ -453,9 +473,32 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
       ) ?? null
     );
   }, [ctx.sceneDocument, ctx.selectedObjectId]);
+  const selectedSceneObject = useMemo(() => {
+    if (!ctx.sceneDocument || !ctx.selectedObjectId) {
+      return null;
+    }
+    return (
+      ctx.sceneDocument.objects.find(
+        (object) =>
+          object.id === ctx.selectedObjectId || object.name === ctx.selectedObjectId,
+      ) ?? null
+    );
+  }, [ctx.sceneDocument, ctx.selectedObjectId]);
+  const activeTextureMappingSpace =
+    selectedMagnetizationAsset?.mapping?.space === "world" ? "world" : "object";
+  const selectedObjectTranslation =
+    selectedSceneObject?.transform.translation ?? ([0, 0, 0] as [number, number, number]);
   const activeTextureTransform =
     selectedMagnetizationAsset?.kind === "preset_texture" && ctx.activeTransformScope === "texture"
-      ? toPreviewTextureTransform(selectedMagnetizationAsset.texture_transform)
+      ? (() => {
+          const base = toPreviewTextureTransform(selectedMagnetizationAsset.texture_transform);
+          if (activeTextureMappingSpace !== "object") {
+            return base;
+          }
+          // In object-space mapping, we author texture transform in object-local coordinates.
+          // The viewport gizmo operates in world-space, so apply object translation for display.
+          return offsetTextureTransform(base, selectedObjectTranslation);
+        })()
       : null;
   const activeTexturePreviewProxy =
     selectedMagnetizationAsset?.preset_kind
@@ -486,13 +529,21 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
       if (!selectedObject) {
         return previousScene;
       }
+      const nextLocalTransform =
+        selectedMagnetizationAsset?.mapping?.space === "world"
+          ? next
+          : offsetTextureTransform(next, [
+              -selectedObject.transform.translation[0],
+              -selectedObject.transform.translation[1],
+              -selectedObject.transform.translation[2],
+            ]);
       return {
         ...previousScene,
         magnetization_assets: previousScene.magnetization_assets.map((asset) =>
           asset.id === selectedObject.magnetization_ref
             ? {
                 ...asset,
-                texture_transform: toSceneTextureTransform(next),
+                texture_transform: toSceneTextureTransform(nextLocalTransform),
               }
             : asset,
         ),

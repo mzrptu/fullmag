@@ -529,7 +529,7 @@ fn default_mapping_projection() -> String {
 }
 
 fn default_mapping_clamp_mode() -> String {
-    "clamp".to_string()
+    "none".to_string()
 }
 
 fn default_scene_mesh_render_mode() -> String {

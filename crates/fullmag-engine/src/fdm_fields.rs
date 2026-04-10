@@ -1017,6 +1017,119 @@ impl ExchangeLlgProblem {
     }
 
     // ===================================================================
+    // Oersted field (cylindrical conductor)
+    // ===================================================================
+
+    /// Add the Oersted field from an infinite cylindrical conductor to `h_eff`.
+    ///
+    /// H_φ(r) = I·r / (2π·R²)  for r ≤ R
+    /// H_φ(r) = I / (2π·r)      for r > R
+    ///
+    /// The field is purely azimuthal around the conductor axis.
+    /// Currently supports constant time-dependence (kind=0) only; sinusoidal
+    /// and pulse envelopes require threading simulation time through the
+    /// effective-field call chain — tracked as a future enhancement.
+    pub(crate) fn oersted_field_add_into(&self, h_eff: &mut [Vector3]) {
+        let oe = match self.terms.oersted_cylinder {
+            Some(ref cfg) => cfg,
+            None => return,
+        };
+
+        // Time-dependence envelope (constant only for CPU reference).
+        let envelope = match oe.time_dep_kind {
+            0 => 1.0, // Constant
+            // Sinusoidal / pulse require current sim time — not available in
+            // the current effective-field signature.  Fall back to DC.
+            _ => 1.0,
+        };
+
+        let current = oe.current * envelope;
+        if current == 0.0 {
+            return;
+        }
+
+        let r_cyl = oe.radius;
+        let cx = oe.center[0];
+        let cy = oe.center[1];
+        let cz = oe.center[2];
+
+        // Normalise the axis to a unit vector.
+        let ax_len = (oe.axis[0] * oe.axis[0]
+            + oe.axis[1] * oe.axis[1]
+            + oe.axis[2] * oe.axis[2])
+            .sqrt()
+            .max(1e-30);
+        let ax = [
+            oe.axis[0] / ax_len,
+            oe.axis[1] / ax_len,
+            oe.axis[2] / ax_len,
+        ];
+
+        let two_pi = 2.0 * std::f64::consts::PI;
+
+        let nx = self.grid.nx;
+        let ny = self.grid.ny;
+        let nz = self.grid.nz;
+        let dx = self.cell_size.dx;
+        let dy = self.cell_size.dy;
+        let dz = self.cell_size.dz;
+
+        for iz in 0..nz {
+            for iy in 0..ny {
+                for ix in 0..nx {
+                    let idx = ix + nx * (iy + ny * iz);
+                    if !self.is_active(idx) {
+                        continue;
+                    }
+
+                    // Cell centre position.
+                    let px = ix as f64 * dx + 0.5 * dx;
+                    let py = iy as f64 * dy + 0.5 * dy;
+                    let pz = iz as f64 * dz + 0.5 * dz;
+
+                    // Vector from conductor centre to cell.
+                    let dx_c = px - cx;
+                    let dy_c = py - cy;
+                    let dz_c = pz - cz;
+
+                    // Project onto the axis to get the component along the axis.
+                    let proj = dx_c * ax[0] + dy_c * ax[1] + dz_c * ax[2];
+
+                    // Perpendicular (radial) vector from the axis.
+                    let rx = dx_c - proj * ax[0];
+                    let ry = dy_c - proj * ax[1];
+                    let rz = dz_c - proj * ax[2];
+                    let r_perp = (rx * rx + ry * ry + rz * rz).sqrt();
+
+                    if r_perp < 1e-30 {
+                        // On the axis — field is zero.
+                        continue;
+                    }
+
+                    // Azimuthal direction: axis × r_hat  (right-hand rule).
+                    let rhat = [rx / r_perp, ry / r_perp, rz / r_perp];
+                    let phi = [
+                        ax[1] * rhat[2] - ax[2] * rhat[1],
+                        ax[2] * rhat[0] - ax[0] * rhat[2],
+                        ax[0] * rhat[1] - ax[1] * rhat[0],
+                    ];
+
+                    // H magnitude [A/m].
+                    let h_mag = if r_perp <= r_cyl {
+                        current * r_perp / (two_pi * r_cyl * r_cyl)
+                    } else {
+                        current / (two_pi * r_perp)
+                    };
+
+                    h_eff[idx][0] += phi[0] * h_mag;
+                    h_eff[idx][1] += phi[1] * h_mag;
+                    h_eff[idx][2] += phi[2] * h_mag;
+                }
+            }
+        }
+    }
+
+    // ===================================================================
     // Effective field (composite)
     // ===================================================================
 
@@ -1047,6 +1160,9 @@ impl ExchangeLlgProblem {
         // DMI terms need neighbor stencils — separate passes
         self.interfacial_dmi_field_add_into(magnetization, h_eff);
         self.bulk_dmi_field_add_into(magnetization, h_eff);
+
+        // Oersted field from cylindrical conductor (STNO / MTJ)
+        self.oersted_field_add_into(h_eff);
     }
 
     /// Effective field accumulation with telemetry instrumentation.
@@ -1092,6 +1208,9 @@ impl ExchangeLlgProblem {
         telem.begin(sections::FIELD_THERMAL);
         self.thermal_field_add_into(h_eff);
         telem.end(sections::FIELD_THERMAL);
+
+        // Oersted field from cylindrical conductor (STNO / MTJ)
+        self.oersted_field_add_into(h_eff);
     }
 
     #[allow(dead_code)]
@@ -1835,6 +1954,9 @@ impl ExchangeLlgProblem {
             });
         }
 
+        // Oersted field from cylindrical conductor (STNO / MTJ)
+        self.oersted_field_add_into(&mut h_eff);
+
         h_eff
     }
 
@@ -1937,6 +2059,9 @@ impl ExchangeLlgProblem {
         for (i, h) in effective_field.iter_mut().enumerate() {
             *h = add(add(add(*h, ani_field[i]), idmi_field[i]), bdmi_field[i]);
         }
+
+        // Oersted field from cylindrical conductor (STNO / MTJ)
+        self.oersted_field_add_into(&mut effective_field);
 
         let mut rhs: Vec<Vector3> = magnetization
             .iter()

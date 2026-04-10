@@ -85,7 +85,7 @@ function buildMagnetizationAsset(
     mapping: magnetization.mapping ?? {
       space: "object",
       projection: "object_local",
-      clamp_mode: "clamp",
+      clamp_mode: "none",
     },
     texture_transform: magnetization.texture_transform ?? {
       translation: zeroVec3(),

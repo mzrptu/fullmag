@@ -227,6 +227,8 @@ pub struct EffectiveFieldTerms {
     pub slonczewski_stt: Option<SlonczewskiSttConfig>,
     /// Spin-Orbit Torque (SOT, damping-like + field-like). None = disabled.
     pub sot: Option<SotConfig>,
+    /// Oersted field from an infinite cylindrical conductor. None = disabled.
+    pub oersted_cylinder: Option<OerstedCylinderConfig>,
 }
 
 /// Uniaxial magnetocrystalline anisotropy configuration.
@@ -299,6 +301,34 @@ pub struct SotConfig {
     pub thickness: f64,
 }
 
+/// Oersted field configuration for infinite cylindrical conductor.
+///
+/// Analytical field: H_φ(r) = I·r / (2π·R²) for r ≤ R,
+///                   H_φ(r) = I / (2π·r) for r > R.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OerstedCylinderConfig {
+    /// DC current [A].
+    pub current: f64,
+    /// Cylinder radius [m].
+    pub radius: f64,
+    /// Cross-section centre [m] (in-plane components).
+    pub center: Vector3,
+    /// Current-flow axis (unit vector, typically +z).
+    pub axis: Vector3,
+    /// Time-dependence envelope kind: 0 = constant, 1 = sinusoidal, 2 = pulse.
+    pub time_dep_kind: u32,
+    /// Sinusoidal frequency [Hz].
+    pub time_dep_freq: f64,
+    /// Sinusoidal phase [rad].
+    pub time_dep_phase: f64,
+    /// Sinusoidal offset.
+    pub time_dep_offset: f64,
+    /// Pulse on-time [s].
+    pub time_dep_t_on: f64,
+    /// Pulse off-time [s].
+    pub time_dep_t_off: f64,
+}
+
 /// Configuration for the magnetoelastic effective field term.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MagnetoelasticTermConfig {
@@ -321,6 +351,7 @@ impl Default for EffectiveFieldTerms {
             zhang_li_stt: None,
             slonczewski_stt: None,
             sot: None,
+            oersted_cylinder: None,
         }
     }
 }
