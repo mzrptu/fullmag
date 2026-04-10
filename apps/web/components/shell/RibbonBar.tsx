@@ -7,7 +7,7 @@ import {
   PanelRight, Camera, Download, BarChart3,
   Shapes, FlaskConical, Hexagon, Cog, Eye,
   RefreshCw, Ruler, ListChecks, Zap, Magnet, Target, Save, Plus, RadioTower,
-  Sparkles, FunctionSquare, Layers3, Binary,
+  Sparkles, FunctionSquare, Layers3, Binary, Move, Maximize2,
 } from "lucide-react";
 import {
   Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
@@ -26,6 +26,7 @@ import {
   executeRibbonCommand,
   type RibbonCommand,
 } from "./ribbon/command-registry";
+import type { MagneticPresetKind } from "@/lib/magnetizationPresetCatalog";
 
 /* ── Types ──────────────────────────────────────── */
 
@@ -144,6 +145,14 @@ interface RibbonBarProps {
   onObjectAddInteraction?: (
     objectId: string,
     kind: ScriptBuilderMagneticInteractionKind,
+  ) => void;
+  onAssignMagnetizationPreset?: (
+    objectId: string,
+    kind: MagneticPresetKind,
+  ) => void;
+  onSetTextureTransformMode?: (
+    objectId: string,
+    mode: "translate" | "rotate" | "scale",
   ) => void;
 }
 
@@ -1053,6 +1062,14 @@ function buildContextualGroups(
 ): RibbonGroup[] {
   const objectId = p.selectedObjectId ?? "";
   if (contextualTab === "selected-ferromagnet" && objectId) {
+    const assignPreset = (kind: MagneticPresetKind) => {
+      p.onAssignMagnetizationPreset?.(objectId, kind);
+      runCommand(p, { id: "navigation.select-node", nodeId: `mag-${objectId}` });
+    };
+    const setTransformMode = (mode: "translate" | "rotate" | "scale") => {
+      p.onSetTextureTransformMode?.(objectId, mode);
+      runCommand(p, { id: "navigation.select-node", nodeId: `mag-${objectId}-transform` });
+    };
     return [
       {
         id: "ctx-ferromagnet",
@@ -1107,6 +1124,75 @@ function buildContextualGroups(
               kind: "uniaxial_anisotropy",
             }),
             iconColor: "text-rose-400",
+          },
+        ],
+      },
+      {
+        id: "ctx-magnetization",
+        title: "Magnetization",
+        actions: [
+          {
+            id: "ctx-mag-uniform",
+            icon: <Magnet size={20} />,
+            label: "Uniform",
+            tooltip: "Assign uniform magnetization texture to selected object",
+            disabled: !p.onAssignMagnetizationPreset,
+            action: () => assignPreset("uniform"),
+            iconColor: "text-sky-400",
+          },
+          {
+            id: "ctx-mag-vortex",
+            icon: <Sparkles size={20} />,
+            label: "Vortex",
+            tooltip: "Assign vortex texture to selected object",
+            disabled: !p.onAssignMagnetizationPreset,
+            action: () => assignPreset("vortex"),
+            iconColor: "text-violet-400",
+          },
+          {
+            id: "ctx-mag-bloch",
+            icon: <Target size={20} />,
+            label: "Bloch Sky",
+            tooltip: "Assign Bloch skyrmion texture to selected object",
+            disabled: !p.onAssignMagnetizationPreset,
+            action: () => assignPreset("bloch_skyrmion"),
+            iconColor: "text-cyan-400",
+          },
+          {
+            id: "ctx-mag-neel",
+            icon: <Target size={20} />,
+            label: "Neel Sky",
+            tooltip: "Assign Néel skyrmion texture to selected object",
+            disabled: !p.onAssignMagnetizationPreset,
+            action: () => assignPreset("neel_skyrmion"),
+            iconColor: "text-emerald-400",
+          },
+          {
+            id: "ctx-mag-move",
+            icon: <Move size={20} />,
+            label: "Move",
+            tooltip: "Enable texture translate gizmo",
+            disabled: !p.onSetTextureTransformMode,
+            action: () => setTransformMode("translate"),
+            iconColor: "text-amber-400",
+          },
+          {
+            id: "ctx-mag-rotate",
+            icon: <RefreshCw size={20} />,
+            label: "Rotate",
+            tooltip: "Enable texture rotate gizmo",
+            disabled: !p.onSetTextureTransformMode,
+            action: () => setTransformMode("rotate"),
+            iconColor: "text-fuchsia-400",
+          },
+          {
+            id: "ctx-mag-scale",
+            icon: <Maximize2 size={20} />,
+            label: "Scale",
+            tooltip: "Enable texture scale gizmo",
+            disabled: !p.onSetTextureTransformMode,
+            action: () => setTransformMode("scale"),
+            iconColor: "text-indigo-400",
           },
         ],
       },
@@ -1517,6 +1603,8 @@ export default function RibbonBar(props: RibbonBarProps) {
     props.onStudyDuplicateSelected,
     props.onStudyToggleSelectedEnabled,
     props.onObjectAddInteraction,
+    props.onAssignMagnetizationPreset,
+    props.onSetTextureTransformMode,
     studyNode,
   ]);
 

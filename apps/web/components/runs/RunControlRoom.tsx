@@ -15,9 +15,17 @@ import type {
   ScriptBuilderMagneticInteractionKind,
 } from "../../lib/session/types";
 import {
+  MAGNETIC_PRESET_CATALOG,
+  type MagneticPresetKind,
+} from "../../lib/magnetizationPresetCatalog";
+import {
   ensureObjectPhysicsStack,
   upsertObjectInteraction,
 } from "../../lib/session/magneticPhysics";
+import {
+  assignMagneticPreset,
+  patchMagnetizationAsset,
+} from "../../lib/session/magnetizationAssetActions";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../panels/SolverSettingsPanel";
 import {
   ControlRoomProvider,
@@ -329,6 +337,93 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       }
       ctx.setSelectedObjectId(objectId);
       ctx.setSelectedSidebarNodeId(`physobj-${objectId}`);
+    },
+    [ctx],
+  );
+
+  const handleAssignMagnetizationPreset = useCallback(
+    (objectId: string, kind: MagneticPresetKind) => {
+      ctx.setViewMode("3D");
+      ctx.setSelectedObjectId(objectId);
+      ctx.setSelectedSidebarNodeId(`mag-${objectId}`);
+      ctx.setActiveTransformScope("texture");
+      ctx.setSceneDocument((prev) => {
+        if (!prev) return prev;
+        const target = prev.objects.find(
+          (object) => object.id === objectId || object.name === objectId,
+        );
+        if (!target) return prev;
+        const magnetizationRef = target.magnetization_ref;
+        if (!magnetizationRef) return prev;
+        const descriptor = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === kind);
+        if (!descriptor) return prev;
+        let next = assignMagneticPreset(prev, magnetizationRef, descriptor);
+        next = patchMagnetizationAsset(next, magnetizationRef, {
+          kind: "preset_texture",
+          value: null,
+          seed: null,
+          source_path: null,
+          source_format: null,
+          dataset: null,
+          sample_index: null,
+          preset_version: 1,
+        });
+        return {
+          ...next,
+          editor: {
+            ...next.editor,
+            active_transform_scope: "texture",
+            gizmo_mode: "translate",
+          },
+        };
+      });
+    },
+    [ctx],
+  );
+
+  const handleSetTextureTransformMode = useCallback(
+    (objectId: string, mode: "translate" | "rotate" | "scale") => {
+      ctx.setViewMode("3D");
+      ctx.setSelectedObjectId(objectId);
+      ctx.setSelectedSidebarNodeId(`mag-${objectId}-transform`);
+      ctx.setActiveTransformScope("texture");
+      ctx.setSceneDocument((prev) => {
+        if (!prev) return prev;
+        const target = prev.objects.find(
+          (object) => object.id === objectId || object.name === objectId,
+        );
+        if (!target) return prev;
+        const magnetizationRef = target.magnetization_ref;
+        if (!magnetizationRef) return prev;
+        const asset = prev.magnetization_assets.find(
+          (entry) => entry.id === magnetizationRef,
+        );
+        let next = prev;
+        if (asset?.kind !== "preset_texture") {
+          const fallback = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === "uniform");
+          if (fallback) {
+            next = assignMagneticPreset(next, magnetizationRef, fallback);
+            next = patchMagnetizationAsset(next, magnetizationRef, {
+              kind: "preset_texture",
+              value: null,
+              seed: null,
+              source_path: null,
+              source_format: null,
+              dataset: null,
+              sample_index: null,
+              preset_version: 1,
+            });
+          }
+        }
+        return {
+          ...next,
+          editor: {
+            ...next.editor,
+            active_transform_scope: "texture",
+            gizmo_mode: mode,
+          },
+        };
+      });
     },
     [ctx],
   );
@@ -787,6 +882,8 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
         onStudyDuplicateSelected={handleStudyDuplicateSelected}
         onStudyToggleSelectedEnabled={handleStudyToggleSelectedEnabled}
         onObjectAddInteraction={handleObjectAddInteraction}
+        onAssignMagnetizationPreset={handleAssignMagnetizationPreset}
+        onSetTextureTransformMode={handleSetTextureTransformMode}
       />
       {activeBackendError ? (
         <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">

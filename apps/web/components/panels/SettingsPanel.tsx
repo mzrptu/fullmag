@@ -282,6 +282,10 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
     if (nodeId === "initial-state") return <StateIoPanel />;
     if (nodeId === "objects") return <GeometryPanel />;
     if (nodeId.startsWith("physobj-")) return <MaterialPanel nodeId={nodeId} />;
+    if (nodeId.startsWith("mag-")) return <MaterialPanel nodeId={nodeId} view="magnetization" />;
+    if (nodeId.startsWith("reg-") && nodeId.endsWith("-texture")) {
+      return <MaterialPanel nodeId={nodeId} view="magnetization" />;
+    }
     if (nodeId.startsWith("geo-") && nodeId.includes("-mesh")) {
       return <ObjectMeshPanel nodeId={nodeId} />;
     }

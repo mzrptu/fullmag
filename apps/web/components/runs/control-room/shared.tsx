@@ -577,6 +577,7 @@ export function resolveSelectedObjectId(
       const regionPrefix = `reg-${name}`;
       const matPrefix = `mat-${name}`;
       const physPrefix = `physobj-${name}`;
+      const magPrefix = `mag-${name}`;
       const meshPrefix = `${geoPrefix}-mesh`;
       if (
         nodeId === objectPrefix ||
@@ -589,6 +590,8 @@ export function resolveSelectedObjectId(
         nodeId.startsWith(`${matPrefix}-`) ||
         nodeId === physPrefix ||
         nodeId.startsWith(`${physPrefix}-`) ||
+        nodeId === magPrefix ||
+        nodeId.startsWith(`${magPrefix}-`) ||
         nodeId === meshPrefix ||
         nodeId.startsWith(`${meshPrefix}-`)
       ) {
@@ -615,6 +618,7 @@ export function resolveSelectedObjectId(
     const regionPrefix = `reg-${name}`;
     const matPrefix = `mat-${name}`;
     const physPrefix = `physobj-${name}`;
+    const magPrefix = `mag-${name}`;
     const meshPrefix = `${geoPrefix}-mesh`;
     if (
       nodeId === objectPrefix ||
@@ -627,6 +631,8 @@ export function resolveSelectedObjectId(
       nodeId.startsWith(`${matPrefix}-`) ||
       nodeId === physPrefix ||
       nodeId.startsWith(`${physPrefix}-`) ||
+      nodeId === magPrefix ||
+      nodeId.startsWith(`${magPrefix}-`) ||
       nodeId === meshPrefix ||
       nodeId.startsWith(`${meshPrefix}-`)
     ) {

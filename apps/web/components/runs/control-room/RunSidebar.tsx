@@ -44,7 +44,7 @@ function nodeMatchesScope(node: TreeNodeData, scope: TreeFilterScope): boolean {
   const haystack = `${node.id} ${node.label} ${node.badge ?? ""}`.toLowerCase();
   switch (scope) {
     case "objects":
-      return /^(objects|obj-|geo-|reg-|mat-|physobj-|ant-)/.test(node.id) || haystack.includes("object");
+      return /^(objects|obj-|geo-|reg-|mat-|physobj-|mag-|ant-)/.test(node.id) || haystack.includes("object");
     case "mesh":
       return (
         /mesh|airbox|universe-airbox|domain|boundary|interface/.test(haystack) ||

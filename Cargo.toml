@@ -3,6 +3,7 @@ members = [
   "apps/desktop/src-tauri",
   "crates/fullmag-authoring",
   "crates/fullmag-api",
+  "crates/fullmag-bench",
   "crates/fullmag-cli",
   "crates/fullmag-engine",
   "crates/fullmag-fdm-demag",

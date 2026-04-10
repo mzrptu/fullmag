@@ -114,6 +114,42 @@ pub fn h_mel_field(
     }
 }
 
+/// Zero-alloc variant: accumulates H_mel into an existing `h_eff` buffer.
+pub fn h_mel_field_add_into(
+    magnetization: &[Vector3],
+    strain: &PrescribedStrainField,
+    params: &MagnetoelasticParams,
+    active_mask: Option<&[bool]>,
+    h_eff: &mut [Vector3],
+) {
+    let n = magnetization.len();
+    match strain {
+        PrescribedStrainField::Uniform(eps) => {
+            for i in 0..n {
+                let active = active_mask.map_or(true, |mask| mask[i]);
+                if active {
+                    let h = h_mel_single(magnetization[i], eps, params);
+                    h_eff[i][0] += h[0];
+                    h_eff[i][1] += h[1];
+                    h_eff[i][2] += h[2];
+                }
+            }
+        }
+        PrescribedStrainField::PerCell(eps_field) => {
+            assert_eq!(eps_field.len(), n, "strain field length must match magnetization");
+            for i in 0..n {
+                let active = active_mask.map_or(true, |mask| mask[i]);
+                if active {
+                    let h = h_mel_single(magnetization[i], &eps_field[i], params);
+                    h_eff[i][0] += h[0];
+                    h_eff[i][1] += h[1];
+                    h_eff[i][2] += h[2];
+                }
+            }
+        }
+    }
+}
+
 /// Compute the magnetoelastic energy density for a single cell [J/m³].
 ///
 /// e_mel = B₁ (m₁² ε₁₁ + m₂² ε₂₂ + m₃² ε₃₃)

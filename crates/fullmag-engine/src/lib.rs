@@ -13,6 +13,7 @@ pub mod magnetoelastic;
 pub mod multilayer;
 pub mod newell;
 pub mod studies;
+pub mod telemetry;
 pub mod vector;
 
 // ── FDM engine modules ────────────────────────────────────────────────

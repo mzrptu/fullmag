@@ -7,6 +7,7 @@ use rustfft::num_complex::Complex;
 
 use crate::fdm_fft::{combine_fields_4, padded_index, zero_vectors};
 use crate::magnetoelastic;
+use crate::telemetry::{StepTelemetry, sections};
 use crate::vector::{add, cross, dot, max_norm, norm, scale, squared_norm, sub};
 use crate::{
     EffectiveFieldObservables, ExchangeLlgProblem, FftWorkspace, RhsEvaluation,
@@ -622,11 +623,13 @@ impl ExchangeLlgProblem {
 
     pub(crate) fn magnetoelastic_field_add_into(&self, magnetization: &[Vector3], h_eff: &mut [Vector3]) {
         if let Some(ref config) = self.terms.magnetoelastic {
-            let mel =
-                magnetoelastic::h_mel_field(magnetization, &config.strain, &config.params, self.active_mask.as_deref());
-            for (i, v) in mel.iter().enumerate() {
-                h_eff[i] = add(h_eff[i], *v);
-            }
+            magnetoelastic::h_mel_field_add_into(
+                magnetization,
+                &config.strain,
+                &config.params,
+                self.active_mask.as_deref(),
+                h_eff,
+            );
         }
     }
 
@@ -891,22 +894,52 @@ impl ExchangeLlgProblem {
         ws: &mut FftWorkspace,
         h_eff: &mut [Vector3],
     ) {
+        let mut t = StepTelemetry::new();
+        self.effective_field_into_ws_telem(magnetization, ws, h_eff, &mut t);
+    }
+
+    /// Effective field accumulation with telemetry instrumentation.
+    pub(crate) fn effective_field_into_ws_telem(
+        &self,
+        magnetization: &[Vector3],
+        ws: &mut FftWorkspace,
+        h_eff: &mut [Vector3],
+        telem: &mut StepTelemetry,
+    ) {
         for h in h_eff.iter_mut() {
             *h = [0.0, 0.0, 0.0];
         }
 
         if self.terms.exchange {
+            telem.begin(sections::FIELD_EXCHANGE);
             self.exchange_field_add_into(magnetization, h_eff);
+            telem.end(sections::FIELD_EXCHANGE);
         }
         if self.terms.demag {
+            telem.begin(sections::FIELD_DEMAG);
             self.demag_field_add_into(magnetization, ws, h_eff);
+            telem.end(sections::FIELD_DEMAG);
         }
+        telem.begin(sections::FIELD_EXTERNAL);
         self.external_field_add_into(h_eff);
+        telem.end(sections::FIELD_EXTERNAL);
+
+        telem.begin(sections::FIELD_MEL);
         self.magnetoelastic_field_add_into(magnetization, h_eff);
+        telem.end(sections::FIELD_MEL);
+
+        telem.begin(sections::FIELD_ANISOTROPY);
         self.anisotropy_field_add_into(magnetization, h_eff);
+        telem.end(sections::FIELD_ANISOTROPY);
+
+        telem.begin(sections::FIELD_DMI);
         self.interfacial_dmi_field_add_into(magnetization, h_eff);
         self.bulk_dmi_field_add_into(magnetization, h_eff);
+        telem.end(sections::FIELD_DMI);
+
+        telem.begin(sections::FIELD_THERMAL);
         self.thermal_field_add_into(h_eff);
+        telem.end(sections::FIELD_THERMAL);
     }
 
     #[allow(dead_code)]
@@ -1429,8 +1462,21 @@ impl ExchangeLlgProblem {
         let max_effective_field_amplitude = max_norm(&h_eff[..n]);
 
         // ── RHS ───────────────────────────────────────────────────────
-        for i in 0..n {
-            rhs_out[i] = self.llg_rhs_from_field(magnetization[i], h_eff[i]);
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            rhs_out[..n]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, out)| {
+                    *out = self.llg_rhs_from_field(magnetization[i], h_eff[i]);
+                });
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for i in 0..n {
+                rhs_out[i] = self.llg_rhs_from_field(magnetization[i], h_eff[i]);
+            }
         }
 
         // ── Torques ───────────────────────────────────────────────────

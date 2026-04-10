@@ -26,6 +26,10 @@ import {
   removeOptionalInteraction,
   upsertObjectInteraction,
 } from "../../../lib/session/magneticPhysics";
+import {
+  fitTextureToObject,
+  resetTextureTransform,
+} from "../../../lib/session/magnetizationAssetActions";
 import { findSceneObjectByNodeId } from "./objectSelection";
 import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
 
@@ -71,8 +75,15 @@ function fallbackMagnetization(name: string): MagnetizationAsset {
   };
 }
 
-export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
+export default function MaterialPanel({
+  nodeId,
+  view = "full",
+}: {
+  nodeId?: string;
+  view?: "full" | "magnetization";
+}) {
   const model = useModel();
+  const showFullSections = view !== "magnetization";
 
   const { object: sceneObject, material, magnetization } = useMemo(
     () => findSceneObjectByNodeId(nodeId, model.sceneDocument),
@@ -166,6 +177,7 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
         preset_version: 1,
         ui_label: descriptor.label,
       }));
+      model.setActiveTransformScope("texture");
       model.setSceneDocument((prev) =>
         prev
           ? {
@@ -173,6 +185,7 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
               editor: {
                 ...prev.editor,
                 active_transform_scope: "texture",
+                gizmo_mode: "translate",
               },
             }
           : prev,
@@ -194,6 +207,91 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
     },
     [updateMagnetization],
   );
+
+  const setTextureGizmoMode = useCallback(
+    (mode: "translate" | "rotate" | "scale") => {
+      model.setActiveTransformScope("texture");
+      model.setSceneDocument((prev) =>
+        prev
+          ? {
+              ...prev,
+              editor: {
+                ...prev.editor,
+                active_transform_scope: "texture",
+                gizmo_mode: mode,
+              },
+            }
+          : prev,
+      );
+    },
+    [model],
+  );
+
+  const handleTextureTransformVectorBlur = useCallback(
+    (
+      key: "translation" | "scale" | "pivot",
+      axis: number,
+      valueRaw: string,
+    ) => {
+      const parsed = Number.parseFloat(valueRaw);
+      if (!Number.isFinite(parsed)) return;
+      updateMagnetization((asset) => {
+        const current = asset.texture_transform?.[key] ?? [0, 0, 0];
+        const next = [...current] as [number, number, number];
+        next[axis] = parsed;
+        return {
+          ...asset,
+          texture_transform: {
+            ...asset.texture_transform,
+            [key]: next,
+          },
+        };
+      });
+    },
+    [updateMagnetization],
+  );
+
+  const handleTextureRotationQuatBlur = useCallback(
+    (axis: number, valueRaw: string) => {
+      const parsed = Number.parseFloat(valueRaw);
+      if (!Number.isFinite(parsed)) return;
+      updateMagnetization((asset) => {
+        const current = asset.texture_transform?.rotation_quat ?? [0, 0, 0, 1];
+        const next = [...current] as [number, number, number, number];
+        next[axis] = parsed;
+        return {
+          ...asset,
+          texture_transform: {
+            ...asset.texture_transform,
+            rotation_quat: next,
+          },
+        };
+      });
+    },
+    [updateMagnetization],
+  );
+
+  const handleFitTextureTransform = useCallback(() => {
+    const magnetizationRef = sceneObject?.magnetization_ref;
+    if (!sceneObject || !magnetizationRef) return;
+    model.setSceneDocument((prev) =>
+      prev
+        ? fitTextureToObject(prev, sceneObject.id, magnetizationRef)
+        : prev,
+    );
+    model.setActiveTransformScope("texture");
+  }, [model, sceneObject]);
+
+  const handleResetTextureTransform = useCallback(() => {
+    const magnetizationRef = sceneObject?.magnetization_ref;
+    if (!sceneObject || !magnetizationRef) return;
+    model.setSceneDocument((prev) =>
+      prev
+        ? resetTextureTransform(prev, magnetizationRef)
+        : prev,
+    );
+    model.setActiveTransformScope("texture");
+  }, [model, sceneObject]);
 
   const handleMatNum = (
     key: keyof SceneMaterialAsset["properties"],
@@ -315,6 +413,12 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
   const mag = magnetizationAsset;
   const value = Array.isArray(mag.value) ? mag.value : [0, 0, 1];
   const presetParams = mag.preset_params ?? selectedPresetDescriptor?.defaultParams ?? {};
+  const textureTransform = mag.texture_transform ?? {
+    translation: [0, 0, 0] as [number, number, number],
+    rotation_quat: [0, 0, 0, 1] as [number, number, number, number],
+    scale: [1, 1, 1] as [number, number, number],
+    pivot: [0, 0, 0] as [number, number, number],
+  };
   const hasDmi = hasObjectInteraction(physicsStack, "interfacial_dmi");
   const hasUniaxial = hasObjectInteraction(physicsStack, "uniaxial_anisotropy");
   const uniaxial = physicsStack.find((entry) => entry.kind === "uniaxial_anisotropy");
@@ -328,116 +432,120 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
 
   return (
     <div className="flex flex-col px-2 pt-4">
-      <SidebarSection title="Material Constants" defaultOpen={true}>
-        <div className="grid grid-cols-2 gap-3">
-          <TextField label="Ms (Saturation)" defaultValue={mat.Ms ?? ""} onBlur={(e) => handleMatNum("Ms", e.target.value)} unit="A/m" mono tooltip="Saturation magnetization of the material." />
-          <TextField label="Aex (Exchange)" defaultValue={mat.Aex ?? ""} onBlur={(e) => handleMatNum("Aex", e.target.value)} unit="J/m" mono tooltip="Exchange stiffness constant coupling adjacent spins." />
-          <TextField label="α (Damping)" defaultValue={mat.alpha ?? ""} onBlur={(e) => handleMatNum("alpha", e.target.value)} mono tooltip="Gilbert damping parameter governing spin relaxation rate." />
-          <TextField label="Dind (DMI)" defaultValue={mat.Dind ?? ""} onBlur={(e) => handleMatNum("Dind", e.target.value)} unit="J/m²" mono tooltip="Interfacial Dzyaloshinskii-Moriya interaction strength." />
-        </div>
-      </SidebarSection>
-
-      <SidebarSection title="Magnetic Interactions" defaultOpen={true}>
-        <div className="flex flex-col gap-3">
-          <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-[0.72rem] text-muted-foreground">
-            Exchange i demag są zawsze aktywne dla ferromagnetyka. Interakcje opcjonalne możesz dodawać i konfigurować poniżej.
+      {showFullSections && (
+        <SidebarSection title="Material Constants" defaultOpen={true}>
+          <div className="grid grid-cols-2 gap-3">
+            <TextField label="Ms (Saturation)" defaultValue={mat.Ms ?? ""} onBlur={(e) => handleMatNum("Ms", e.target.value)} unit="A/m" mono tooltip="Saturation magnetization of the material." />
+            <TextField label="Aex (Exchange)" defaultValue={mat.Aex ?? ""} onBlur={(e) => handleMatNum("Aex", e.target.value)} unit="J/m" mono tooltip="Exchange stiffness constant coupling adjacent spins." />
+            <TextField label="α (Damping)" defaultValue={mat.alpha ?? ""} onBlur={(e) => handleMatNum("alpha", e.target.value)} mono tooltip="Gilbert damping parameter governing spin relaxation rate." />
+            <TextField label="Dind (DMI)" defaultValue={mat.Dind ?? ""} onBlur={(e) => handleMatNum("Dind", e.target.value)} unit="J/m²" mono tooltip="Interfacial Dzyaloshinskii-Moriya interaction strength." />
           </div>
-          <div className="grid gap-2">
-            {physicsStack.map((interaction) => (
-              <div key={interaction.kind} className="rounded-lg border border-border/35 bg-background/35 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <div className="text-xs font-semibold text-foreground">
-                    {magneticInteractionLabel(interaction.kind)}
-                  </div>
-                  {(interaction.kind === "exchange" || interaction.kind === "demag") ? (
-                    <span className="rounded border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.1em] text-emerald-300">
-                      required
-                    </span>
-                  ) : null}
-                  <div className="ml-auto flex items-center gap-1">
-                    <SelectField
-                      label=""
-                      value={interaction.enabled ? "on" : "off"}
-                      onchange={(value) => toggleInteraction(interaction.kind, value === "on")}
-                      options={[
-                        { value: "on", label: "Enabled" },
-                        { value: "off", label: "Disabled" },
-                      ]}
-                    />
-                    {(interaction.kind !== "exchange" && interaction.kind !== "demag") ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        type="button"
-                        onClick={() => removeInteraction(interaction.kind)}
-                      >
-                        Remove
-                      </Button>
+        </SidebarSection>
+      )}
+
+      {showFullSections && (
+        <SidebarSection title="Magnetic Interactions" defaultOpen={true}>
+          <div className="flex flex-col gap-3">
+            <div className="rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-[0.72rem] text-muted-foreground">
+              Exchange i demag są zawsze aktywne dla ferromagnetyka. Interakcje opcjonalne możesz dodawać i konfigurować poniżej.
+            </div>
+            <div className="grid gap-2">
+              {physicsStack.map((interaction) => (
+                <div key={interaction.kind} className="rounded-lg border border-border/35 bg-background/35 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-semibold text-foreground">
+                      {magneticInteractionLabel(interaction.kind)}
+                    </div>
+                    {(interaction.kind === "exchange" || interaction.kind === "demag") ? (
+                      <span className="rounded border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.1em] text-emerald-300">
+                        required
+                      </span>
                     ) : null}
-                  </div>
-                </div>
-                {interaction.kind === "interfacial_dmi" ? (
-                  <div className="mt-2 text-[0.72rem] text-muted-foreground">
-                    Uses <span className="font-mono text-foreground">Dind</span> from Material Constants.
-                  </div>
-                ) : null}
-                {interaction.kind === "uniaxial_anisotropy" ? (
-                  <div className="mt-2 grid grid-cols-2 gap-3">
-                    <TextField
-                      label="Ku1"
-                      defaultValue={uniaxialKu1}
-                      onBlur={(event) => {
-                        const parsed = Number.parseFloat(event.target.value);
-                        if (!Number.isFinite(parsed)) return;
-                        updateUniaxialParam("ku1", parsed);
-                      }}
-                      unit="J/m³"
-                      mono
-                    />
-                    <div className="grid grid-cols-3 gap-2">
-                      {[0, 1, 2].map((axis) => (
-                        <TextField
-                          key={`ku-axis-${axis}`}
-                          label={`Axis ${["X", "Y", "Z"][axis]}`}
-                          defaultValue={uniaxialAxis[axis]}
-                          onBlur={(event) => {
-                            const parsed = Number.parseFloat(event.target.value);
-                            if (!Number.isFinite(parsed)) return;
-                            const nextAxis = [...uniaxialAxis] as [number, number, number];
-                            nextAxis[axis] = parsed;
-                            updateUniaxialParam("axis", nextAxis);
-                          }}
-                          mono
-                        />
-                      ))}
+                    <div className="ml-auto flex items-center gap-1">
+                      <SelectField
+                        label=""
+                        value={interaction.enabled ? "on" : "off"}
+                        onchange={(value) => toggleInteraction(interaction.kind, value === "on")}
+                        options={[
+                          { value: "on", label: "Enabled" },
+                          { value: "off", label: "Disabled" },
+                        ]}
+                      />
+                      {(interaction.kind !== "exchange" && interaction.kind !== "demag") ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          type="button"
+                          onClick={() => removeInteraction(interaction.kind)}
+                        >
+                          Remove
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
-                ) : null}
-              </div>
-            ))}
+                  {interaction.kind === "interfacial_dmi" ? (
+                    <div className="mt-2 text-[0.72rem] text-muted-foreground">
+                      Uses <span className="font-mono text-foreground">Dind</span> from Material Constants.
+                    </div>
+                  ) : null}
+                  {interaction.kind === "uniaxial_anisotropy" ? (
+                    <div className="mt-2 grid grid-cols-2 gap-3">
+                      <TextField
+                        label="Ku1"
+                        defaultValue={uniaxialKu1}
+                        onBlur={(event) => {
+                          const parsed = Number.parseFloat(event.target.value);
+                          if (!Number.isFinite(parsed)) return;
+                          updateUniaxialParam("ku1", parsed);
+                        }}
+                        unit="J/m³"
+                        mono
+                      />
+                      <div className="grid grid-cols-3 gap-2">
+                        {[0, 1, 2].map((axis) => (
+                          <TextField
+                            key={`ku-axis-${axis}`}
+                            label={`Axis ${["X", "Y", "Z"][axis]}`}
+                            defaultValue={uniaxialAxis[axis]}
+                            onBlur={(event) => {
+                              const parsed = Number.parseFloat(event.target.value);
+                              if (!Number.isFinite(parsed)) return;
+                              const nextAxis = [...uniaxialAxis] as [number, number, number];
+                              nextAxis[axis] = parsed;
+                              updateUniaxialParam("axis", nextAxis);
+                            }}
+                            mono
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                disabled={hasDmi}
+                onClick={() => addInteraction("interfacial_dmi")}
+              >
+                Add DMI
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                disabled={hasUniaxial}
+                onClick={() => addInteraction("uniaxial_anisotropy")}
+              >
+                Add Uniaxial Ku
+              </Button>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              disabled={hasDmi}
-              onClick={() => addInteraction("interfacial_dmi")}
-            >
-              Add DMI
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              disabled={hasUniaxial}
-              onClick={() => addInteraction("uniaxial_anisotropy")}
-            >
-              Add Uniaxial Ku
-            </Button>
-          </div>
-        </div>
-      </SidebarSection>
+        </SidebarSection>
+      )}
 
       <SidebarSection title="Initial Magnetization (m0)" defaultOpen={true}>
         <div className="flex flex-col gap-4">
@@ -613,6 +721,92 @@ export default function MaterialPanel({ nodeId }: { nodeId?: string }) {
                   </div>
                 </div>
               )}
+
+              <div className="rounded-xl border border-border/30 bg-card/15 p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-medium text-foreground">Texture Transform</div>
+                    <div className="text-[0.72rem] text-muted-foreground">
+                      Operates in object-local metres. Use Move/Rotate/Scale for viewport gizmo.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button size="sm" variant="outline" type="button" onClick={handleFitTextureTransform}>
+                      Fit
+                    </Button>
+                    <Button size="sm" variant="outline" type="button" onClick={handleResetTextureTransform}>
+                      Reset
+                    </Button>
+                    <Button size="sm" variant="outline" type="button" onClick={() => setTextureGizmoMode("translate")}>
+                      Move
+                    </Button>
+                    <Button size="sm" variant="outline" type="button" onClick={() => setTextureGizmoMode("rotate")}>
+                      Rotate
+                    </Button>
+                    <Button size="sm" variant="outline" type="button" onClick={() => setTextureGizmoMode("scale")}>
+                      Scale
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    {[0, 1, 2].map((axis) => (
+                      <TextField
+                        key={`tx-translation-${axis}-${textureTransform.translation[axis]}`}
+                        label={`Translate ${["X", "Y", "Z"][axis]}`}
+                        defaultValue={textureTransform.translation[axis]}
+                        onBlur={(event) =>
+                          handleTextureTransformVectorBlur("translation", axis, event.target.value)
+                        }
+                        unit="m"
+                        mono
+                      />
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2">
+                    {[0, 1, 2, 3].map((axis) => (
+                      <TextField
+                        key={`tx-rotation-${axis}-${textureTransform.rotation_quat[axis]}`}
+                        label={`Quat ${["X", "Y", "Z", "W"][axis]}`}
+                        defaultValue={textureTransform.rotation_quat[axis]}
+                        onBlur={(event) => handleTextureRotationQuatBlur(axis, event.target.value)}
+                        mono
+                      />
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {[0, 1, 2].map((axis) => (
+                      <TextField
+                        key={`tx-scale-${axis}-${textureTransform.scale[axis]}`}
+                        label={`Scale ${["X", "Y", "Z"][axis]}`}
+                        defaultValue={textureTransform.scale[axis]}
+                        onBlur={(event) =>
+                          handleTextureTransformVectorBlur("scale", axis, event.target.value)
+                        }
+                        mono
+                      />
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {[0, 1, 2].map((axis) => (
+                      <TextField
+                        key={`tx-pivot-${axis}-${textureTransform.pivot[axis]}`}
+                        label={`Pivot ${["X", "Y", "Z"][axis]}`}
+                        defaultValue={textureTransform.pivot[axis]}
+                        onBlur={(event) =>
+                          handleTextureTransformVectorBlur("pivot", axis, event.target.value)
+                        }
+                        unit="m"
+                        mono
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MAGNETIC_PRESET_CATALOG } from "@/lib/magnetizationPresetCatalog";
 import { cn } from "@/lib/utils";
 import type { TextureTransform3D as PreviewTextureTransform3D } from "@/lib/textureTransform";
+import type { TextureGizmoMode } from "../../preview/TextureTransformGizmo";
 import MagnetizationSlice2D from "../../preview/MagnetizationSlice2D";
 import MagnetizationView3D from "../../preview/MagnetizationView3D";
 import FemMeshView3D from "../../preview/FemMeshView3D";
@@ -435,6 +436,12 @@ export function ViewportCanvasArea() {
           )?.previewProxy ?? "box"
         )
       : "box";
+  const activeTextureGizmoMode: TextureGizmoMode =
+    ctx.sceneDocument?.editor.gizmo_mode === "rotate"
+      ? "rotate"
+      : ctx.sceneDocument?.editor.gizmo_mode === "scale"
+        ? "scale"
+        : "translate";
   const applyTextureTransform = (next: PreviewTextureTransform3D) => {
     if (!ctx.selectedObjectId) {
       return;
@@ -968,6 +975,7 @@ export function ViewportCanvasArea() {
           onGeometryTranslate={ctx.applyGeometryTranslation}
           onRequestObjectSelect={handleRequestObjectSelect}
           activeTextureTransform={activeTextureTransform}
+          textureGizmoMode={activeTextureGizmoMode}
           activeTexturePreviewProxy={activeTexturePreviewProxy}
           onTextureTransformChange={applyTextureTransform}
           onTextureTransformCommit={applyTextureTransform}

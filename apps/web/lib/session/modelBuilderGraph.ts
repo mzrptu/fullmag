@@ -411,6 +411,7 @@ export function resolveSelectedObjectIdFromModelBuilderGraph(
     const regionPrefix = objectNode.tree.region;
     const meshPrefix = objectNode.tree.mesh;
     const physicsPrefix = `physobj-${objectNode.name}`;
+    const magnetizationPrefix = `mag-${objectNode.name}`;
     if (
       nodeId === objectPrefix ||
       nodeId.startsWith(`${objectPrefix}-`) ||
@@ -422,6 +423,8 @@ export function resolveSelectedObjectIdFromModelBuilderGraph(
       nodeId.startsWith(`${regionPrefix}-`) ||
       nodeId === physicsPrefix ||
       nodeId.startsWith(`${physicsPrefix}-`) ||
+      nodeId === magnetizationPrefix ||
+      nodeId.startsWith(`${magnetizationPrefix}-`) ||
       nodeId === meshPrefix ||
       nodeId.startsWith(`${meshPrefix}-`)
     ) {
