@@ -10,6 +10,7 @@ import StatusBar from "../shell/StatusBar";
 import RunSidebar from "./control-room/RunSidebar";
 import { ViewportBar, ViewportCanvasArea } from "./control-room/ViewportPanels";
 import FullmagLogo from "../brand/FullmagLogo";
+import { recordFrontendDebugEvent } from "../../lib/workspace/navigation-debug";
 import type {
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderMagneticInteractionKind,
@@ -183,6 +184,16 @@ function resolveStudyAnchorNodeId(
 
 export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMode?: WorkspaceMode }) {
   const ctx = useControlRoom();
+  const sidebarCollapsed = ctx.sidebarCollapsed;
+  const setSidebarCollapsed = ctx.setSidebarCollapsed;
+  const workspaceMode = ctx.workspaceMode;
+  const setWorkspaceMode = ctx.setWorkspaceMode;
+  const quickPreviewTargets = ctx.quickPreviewTargets;
+  const requestPreviewQuantity = ctx.requestPreviewQuantity;
+  const scriptPath = ctx.sessionFooter.scriptPath;
+  const scriptSyncBusy = ctx.scriptSyncBusy;
+  const syncScriptBuilder = ctx.syncScriptBuilder;
+  const openFemMeshWorkspace = ctx.openFemMeshWorkspace;
   const router = useRouter();
   const pathname = usePathname();
   const activeStageLayout = useActiveStageLayout();
@@ -211,10 +222,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
   const compactVerticalLayout = viewportSize.height < 940;
 
   useEffect(() => {
-    if (autoCollapseSidebar && !ctx.sidebarCollapsed) {
-      ctx.setSidebarCollapsed(true);
+    if (autoCollapseSidebar && !sidebarCollapsed) {
+      setSidebarCollapsed(true);
     }
-  }, [autoCollapseSidebar, ctx]);
+  }, [autoCollapseSidebar, setSidebarCollapsed, sidebarCollapsed]);
 
   const viewportPanelDefaultSize = compactVerticalLayout ? "90%" : PANEL_SIZES.viewportDefault;
   const consolePanelDefaultSize = compactVerticalLayout ? "10%" : PANEL_SIZES.consoleDefault;
@@ -226,10 +237,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
 
   useEffect(() => {
     if (!initialWorkspaceMode) return;
-    if (ctx.workspaceMode !== initialWorkspaceMode) {
-      ctx.setWorkspaceMode(initialWorkspaceMode);
+    if (workspaceMode !== initialWorkspaceMode) {
+      setWorkspaceMode(initialWorkspaceMode);
     }
-  }, [ctx, initialWorkspaceMode]);
+  }, [initialWorkspaceMode, setWorkspaceMode, workspaceMode]);
 
   useEffect(() => {
     setRightInspectorOpen(Boolean(activeStageLayout.rightDock));
@@ -256,10 +267,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
   useKeyboardShortcuts();
 
   const maybePreviewAntennaField = useCallback(() => {
-    if (ctx.quickPreviewTargets.some((target) => target.id === "H_ant" && target.available)) {
-      ctx.requestPreviewQuantity("H_ant");
+    if (quickPreviewTargets.some((target) => target.id === "H_ant" && target.available)) {
+      requestPreviewQuantity("H_ant");
     }
-  }, [ctx]);
+  }, [quickPreviewTargets, requestPreviewQuantity]);
 
   const handleSelectModelNode = useCallback((nodeId: string) => {
     ctx.setSelectedSidebarNodeId(nodeId);
@@ -271,6 +282,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       setActiveContextualTab(null);
       ctx.openAnalyze(analyzeTarget);
       if (pathname !== "/analyze") {
+        recordFrontendDebugEvent("run-control-room", "router_push_analyze_from_tree", {
+          nodeId,
+          source: "analyze_target",
+        });
         router.push("/analyze");
       }
       return;
@@ -281,6 +296,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       setActiveContextualTab(null);
       ctx.openResultWorkspaceEntry(nodeId.replace("res-analysis-", ""));
       if (pathname !== "/analyze") {
+        recordFrontendDebugEvent("run-control-room", "router_push_analyze_from_tree", {
+          nodeId,
+          source: "result_workspace",
+        });
         router.push("/analyze");
       }
       return;
@@ -647,19 +666,19 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
   }, []);
 
   const syncIfPossible = useCallback(async () => {
-    if (!ctx.sessionFooter.scriptPath || ctx.scriptSyncBusy) {
+    if (!scriptPath || scriptSyncBusy) {
       return;
     }
-    await ctx.syncScriptBuilder();
-  }, [ctx]);
+    await syncScriptBuilder();
+  }, [scriptPath, scriptSyncBusy, syncScriptBuilder]);
 
   const openMeshNode = useCallback((nodeId: string) => {
     handleSelectModelNode(nodeId);
     const dockTab = meshWorkspaceNodeToDockTab(nodeId);
     if (dockTab) {
-      ctx.openFemMeshWorkspace(dockTab);
+      openFemMeshWorkspace(dockTab);
     }
-  }, [ctx, handleSelectModelNode]);
+  }, [handleSelectModelNode, openFemMeshWorkspace]);
 
   const handleBuildMeshSelected = useCallback(async () => {
     const intent = meshBuildIntentForNode({
@@ -859,6 +878,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     else setActiveCoreTab("Results");
     const targetPath = `/${stage}`;
     if (pathname !== targetPath) {
+      recordFrontendDebugEvent("run-control-room", "router_push_stage_change", {
+        stage,
+        targetPath,
+      });
       router.push(targetPath as Route);
     }
   }, [ctx, pathname, router, setActiveContextualTab, setActiveCoreTab]);
@@ -901,6 +924,10 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       ctx.openAnalyze({ tab: "spectrum", selectedModeIndex: null });
     }
     if (pathname !== "/analyze") {
+      recordFrontendDebugEvent("run-control-room", "router_push_auto_results", {
+        hasEigenArtifacts,
+        currentResultsEntryKey,
+      });
       router.push("/analyze");
     }
   }, [

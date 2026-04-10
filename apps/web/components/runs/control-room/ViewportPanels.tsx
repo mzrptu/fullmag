@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback } from "react";
+import { memo, useMemo, useCallback } from "react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -26,10 +26,11 @@ import {
   fmtSI,
   resolveAntennaNodeName,
 } from "./shared";
-import { useControlRoom } from "./ControlRoomContext";
+import { useControlRoom, useTransport } from "./ControlRoomContext";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import type {
   TextureTransform3D as SceneTextureTransform3D,
+  MeshEntityViewStateMap,
 } from "../../../lib/session/types";
 import { defaultMeshEntityViewState } from "../../../lib/session/types";
 
@@ -108,7 +109,7 @@ function ViewportChip({
   );
 }
 
-export function ViewportBar() {
+export const ViewportBar = memo(function ViewportBar() {
   const ctx = useControlRoom();
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const selectedDisplayIsGlobalScalar =
@@ -400,10 +401,30 @@ export function ViewportBar() {
       )}
     </div>
   );
-}
+});
 
-export function ViewportCanvasArea() {
+/* ── Telemetry HUD: subscribes only to transport context ── */
+const TelemetryHUD = memo(function TelemetryHUD({ solverSettings }: { solverSettings: { torqueTolerance?: string | number } }) {
+  const transport = useTransport();
+  return (
+    <div className="viewportOverlay absolute top-3 left-1/2 -translate-x-1/2 flex items-center justify-center gap-4 z-10 pointer-events-none text-center font-mono text-[0.7rem] font-bold tracking-wide text-foreground/80 bg-background/60 backdrop-blur-md px-5 py-1.5 rounded-full border border-border/30 shadow-md">
+      <span>Step {transport.effectiveStep.toLocaleString()}</span>
+      <span>{fmtSI(transport.effectiveTime, "s")}</span>
+      {transport.effectiveDmDt > 0 && (
+        <span className={cn(transport.effectiveDmDt < (Number(solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD) ? "text-emerald-400" : "text-amber-400")}>
+          dm/dt {fmtExp(transport.effectiveDmDt)}
+        </span>
+      )}
+    </div>
+  );
+});
+
+export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   const ctx = useControlRoom();
+  const setSelectedObjectId = ctx.setSelectedObjectId;
+  const setSelectedSidebarNodeId = ctx.setSelectedSidebarNodeId;
+  const meshParts = ctx.meshParts;
+  const setMeshEntityViewState = ctx.setMeshEntityViewState;
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
   const hasVectorData = Boolean(ctx.selectedVectors && ctx.selectedVectors.length > 0);
@@ -477,10 +498,10 @@ export function ViewportCanvasArea() {
 
   const handleRequestObjectSelect = useCallback(
     (objectId: string) => {
-      ctx.setSelectedObjectId(objectId);
-      ctx.setSelectedSidebarNodeId(`obj-${objectId}`);
+      setSelectedObjectId(objectId);
+      setSelectedSidebarNodeId(`obj-${objectId}`);
     },
-    [ctx],
+    [setSelectedObjectId, setSelectedSidebarNodeId],
   );
 
   const selectedAntennaName = resolveAntennaNodeName(
@@ -518,15 +539,15 @@ export function ViewportCanvasArea() {
     [ctx.isFemBackend, ctx.meshParts.length, ctx.objectOverlays, ctx.visibleMagneticObjectIds, visibleObjectIds],
   );
   const patchMeshPartViewState = useCallback(
-    (partIds: string[], patch: Partial<(typeof ctx.meshEntityViewState)[string]>) => {
+    (partIds: string[], patch: Partial<MeshEntityViewStateMap[string]>) => {
       if (partIds.length === 0) {
         return;
       }
-      ctx.setMeshEntityViewState((prev) => {
+      setMeshEntityViewState((prev) => {
         let changed = false;
         const next = { ...prev };
         for (const partId of partIds) {
-          const part = ctx.meshParts.find((candidate) => candidate.id === partId);
+          const part = meshParts.find((candidate) => candidate.id === partId);
           const current = next[partId] ?? (part ? defaultMeshEntityViewState(part) : null);
           if (!current) continue;
           const updated = { ...current, ...patch };
@@ -544,7 +565,21 @@ export function ViewportCanvasArea() {
         return changed ? next : prev;
       });
     },
-    [ctx],
+    [meshParts, setMeshEntityViewState],
+  );
+  const femQuantityOptions = useMemo(
+    () =>
+      ctx.previewQuantityOptions.map((option) => ({
+        id: option.value,
+        shortLabel: option.label,
+        label: option.label,
+        available: !option.disabled,
+      })),
+    [ctx.previewQuantityOptions],
+  );
+  const handlePreviewMaxPointsChange = useCallback(
+    (nextMaxPoints: number) => void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints }),
+    [ctx.updatePreview],
   );
   const hasExactScopeSegment = useMemo(
     () => {
@@ -651,12 +686,7 @@ export function ViewportCanvasArea() {
         topologyKey={ctx.femTopologyKey ?? undefined}
         meshData={ctx.femMeshData}
         quantityId={ctx.requestedPreviewQuantity}
-        quantityOptions={ctx.previewQuantityOptions.map((option) => ({
-          id: option.value,
-          shortLabel: option.label,
-          label: option.label,
-          available: !option.disabled,
-        }))}
+        quantityOptions={femQuantityOptions}
         colorField="none"
         toolbarMode="visible" // Mesh workspace should show tools!
         renderMode={ctx.meshRenderMode}
@@ -670,9 +700,7 @@ export function ViewportCanvasArea() {
         onClipEnabledChange={ctx.setMeshClipEnabled}
         onClipAxisChange={ctx.setMeshClipAxis}
         onClipPosChange={ctx.setMeshClipPos}
-        onPreviewMaxPointsChange={(nextMaxPoints) =>
-          void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints })
-        }
+        onPreviewMaxPointsChange={handlePreviewMaxPointsChange}
         onSelectionChange={ctx.setMeshSelection}
         onRefine={ctx.handleLassoRefine}
         antennaOverlays={ctx.antennaOverlays}
@@ -715,12 +743,7 @@ export function ViewportCanvasArea() {
         meshData={ctx.femMeshData}
         fieldLabel={ctx.quantityDescriptor?.label ?? ctx.selectedQuantity}
         quantityId={ctx.requestedPreviewQuantity}
-        quantityOptions={ctx.previewQuantityOptions.map((option) => ({
-          id: option.value,
-          shortLabel: option.label,
-          label: option.label,
-          available: !option.disabled,
-        }))}
+        quantityOptions={femQuantityOptions}
         colorField={ctx.femColorField}
         showOrientationLegend={ctx.femMagnetization3DActive}
         renderMode={ctx.meshRenderMode}
@@ -750,9 +773,7 @@ export function ViewportCanvasArea() {
         onArrowThicknessChange={ctx.setFemArrowThickness}
         onVectorDomainFilterChange={ctx.setFemVectorDomainFilter}
         onFerromagnetVisibilityModeChange={ctx.setFemFerromagnetVisibilityMode}
-        onPreviewMaxPointsChange={(nextMaxPoints) =>
-          void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints })
-        }
+        onPreviewMaxPointsChange={handlePreviewMaxPointsChange}
         onSelectionChange={ctx.setMeshSelection}
         antennaOverlays={ctx.antennaOverlays}
         selectedAntennaId={selectedAntennaName}
@@ -838,15 +859,7 @@ export function ViewportCanvasArea() {
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 relative overflow-hidden [&>*]:min-w-0 [&>*]:min-h-0 [&>*:not(.viewportOverlay)]:flex-1 [&>*:not(.viewportOverlay)]:w-full">
-      <div className="viewportOverlay absolute top-3 left-1/2 -translate-x-1/2 flex items-center justify-center gap-4 z-10 pointer-events-none text-center font-mono text-[0.7rem] font-bold tracking-wide text-foreground/80 bg-background/60 backdrop-blur-md px-5 py-1.5 rounded-full border border-border/30 shadow-md">
-        <span>Step {ctx.effectiveStep.toLocaleString()}</span>
-        <span>{fmtSI(ctx.effectiveTime, "s")}</span>
-        {ctx.effectiveDmDt > 0 && (
-          <span className={cn(ctx.effectiveDmDt < (Number(ctx.solverSettings.torqueTolerance) || DEFAULT_CONVERGENCE_THRESHOLD) ? "text-emerald-400" : "text-amber-400")}>
-            dm/dt {fmtExp(ctx.effectiveDmDt)}
-          </span>
-        )}
-      </div>
+      <TelemetryHUD solverSettings={ctx.solverSettings} />
       {antennaPreviewBadgeVisible ? (
         <div className="viewportOverlay absolute right-3 top-3 z-10 rounded-full border border-cyan-400/25 bg-background/70 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-cyan-200 shadow-md backdrop-blur-md">
           physics 2.5D · preview extruded
@@ -963,47 +976,45 @@ export function ViewportCanvasArea() {
         </div>
       ) : null}
 
-      {/* ── Always-mounted FDM 3D Canvas ──
-       * The R3F <Canvas> holds a WebGL context and camera state that is extremely
-       * expensive to recreate. We keep MagnetizationView3D always in the DOM and
-       * toggle visibility via CSS, preventing GL context destruction on data swaps. */}
-      <div className={cn("absolute inset-0", showFdm3D ? "block" : "hidden")}>
-        <ViewportErrorBoundary label="FDM 3D Viewport">
-        <MagnetizationView3D
-          grid={ctx.previewGrid}
-          vectors={isFdm3DActive ? ctx.selectedVectors : null}
-          fieldLabel={
-            isFdmMeshActive
-              ? "Geometry"
-              : ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity
-          }
-          geometryMode={isFdmMeshActive}
-          activeMask={ctx.activeMask}
-          worldExtent={ctx.worldExtent}
-          objectOverlays={ctx.objectOverlays}
-          selectedObjectId={ctx.selectedObjectId}
-          universeCenter={ctx.worldCenter}
-          focusObjectRequest={ctx.focusObjectRequest}
-          objectViewMode={ctx.objectViewMode}
-          settings={ctx.fdmVisualizationSettings}
-          onSettingsChange={ctx.setFdmVisualizationSettings}
-          onAntennaTranslate={ctx.applyAntennaTranslation}
-          onGeometryTranslate={ctx.applyGeometryTranslation}
-          onRequestObjectSelect={handleRequestObjectSelect}
-          activeTextureTransform={activeTextureTransform}
-          textureGizmoMode={activeTextureGizmoMode}
-          activeTexturePreviewProxy={activeTexturePreviewProxy}
-          onTextureTransformChange={applyTextureTransform}
-          onTextureTransformCommit={applyTextureTransform}
-          activeTransformScope={ctx.activeTransformScope}
-          onTransformScopeChange={(scope) => ctx.setActiveTransformScope(scope)}
-          viewportVisible={showFdm3D}
-        />
-        </ViewportErrorBoundary>
-      </div>
+      {showFdm3D ? (
+        <div className="absolute inset-0">
+          <ViewportErrorBoundary label="FDM 3D Viewport">
+          <MagnetizationView3D
+            grid={ctx.previewGrid}
+            vectors={isFdm3DActive ? ctx.selectedVectors : null}
+            fieldLabel={
+              isFdmMeshActive
+                ? "Geometry"
+                : ctx.quantityDescriptor?.label ?? spatialPreview?.quantity ?? ctx.selectedQuantity
+            }
+            geometryMode={isFdmMeshActive}
+            activeMask={ctx.activeMask}
+            worldExtent={ctx.worldExtent}
+            objectOverlays={ctx.objectOverlays}
+            selectedObjectId={ctx.selectedObjectId}
+            universeCenter={ctx.worldCenter}
+            focusObjectRequest={ctx.focusObjectRequest}
+            objectViewMode={ctx.objectViewMode}
+            settings={ctx.fdmVisualizationSettings}
+            onSettingsChange={ctx.setFdmVisualizationSettings}
+            onAntennaTranslate={ctx.applyAntennaTranslation}
+            onGeometryTranslate={ctx.applyGeometryTranslation}
+            onRequestObjectSelect={handleRequestObjectSelect}
+            activeTextureTransform={activeTextureTransform}
+            textureGizmoMode={activeTextureGizmoMode}
+            activeTexturePreviewProxy={activeTexturePreviewProxy}
+            onTextureTransformChange={applyTextureTransform}
+            onTextureTransformCommit={applyTextureTransform}
+            activeTransformScope={ctx.activeTransformScope}
+            onTransformScopeChange={(scope) => ctx.setActiveTransformScope(scope)}
+            viewportVisible={showFdm3D}
+          />
+          </ViewportErrorBoundary>
+        </div>
+      ) : null}
 
       {/* ── Conditionally-rendered non-GL viewports ── */}
       {conditionalContent}
     </div>
   );
-}
+});

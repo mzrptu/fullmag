@@ -1,0 +1,1223 @@
+# Fullmag 3D viewport — re-audyt po ostatnim pushu
+
+## Cel
+
+Sprawdzić, czy ostatnie zmiany faktycznie naprawiły regresję wydajności viewportu 3D, oraz czy implementacja jest już poprawna architektonicznie. Zakres audytu obejmuje:
+
+- host viewportu i przepływ stanu w Control Room,
+- FDM `MagnetizationView3D` + `FdmInstances`,
+- FEM `ScientificViewportShell` + `FemMeshView3D` + `FemGeometry` + `FemArrows`,
+- pomocnicze gizma i insety (`ViewCube`, `HslSphere`),
+- granicę między zmianą topologii a zmianą pola.
+
+Data audytu: bieżący `master` repo po najnowszym pushu.
+
+---
+
+## Werdykt
+
+**Nie, to nie jest jeszcze zaimplementowane dobrze end-to-end.**
+
+Masz kilka realnych popraw:
+- FEM dostał porządny wspólny shell viewportu z profilami jakości, `frameloop="demand"` i rozdzieleniem jakości interakcyjnej od capture.
+- W `ControlRoomContext` pojawił się sensowny split na `femMeshBase` i `femFieldData`.
+- FDM nadal zachowuje jeden zamontowany canvas, więc nie traci kontekstu WebGL przy przełączaniu widoków.
+
+Ale jednocześnie **pozostały trzy krytyczne błędy architektoniczne**, które nadal mogą zabijać FPS nawet dla małych scen:
+
+1. **Host viewportu nadal subskrybuje zbyt szeroki stan**  
+   `ViewportCanvasArea` nadal bierze legacy `useControlRoom()`, czyli z powrotem scala `transport + viewport + command + model`. To podważa sens split-contextów.
+
+2. **FEM nadal przebudowuje kosztowną topologię za szeroko**  
+   `FemGeometry` deklaruje „topology memo”, ale memo zależy od **całego `meshData`**, podczas gdy `ControlRoomContext` i tak składa nowy `femMeshData` po każdej aktualizacji pola. W efekcie przy zmianie `fieldData` bardzo łatwo przebudować topologię, normalsy, wireframe i points.
+
+3. **FDM nadal ma ciężki własny pipeline renderu poza wspólnym shell-em**  
+   FDM nie przeszedł na `ScientificViewportShell`. Nadal ma osobny `Canvas`, własne GL ustawienia, oddzielne insety i kosztowne pełne przebudowy instancji w `FdmInstances`.
+
+W skrócie: **wydajność poprawiła się miejscami, ale rdzeń regresji nie został jeszcze usunięty**.
+
+---
+
+## Co jest już zrobione dobrze
+
+### 1. FEM ma wreszcie sensowny shell viewportu
+
+`ScientificViewportShell` ma:
+- profil jakości,
+- `frameloop` sterowany polityką renderu,
+- profile interakcyjne z `preserveDrawingBuffer: false`,
+- tryb capture z `preserveDrawingBuffer: true`,
+- wspólną obsługę kontroli kamery i bridge do gizmo.
+
+To jest właściwy kierunek.
+
+**Plik:** `apps/web/components/preview/shared/ScientificViewportShell.tsx`  
+**Istotne linie:** 165–200
+
+```tsx
+const profile = getViewportQualityProfile(qualityProfile);
+const frameloop: ViewportFrameloopMode =
+  resolvedHidden || resolvedRenderMode === "paused"
+    ? "never"
+    : resolvedRenderMode === "always"
+      ? "always"
+      : "demand";
+
+const glOptions = useMemo(
+  () => ({
+    antialias: profile.antialias,
+    preserveDrawingBuffer: profile.preserveDrawingBuffer,
+    localClippingEnabled: true,
+  }),
+  [profile.antialias, profile.preserveDrawingBuffer],
+);
+```
+
+**Powiązany plik:** `apps/web/components/preview/shared/viewportQualityProfiles.ts`  
+**Istotne linie:** 22–87
+
+- `interactive-lite`, `interactive`, `balanced`, `figure` mają `preserveDrawingBuffer: false`
+- tylko `capture` ma `preserveDrawingBuffer: true`
+
+To jest poprawne.
+
+---
+
+### 2. `ControlRoomContext` rzeczywiście rozdzielił bazę topologii od pola
+
+To jest dobry krok i dokładnie o to chodziło.
+
+**Plik:** `apps/web/components/runs/control-room/ControlRoomContext.tsx`  
+**Istotne linie:** 3131–3175
+
+```tsx
+const femMeshBase = useMemo<Omit<FemMeshData, "fieldData" | "activeMask" | "quantityDomain"> | null>(() => {
+  if (!effectiveFemMesh || !flatNodes || !flatFaces || !flatElements) return null;
+  const nNodes = effectiveFemMesh.nodes.length;
+  const nElements = effectiveFemMesh.elements.length;
+  return { nodes: flatNodes, elements: flatElements, boundaryFaces: flatFaces, nNodes, nElements };
+}, [effectiveFemMesh, flatNodes, flatFaces, flatElements]);
+
+const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
+  ...
+  return { x, y, z };
+}, [femMeshBase, selectedVectors]);
+
+const femMeshData = useMemo<FemMeshData | null>(() => {
+  if (!femMeshBase) return null;
+  return {
+    ...femMeshBase,
+    fieldData: femFieldData,
+    activeMask: ...,
+    quantityDomain: spatialPreview?.quantity_domain ?? "full_domain",
+  };
+}, [activeMask, femFieldData, femMeshBase, spatialPreview?.quantity_domain]);
+```
+
+To pokazuje, że intencja była dobra.
+
+---
+
+### 3. FDM canvas jest utrzymywany stale w DOM
+
+To akurat jest poprawne jako decyzja produktowo-renderingowa. Zrywanie i odtwarzanie WebGL context przy każdym przełączeniu potrafi być gorsze niż samo „trzymanie żywego canvasu”.
+
+**Plik:** `apps/web/components/runs/control-room/ViewportPanels.tsx`  
+**Istotne linie:** 966–1000
+
+```tsx
+{/* ── Always-mounted FDM 3D Canvas ── */}
+<div className={cn("absolute inset-0", showFdm3D ? "block" : "hidden")}>
+  <ViewportErrorBoundary label="FDM 3D Viewport">
+    <MagnetizationView3D
+      ...
+      viewportVisible={showFdm3D}
+    />
+  </ViewportErrorBoundary>
+</div>
+```
+
+To samo w sobie nie jest błędem.
+
+---
+
+## Co nadal jest źle
+
+## P0 — krytyczne
+
+### P0.1. `ViewportCanvasArea` nadal używa legacy `useControlRoom()`
+
+To jest dziś jeden z najważniejszych błędów.
+
+Masz split-context architecture, ale host viewportu nadal bierze stary, scalony hook. To oznacza, że szerokie zmiany z:
+- telemetrii,
+- command state,
+- artifactów,
+- modelu,
+
+mogą nadal wywoływać rerender hosta viewportu, nawet jeśli sama scena 3D ich nie potrzebuje.
+
+**Plik:** `apps/web/components/runs/control-room/context-hooks.tsx`  
+**Istotne linie:** 3–15, 455–462
+
+```tsx
+/*
+ * The monolithic context is split into 4 focused domains...
+ * The legacy useControlRoom() is preserved as a facade composing all 4.
+ */
+
+export function useControlRoom(): ControlRoomContextValue {
+  const transport = useTransport();
+  const viewport = useViewport();
+  const command = useCommand();
+  const model = useModel();
+  return useMemo(
+    () => ({ ...transport, ...viewport, ...command, ...model }),
+```
+
+**Plik:** `apps/web/components/runs/control-room/ViewportPanels.tsx`  
+**Istotne linie:** 405–406
+
+```tsx
+export function ViewportCanvasArea() {
+  const ctx = useControlRoom();
+```
+
+### Dlaczego to zabija wydajność
+
+`ViewportCanvasArea` jest hostem dla:
+- FDM canvas,
+- FEM canvas,
+- overlayów,
+- selection/focus/preview logic,
+- kondycyjnego montowania zawartości.
+
+Jeżeli ten komponent nadal reaguje na zbędne zmiany z telemetry/command/model, to:
+- React robi niepotrzebne przebiegi,
+- część propsów do sceny zmienia referencję,
+- memoizacja niższego poziomu traci skuteczność.
+
+### Ocena
+
+**Niezaimplementowane poprawnie.**
+
+---
+
+### P0.2. `FemGeometry` nadal zależy od całego `meshData`, więc topologia nie jest naprawdę odseparowana od pola
+
+To jest najpoważniejszy problem po stronie FEM.
+
+`ControlRoomContext` rozdzielił `femMeshBase` i `femFieldData`, ale `FemGeometry` nadal przyjmuje złożony `meshData`, a jego „topology memo” zależy od całego obiektu.
+
+**Plik:** `apps/web/components/preview/r3f/FemGeometry.tsx`  
+**Istotne linie:** 221–233, 517–528
+
+```tsx
+// ── Topology memo: only rebuilds when mesh structure changes ─────
+const {
+  geometry,
+  edgesGeometry,
+  tetraEdgesGeometry,
+  pointsGeometry,
+  ...
+} = useMemo(() => {
+  const { nodes, elements, nNodes } = meshData;
+  ...
+}, [
+  customBoundaryFaces,
+  clipAxis,
+  clipEnabled,
+  clipPos,
+  displayBoundaryFaceIndices,
+  displayElementIndices,
+  globalCenter,
+  invalidate,
+  meshData,
+  shrinkFactor,
+]);
+```
+
+To jest sprzeczne z intencją komentarza.  
+Jeśli `meshData` zmienia referencję przez update `fieldData`, to memo topologii też może polecieć od nowa.
+
+### Dlaczego to jest krytyczne
+
+Bo w tym memo robisz kosztowne rzeczy:
+- budowę `BufferGeometry`,
+- `computeVertexNormals()`,
+- `new THREE.WireframeGeometry(geom)`,
+- budowę `pointsGeometry`,
+- dodatkowo `invalidate()`.
+
+**Istotne linie:** 430–439, 500–504
+
+```tsx
+const geom = new THREE.BufferGeometry();
+geom.setAttribute("position", new THREE.BufferAttribute(finalPositions, 3));
+if (finalIndices) {
+  geom.setIndex(new THREE.BufferAttribute(finalIndices, 1));
+}
+geom.computeVertexNormals();
+geom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(finalPositions.length), 3));
+
+const edgesGeom = new THREE.WireframeGeometry(geom);
+...
+const ptsGeom = new THREE.BufferGeometry();
+ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
+
+invalidate();
+```
+
+To nie powinno się odpalać szerzej niż przy rzeczywistej zmianie topologii / clip / shrink / visible face set.
+
+### Ocena
+
+**Niezaimplementowane poprawnie.**
+
+---
+
+### P0.3. `FemGeometry` dalej buduje normals / wireframe / points niezależnie od aktywnego render mode
+
+To jest drugi duży błąd FEM.
+
+Nawet jeśli aktualny render mode to np. tylko `surface`, albo tylko `points`, w memo topologii i tak budujesz:
+- normals,
+- edges geometry,
+- tetra wire,
+- points geometry.
+
+To oznacza, że jeden przejazd topologii robi pracę „na zapas”, często bez potrzeby.
+
+**Plik:** `apps/web/components/preview/r3f/FemGeometry.tsx`  
+**Istotne linie:** 435–439, 500–504
+
+```tsx
+geom.computeVertexNormals();
+const edgesGeom = new THREE.WireframeGeometry(geom);
+
+const ptsGeom = new THREE.BufferGeometry();
+ptsGeom.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+ptsGeom.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pointPositions.length), 3));
+```
+
+### Ocena
+
+**Niezaimplementowane poprawnie.**
+
+---
+
+### P0.4. FDM nadal używa własnego `Canvas` i snapshot-oriented GL konfiguracji zamiast wspólnego shell-a
+
+To jest poważny problem architektoniczny.
+
+FEM przeszedł na wspólny shell z profilami jakości i sensownym `preserveDrawingBuffer` policy, ale FDM nadal ma własny, odrębny pipeline.
+
+**Plik:** `apps/web/components/preview/MagnetizationView3D.tsx`  
+**Istotne linie:** 1065–1088
+
+```tsx
+<Canvas
+  frameloop={viewportVisible ? "demand" : "never"}
+  className="w-full h-full pointer-events-auto"
+  ...
+  gl={{
+    antialias: settings.quality !== "low",
+    preserveDrawingBuffer: true,
+  }}
+  onCreated={({ gl }) => { canvasRef.current = gl.domElement; }}
+  dpr={settings.quality === "ultra"
+    ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
+    : 1
+  }
+>
+```
+
+Najgorsza część to **`preserveDrawingBuffer: true` na zwykłym interaktywnym renderze**.  
+To powinno być włączane wyłącznie dla ścieżki capture, nie dla stale pracującego viewportu.
+
+### Dlaczego to jest krytyczne
+
+`preserveDrawingBuffer` potrafi dramatycznie zwiększyć koszt renderu i blokować optymalizacje sterownika/GPU. Dla zwykłego viewportu interakcyjnego jest to zły default.
+
+### Ocena
+
+**Niezaimplementowane poprawnie.**
+
+---
+
+### P0.5. FDM nadal renderuje dodatkowy inset `HslSphere` jako osobny, stale żywy `Canvas`
+
+To wygląda na „mały detal”, ale przy regresjach renderu właśnie takie elementy często okazują się kosztownymi pasożytami.
+
+**Plik:** `apps/web/components/preview/MagnetizationView3D.tsx`  
+**Istotne linie:** 958–968
+
+```tsx
+<ViewportOverlayLayout.TopRight>
+  <ViewCube ... />
+</ViewportOverlayLayout.TopRight>
+
+<ViewportOverlayLayout.BottomLeft>
+  {!geometryMode ? <HslSphere sceneRef={viewCubeSceneRef} axisConvention="identity" /> : null}
+</ViewportOverlayLayout.BottomLeft>
+```
+
+**Plik:** `apps/web/components/preview/HslSphere.tsx`  
+**Istotne linie:** 80–88, 115–125
+
+```tsx
+useFrame(() => {
+  const main = mainCameraRef.current;
+  if (!main) return;
+  camera.quaternion.copy(main.camera.quaternion);
+  camera.position.set(0, 0, 3).applyQuaternion(camera.quaternion);
+  camera.lookAt(0, 0, 0);
+});
+
+<Canvas
+  orthographic
+  camera={{ ... }}
+  gl={{ alpha: true, antialias: true }}
+  dpr={Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)}
+>
+```
+
+Tu problemem jest suma:
+- osobny `Canvas`,
+- `useFrame()` na każdej klatce,
+- antialias,
+- dpr do 2,
+- brak jawnego `frameloop="demand"`.
+
+To jest klasyczny kandydat do „viewport niby demand, ale coś obok cały czas mieli”.
+
+### Ocena
+
+**Niezaimplementowane poprawnie.**
+
+---
+
+## P1 — ważne, ale wtórne względem P0
+
+### P1.1. `ViewCube` nadal ma własny polling loop
+
+**Plik:** `apps/web/components/preview/ViewCube.tsx`  
+**Istotne linie:** 95–115
+
+```tsx
+useEffect(() => {
+  let active = true;
+  function loop() {
+    ...
+    if (idleCounterRef.current < 120) {
+      rafRef.current = requestAnimationFrame(loop);
+    } else {
+      rafRef.current = window.setTimeout(loop, 250) as unknown as number;
+    }
+  }
+  rafRef.current = requestAnimationFrame(loop);
+```
+
+To nie jest główny zabójca FPS, ale:
+- przez pierwsze ~2 sekundy po zmianie pracuje pełnym rAF,
+- potem nadal polluje co 250 ms.
+
+Lepszy byłby model event-driven oparty o `controls change` / `invalidate`.
+
+**Ocena:** częściowo poprawne, ale nieoptymalne.
+
+---
+
+### P1.2. `FdmInstances` nadal robi pełną przebudowę instancji i pełny skan magnitudy
+
+To nie jest nowy błąd, ale nadal jest duży koszt.
+
+**Plik:** `apps/web/components/preview/r3f/FdmInstances.tsx`  
+**Istotne linie:** 250–337, 356–361, 442–461
+
+```tsx
+useEffect(() => {
+  ...
+  const colors = instanceColor.array as Float32Array;
+  const matrices = mesh.instanceMatrix.array as Float32Array;
+  ...
+  for (let iz = ... ) {
+    for (let iy = ... ) {
+      for (let ix = ... ) {
+        ...
+      }
+    }
+  }
+  ...
+  invalidate();
+}, [vectors, grid, settings, geometryMode, activeMask, mode, count, nx, ny, nz, onVisibleCount, sceneOpacityMultiplier, isolateGridBounds, invalidate]);
+```
+
+oraz:
+
+```tsx
+let maxMagnitude = 0;
+for (let i = 0; i < vectors!.length; i += 3) {
+  const mx = vectors![i];
+  const my = vectors![i + 1];
+  const mz = vectors![i + 2];
+  maxMagnitude = Math.max(maxMagnitude, Math.sqrt(mx * mx + my * my + mz * mz));
+}
+```
+
+Czyli na update:
+- skanujesz całe pole,
+- przebudowujesz wszystkie macierze,
+- przepisyjesz wszystkie kolory,
+- invalidujesz scenę.
+
+To można jeszcze zoptymalizować, ale to raczej **ciąg dalszy optymalizacji**, nie główna przyczyna „odświeżania co kilka sekund” dla małych scen.
+
+**Ocena:** częściowo poprawne, ale nadal ciężkie.
+
+---
+
+### P1.3. `FemArrows` nadal przebudowuje payload glyphów i robi pełny upload macierzy
+
+To również nie jest główny błąd hosta, ale nadal jest kosztowne.
+
+**Plik:** `apps/web/components/preview/r3f/FemArrows.tsx`  
+**Istotne linie:** 277–315, 329–345, 443–495
+
+```tsx
+const sampledNodes = useMemo(() => {
+  ...
+  return sampleCandidateNodes(meshData.nodes, candidates, arrowDensity);
+}, [...]);
+
+const { count, positions, quaternions, scales, colors } = useMemo(() => {
+  ...
+  for (const ni of sampledNodes) {
+    ...
+  }
+  ...
+}, [...]);
+
+useLayoutEffect(() => {
+  ...
+  for (let i = 0; i < count; i += 1) {
+    dummy.position.set(...);
+    dummy.quaternion.set(...);
+    dummy.scale.set(...);
+    dummy.updateMatrix();
+    dummy.matrix.toArray(matrixArray, matrixOffset);
+    matrixOffset += 16;
+  }
+  ...
+  invalidate();
+}, [...]);
+```
+
+To nadal oznacza:
+- sampling kandydatów,
+- obliczenie payloadu,
+- upload macierzy i kolorów,
+
+na zmianach, które można by rozdzielić lepiej na:
+- topologia/sampling,
+- field-only color/scale update,
+- visibility-only update.
+
+**Ocena:** częściowo poprawne, ale nadal ciężkie.
+
+---
+
+## Dlaczego nadal możesz widzieć „lag nawet dla małej sceny”
+
+Bo obecny system nadal ma **nakładanie się kilku kosztów naraz**:
+
+1. Host viewportu renderuje szerzej niż powinien (`useControlRoom()`).
+2. FDM ma własny cięższy canvas path niż FEM.
+3. FDM ma stale żywy inset `HslSphere`.
+4. FEM „topology memo” nie jest naprawdę topologiczne.
+5. FEM nadal buduje zasoby dla kilku trybów naraz.
+6. FDM/FEM nadal robią ciężkie pełne przebiegi po danych przy update.
+
+To daje efekt:
+- CPU zajęty Reactem + aktualizacją buforów,
+- GPU zajęte przez niepotrzebne zasoby i dodatkowe canvasy,
+- `demand` nie daje tyle, ile powinien, bo zbyt często coś robi `invalidate()` albo stale renderuje obok.
+
+---
+
+## Plan wdrożeniowy
+
+## Etap 0 — szybki hotfix regresji (P0, 1 dzień)
+
+### 0.1. Wyłączyć `preserveDrawingBuffer` w interaktywnym FDM
+**Cel:** natychmiast odzyskać FPS.
+
+Zmiana:
+- w `MagnetizationView3D.tsx` zastąpić stałe `preserveDrawingBuffer: true`
+- policy:
+  - interaktywny viewport: `false`
+  - snapshot/capture: tymczasowy offscreen lub tymczasowy render profile
+
+Docelowo:
+
+```tsx
+gl={{
+  antialias: settings.quality !== "low",
+  preserveDrawingBuffer: captureRequested,
+}}
+```
+
+albo lepiej:
+- przejść całym FDM na `ScientificViewportShell`.
+
+### 0.2. Tymczasowo wyłączyć `HslSphere` domyślnie
+Najprostszy test A/B:
+- ukryć `HslSphere` za feature flagą lub ustawieniem,
+- zostawić tylko `ViewCube`.
+
+Jeśli FPS wróci natychmiast, masz twarde potwierdzenie kosztu inset canvas.
+
+### 0.3. Rozciąć `ViewportCanvasArea`
+Minimalny hotfix:
+- host FDM/FEM nie może brać całego `ctx = useControlRoom()`.
+- trzeba rozdzielić na mniejsze komponenty.
+
+Np.:
+
+```tsx
+export function ViewportCanvasArea() {
+  return (
+    <>
+      <FdmViewportHost />
+      <FemViewportHost />
+      <NonGlViewportHost />
+    </>
+  );
+}
+```
+
+A w hostach używać granular hooks:
+- `useViewport()`
+- `useTransport()`
+- `useModel()`
+- `useCommand()`
+
+tylko tam, gdzie naprawdę są potrzebne.
+
+---
+
+## Etap 1 — prawdziwe rozdzielenie topologii od pola w FEM
+
+### 1.1. Zmienić API `FemGeometry`
+
+Aktualnie:
+```tsx
+<FemGeometry meshData={meshData} field={field} ... />
+```
+
+Docelowo:
+```tsx
+<FemGeometry
+  meshBase={meshBase}
+  fieldData={fieldData}
+  activeMask={activeMask}
+  quantityDomain={quantityDomain}
+  field={field}
+  renderMode={renderMode}
+  ...
+/>
+```
+
+Gdzie:
+- `meshBase` ma stabilną referencję dopóki nie zmienia się topologia,
+- `fieldData` ma własną referencję i zmienia się per tick,
+- `activeMask` i `quantityDomain` są osobno.
+
+### 1.2. Memo topologii ma zależeć tylko od topologii
+
+Docelowe dependencies:
+```tsx
+[
+  meshBase,
+  customBoundaryFaces,
+  clipAxis,
+  clipEnabled,
+  clipPos,
+  displayBoundaryFaceIndices,
+  displayElementIndices,
+  globalCenter,
+  shrinkFactor,
+]
+```
+
+Nie:
+```tsx
+meshData
+```
+
+### 1.3. `invalidate()` usunąć z `useMemo`
+`useMemo` ma być czyste.
+`invalidate()` przenieść do dedykowanego `useEffect`.
+
+---
+
+## Etap 2 — lazy build zasobów FEM per render mode
+
+### 2.1. Budować tylko to, co potrzebne
+Dzisiaj budujesz:
+- normals,
+- edge geom,
+- tetra wire,
+- points geom,
+
+zawsze.
+
+Powinno być:
+
+```tsx
+const needSurface = renderMode === "surface" || renderMode === "surface+edges";
+const needEdges = renderMode === "surface+edges";
+const needVolumeWire = renderMode === "wireframe";
+const needPoints = renderMode === "points";
+```
+
+I dopiero na tej podstawie:
+- `computeVertexNormals()` tylko gdy `needSurface`
+- `WireframeGeometry` tylko gdy `needEdges`
+- `pointsGeometry` tylko gdy `needPoints`
+- `tetraEdgesGeometry` tylko gdy `needVolumeWire`
+
+### 2.2. Kolor update też rozdzielić
+Jeśli render mode nie używa np. punktów, nie wolno aktualizować `pointsColorAttr`.
+
+---
+
+## Etap 3 — unifikacja FDM na `ScientificViewportShell`
+
+To jest mój najmocniejszy rekomendowany ruch.
+
+### Dlaczego
+Bo dziś FEM i FDM żyją na dwóch różnych filozofiach viewportu:
+- FEM: profile jakości, render policy, shared shell
+- FDM: własny Canvas, własne GL options, własne overlaye i insety
+
+To utrudnia:
+- utrzymanie,
+- diagnostykę,
+- porównanie zachowań,
+- wspólne hotfixy wydajności.
+
+### Docelowy ruch
+Przenieść FDM na:
+
+```tsx
+<ScientificViewportShell
+  qualityProfile={runtimeQualityProfile}
+  renderPolicy={{ mode: "demand", hidden: !viewportVisible, interactionActive }}
+  ...
+>
+  <FdmScene />
+</ScientificViewportShell>
+```
+
+Korzyści:
+- jedna polityka `preserveDrawingBuffer`,
+- jedna polityka DPR,
+- jedna polityka hidden/paused/demand,
+- jedna warstwa bridge do gizm.
+
+---
+
+## Etap 4 — ograniczenie kosztów insetów i gizm
+
+### 4.1. `HslSphere`
+Zmienić z:
+- osobnego stale aktywnego canvasu z `useFrame`
+
+na jedno z:
+- statyczny canvas renderowany tylko po zmianie kamery,
+- `<Canvas frameloop="demand">` + ręczne `invalidate`,
+- sprite/tekstura zamiast pełnego drugiego renderera,
+- domyślnie OFF, włączane przez user toggle.
+
+### 4.2. `ViewCube`
+Przejść z polling loop do event-driven sync:
+- subskrypcja `controls change`,
+- update tylko po realnej zmianie kamery,
+- bez własnego `requestAnimationFrame`.
+
+---
+
+## Etap 5 — dalsza optymalizacja FDM/FEM payloadów
+
+### 5.1. FDM `FdmInstances`
+Rozdzielić:
+- zmiany topologii/isolate bounds,
+- zmiany koloru,
+- zmiany opacity,
+- zmiany threshold/sampling.
+
+Nie każda zmiana powinna powodować pełny rebuild macierzy.
+
+#### Priorytety
+1. jeśli zmienia się tylko opacity → tylko materiał
+2. jeśli zmienia się tylko color mode → tylko colors
+3. jeśli zmienia się tylko isolate bounds → tylko subset widocznych instancji
+4. maxMagnitude nie powinno być liczone pełnym skanem przy każdym update, jeśli istnieje upstream stats lub można użyć próbkowania
+
+### 5.2. FEM `FemArrows`
+Rozdzielić:
+- sampling node set (rzadko),
+- payload pozycji (rzadko),
+- payload kolor/skala (częściej),
+- upload instancing data (najczęściej, ale minimalny).
+
+Docelowo:
+- `sampledNodes` zależy tylko od topologii + density + masks
+- `positions` zależą tylko od topologii + center
+- `colors/scales` zależą od `fieldData`
+- jeśli to za mało: worker / off-main-thread preprocessing
+
+---
+
+## Proponowane konkretne poprawki w plikach
+
+## `apps/web/components/runs/control-room/ViewportPanels.tsx`
+
+### Problem
+`ViewportCanvasArea` nadal bierze cały `ctx`.
+
+### Zmiana
+- wydzielić osobne hosty,
+- hosty konsumują tylko minimalne hooki.
+
+### Minimalny szkic
+
+```tsx
+function FdmViewportHost() {
+  const viewport = useViewport();
+  const model = useModel();
+  // tylko to, co naprawdę potrzebne dla FDM
+}
+
+function FemViewportHost() {
+  const viewport = useViewport();
+  const model = useModel();
+  const transport = useTransport();
+  // tylko to, co naprawdę potrzebne dla FEM
+}
+```
+
+---
+
+## `apps/web/components/preview/MagnetizationView3D.tsx`
+
+### Problem
+- własny `Canvas`,
+- `preserveDrawingBuffer: true`,
+- dodatkowy `HslSphere`.
+
+### Zmiana
+1. przejść na `ScientificViewportShell`
+2. wyłączyć `preserveDrawingBuffer` dla interakcji
+3. schować `HslSphere` za togglem / demand mode
+
+### Minimalny hotfix
+
+```tsx
+gl={{
+  antialias: settings.quality !== "low",
+  preserveDrawingBuffer: false,
+}}
+```
+
+---
+
+## `apps/web/components/preview/r3f/FemGeometry.tsx`
+
+### Problem
+- `meshData` w deps topology memo,
+- budowa wszystkich geometrii naraz,
+- `invalidate()` wewnątrz memo.
+
+### Zmiana
+- nowe propsy rozdzielające `meshBase` i `fieldData`
+- lazy mode resources
+- `invalidate()` tylko w `useEffect`
+
+### Docelowy szkic
+
+```tsx
+const topology = useMemo(() => buildTopology(meshBase, options), [
+  meshBase,
+  customBoundaryFaces,
+  clipAxis,
+  clipEnabled,
+  clipPos,
+  displayBoundaryFaceIndices,
+  displayElementIndices,
+  globalCenter,
+  shrinkFactor,
+]);
+
+useEffect(() => {
+  invalidate();
+}, [topology, invalidate]);
+```
+
+---
+
+## `apps/web/components/preview/HslSphere.tsx`
+
+### Problem
+`useFrame()` + osobny `Canvas` + dpr 2.
+
+### Zmiana
+- `frameloop="demand"`
+- invalidate tylko przy zmianie kamery
+- ewentualnie statyczny render do tekstury
+
+---
+
+## `apps/web/components/preview/r3f/FdmInstances.tsx`
+
+### Problem
+pełne przebudowy i pełny skan magnitudy.
+
+### Zmiana
+- rozbić update effect na kilka mniejszych,
+- cache `normMag`,
+- rozdzielić matrix update od color update.
+
+---
+
+## `apps/web/components/preview/r3f/FemArrows.tsx`
+
+### Problem
+pełny glyph payload + layout upload.
+
+### Zmiana
+- cache sampledNodes i positions osobno,
+- field update tylko dla skali/koloru,
+- docelowo budżet glyphów sterowany profilem jakości.
+
+---
+
+## Kryteria akceptacji
+
+Po wdrożeniu poprawek P0/P1 oczekuję:
+
+1. **mała scena FDM**  
+   - płynny orbit/pan/zoom
+   - brak „refresh co kilka sekund”
+   - brak długich pauz przy zmianie isolate/context
+
+2. **mała scena FEM**
+   - zmiana `fieldData` nie resetuje ani nie przebudowuje topologii
+   - `surface` nie buduje punktów i wireframe bez potrzeby
+
+3. **React**
+   - `ViewportCanvasArea` nie rerenderuje od zwykłego ticku telemetry, jeśli viewport nie potrzebuje tych danych
+
+4. **GPU**
+   - interaktywny render nie używa `preserveDrawingBuffer`
+   - drugi inset canvas nie renderuje stale bez potrzeby
+
+---
+
+## Sugerowana kolejność wdrożenia
+
+1. **P0.1** rozciąć `ViewportCanvasArea` i wyrzucić legacy `useControlRoom` z hosta viewportu  
+2. **P0.4** wyłączyć `preserveDrawingBuffer` w interaktywnym FDM  
+3. **P0.5** tymczasowo wyłączyć `HslSphere` i sprawdzić FPS  
+4. **P0.2/P0.3** naprawić prawdziwe topological memo w `FemGeometry` i lazy mode resources  
+5. **P1.2/P1.3** dalsza optymalizacja `FdmInstances` i `FemArrows`  
+6. **Etap architektoniczny** przenieść FDM na `ScientificViewportShell`
+
+---
+
+## Finalny werdykt
+
+**Nie, nie wszystko zostało zaimplementowane dobrze.**
+
+Największa wartość ostatniego pushu jest po stronie **FEM shell-a** i **próby rozdzielenia topologii od pola**, ale te zmiany nie zostały jeszcze doprowadzone do końca. Największe realne błędy, które nadal trzeba poprawić, to:
+
+- `ViewportCanvasArea` dalej używa legacy `useControlRoom()`,
+- `FemGeometry` nadal wiąże memo topologii z całym `meshData`,
+- `FemGeometry` nadal buduje wszystkie zasoby niezależnie od trybu renderu,
+- FDM nadal ma własny interaktywny `Canvas` z `preserveDrawingBuffer: true`,
+- `HslSphere` nadal renderuje jako osobny aktywny canvas,
+- `FdmInstances` i `FemArrows` nadal mają ciężkie pełne update pathy.
+
+Czyli: **kierunek jest dobry, ale wdrożenie nie jest jeszcze domknięte.**
+
+---
+
+## Re-audyt Firefoksa 17:14
+
+Dodatkowo przeanalizowałem profil Firefoksa:
+
+- plik: `docs/reports/10.04.2026/Firefox 2026-04-10 17.14 profile.json/Firefox 2026-04-10 17.14 profile.json`
+- zrzut sieci pokazujący inicjator `useCurrentAnalyzeArtifacts.ts`
+
+Ten profil pokazuje, że problem nie jest już tylko w samym WebGL. Frontend ma jednocześnie:
+
+1. **prawdziwe wielokrotne nawigacje / remounty dokumentu**
+2. **dodatkowe, ciężkie pobieranie analyze artifacts odpalane z niewłaściwego miejsca**
+3. **ponowne bootstrapy live session i reconnecty WebSocket**
+
+### Twarde liczby z profilu
+
+Z markerów `GeckoMain`:
+
+- `31` realnych cykli `GET /v1/live/current/bootstrap`
+- `23` realne cykle `GET /v1/live/current/artifacts`
+- `8` cykli `GET /ws/live/current`
+- `3` cykle `POST /v1/live/current/scene`
+- `16` markerów `Navigation::Start`
+- `26` markerów `DOMContentLoaded`
+- `6` markerów `Load`
+
+Ważna interpretacja:
+
+- `bootstrap + websocket` to ślad z `useCurrentLiveStream`
+- `bootstrap + artifacts` to ślad z `useCurrentAnalyzeArtifacts`
+- `scene` to auto-push sceny z `ControlRoomContext`
+- `Navigation::Start` i powtarzające się `GET /` + `GET /study` oznaczają, że problem obejmuje też pełne przeładowania / wejścia w routing, a nie tylko wolny canvas
+
+### Co dokładnie robi `useCurrentAnalyzeArtifacts`
+
+To nie jest hook renderera 3D. To jest hook warstwy Analyze, który:
+
+- pobiera `bootstrap`
+- pobiera `artifacts`
+- jeśli wykryje eigensolve artifacts, to dodatkowo pobiera:
+  - `eigen/spectrum`
+  - `eigen/dispersion`
+  - `eigen/branches`
+- utrzymuje cache modów przez `ensureMode()`
+
+Plik:
+
+- `apps/web/components/runs/control-room/useCurrentAnalyzeArtifacts.ts`
+
+To jest sensowne tylko wtedy, gdy naprawdę renderujemy workspace Analyze.
+
+### Najważniejszy błąd: ten hook jest dziś odpalany za szeroko
+
+`useCurrentAnalyzeArtifacts()` jest używany w dwóch miejscach:
+
+- `apps/web/components/runs/control-room/RunSidebar.tsx`
+- `apps/web/components/runs/control-room/useAnalyzeWorkspaceState.ts`
+
+To oznacza:
+
+- Analyze viewport potrzebuje go do prawdziwych danych analyze
+- ale **RunSidebar odpala go tylko po to, żeby zbudować drzewo wyników i etykiety modów**
+
+To jest architektonicznie zły podział odpowiedzialności.
+
+Sidebar nie powinien:
+
+- pobierać `bootstrap`
+- pobierać `artifacts`
+- pobierać eigensolve payloadów
+- pobierać FEM mesh tylko po to, żeby wyświetlić gałąź Results
+
+Sidebar powinien budować drzewo na podstawie już dostępnego stanu:
+
+- `cmd.artifacts`
+- `cmd.quantities`
+- `tp.scalarRows`
+- `model.resultWorkspaceEntries`
+
+W obecnej formie lewa kolumna działa jak ukryty eager loader Analyze. To dokładnie pasuje do zrzutu sieci, gdzie inicjatorem wielu żądań jest `useCurrentAnalyzeArtifacts.ts`.
+
+### To nie jest jedyne źródło problemu
+
+Sam `useCurrentAnalyzeArtifacts` nie tłumaczy `GET /` i `Navigation::Start`.
+
+Tutaj mamy drugi problem:
+
+- `RootPageInner` na `/` robi async `detectLiveSessionIntent()` i `router.replace(...)`
+- `useCurrentLiveStream` zawsze robi `fetchBootstrap()` przed otwarciem websocketu
+- gdy provider lub dokument remountuje się ponownie, bootstrap leci znowu
+
+Pliki:
+
+- `apps/web/app/(main)/page.tsx`
+- `apps/web/lib/workspace/launch-intent-live.ts`
+- `apps/web/lib/useSessionStream.ts`
+
+Log serwera control room potwierdza powtarzające się wejścia:
+
+- `GET /`
+- `GET /study/?source=electron_cli...`
+- potem znowu `GET /`
+- potem znowu `GET /study/...`
+
+To znaczy, że w trakcie startu symulacji aplikacja nie tylko renderuje ciężko, ale rzeczywiście przechodzi przez kolejne cykle wejścia w root i przejścia do workspace.
+
+### Co z HMR i dev serwerem
+
+W profilu widać też hot-update:
+
+- `/_next/static/webpack/*.hot-update.json`
+- `/_next/static/webpack/app/layout.*.hot-update.js`
+
+Ale tylko po `2` cykle dla tych zasobów.
+
+Wniosek:
+
+- HMR istnieje i potrafi dokładać szum
+- ale **nie tłumaczy całości** `31 bootstrapów`, `23 artifacts` i `16 Navigation::Start`
+
+Czyli nawet ignorując dev-mode, architektura frontendu jest teraz zbyt reaktywna i sama wywołuje nadmiarowy ruch.
+
+### Dodatkowy wzmacniacz: auto-push sceny
+
+Profil pokazuje też `3` cykle `POST /v1/live/current/scene`.
+
+To pochodzi z `ControlRoomContext`, gdzie lokalny builder draft jest automatycznie synchronizowany z backendem:
+
+- timer `builderPushTimerRef`
+- `liveApi.updateSceneDocument(localBuilderDraft)`
+
+Plik:
+
+- `apps/web/components/runs/control-room/ControlRoomContext.tsx`
+
+To nie wygląda na główną przyczynę przeładowań strony, ale dokłada kolejne przebudowy i dodatkowy ruch w bardzo wrażliwym momencie startu sesji.
+
+### Najbardziej prawdopodobna hierarchia problemów
+
+#### P0. Aplikacja wpada w wielokrotne pełne wejścia na `/` i `/study`
+
+To jest najbardziej niebezpieczne, bo wtedy wszystko remountuje się od nowa:
+
+- provider live stream
+- sidebar
+- analyze eager loader
+- viewport
+- websocket
+
+To jest wniosek oparty na:
+
+- `Navigation::Start`
+- `DOMContentLoaded`
+- `Load`
+- logu control room z wieloma `GET /` i `GET /study`
+
+#### P0. `RunSidebar` niepotrzebnie uruchamia Analyze loader
+
+To jest błąd pewny i lokalizowalny wprost w kodzie.
+
+#### P1. `useCurrentLiveStream` pobiera bootstrap przy każdym reconnect/remouncie
+
+To nie musi być złe raz, ale przy niestabilnym drzewie komponentów bardzo szybko zamienia się w lawinę żądań.
+
+#### P1. auto-sync sceny dokłada dodatkowe POST-y i stan przejściowy
+
+Nie jest to główna przyczyna, ale wzmacnia niestabilność.
+
+### Co należy zrobić najpierw
+
+1. **Natychmiast usunąć `useCurrentAnalyzeArtifacts()` z `RunSidebar`**
+   Sidebar ma przestać pobierać analyze payloady.
+
+2. **Zostawić jednego właściciela danych Analyze**
+   Najlepiej tylko `AnalyzeViewport` / `useAnalyzeWorkspaceState`.
+
+3. **Zmierzyć i zahardguardować wejście z `/` do `/study`**
+   Trzeba sprawdzić, co dokładnie inicjuje kolejne pełne wejścia dokumentu.
+
+4. **Ograniczyć `fetchBootstrap()` w `useCurrentLiveStream`**
+   Przy reconnect nie można zawsze od nowa wykonywać pełnego bootstrapu, jeśli mamy już poprawny stan sesji.
+
+5. **Ograniczyć auto `scene` push podczas rozruchu**
+   Szczególnie jeśli draft nie zmienił się semantycznie.
+
+### Krótki werdykt po tym profilu
+
+`useCurrentAnalyzeArtifacts` nie jest bez sensu jako taki. Jest sensowny jako loader dla Analyze.
+
+Natomiast **użycie go w `RunSidebar` jest dziś bardzo złe** i jest jednym z głównych powodów, dla których frontend robi ciężką pracę nawet wtedy, gdy użytkownik nie analizuje jeszcze modów.
+
+Głębszy problem jest jeszcze większy:
+
+- frontend nie tylko za dużo renderuje,
+- on **za dużo bootstrappuje całą sesję i zbyt często przechodzi przez kolejne cykle wejścia w aplikację**.
+
+To właśnie dlatego masz wrażenie, że:
+
+- strona się odświeża wiele razy,
+- viewport przesuwa się o mały krok przy zmianie zakładek,
+- wszystko jest ciężkie nawet dla małych danych.
+
+---
+
+## Wdrożone po re-audycie
+
+Po tym re-audycie wdrożono już pierwszy pakiet zmian:
+
+1. **Analyze ma jednego właściciela danych**
+   - `useCurrentAnalyzeArtifacts()` został usunięty z sidebara
+   - hook pozostaje tylko w `useAnalyzeWorkspaceState.ts`, czyli realnie pod `AnalyzeViewport.tsx`
+   - sidebar buduje drzewo wyników już tylko z danych, które i tak istnieją w stanie sesji
+
+2. **Dodano twardą instrumentację nawigacji**
+   - nowy helper: `apps/web/lib/workspace/navigation-debug.ts`
+   - zapisuje zdarzenia do `window.__FULLMAG_DEBUG_EVENTS__`
+   - loguje m.in.:
+     - root redirect z `/`
+     - detekcję live session
+     - wejście do workspace stage
+     - `router.push()` z control room
+     - auto scene push i jego odroczenia
+
+3. **Ograniczono bootstrap storm w live stream**
+   - `useSessionStream.ts` ma teraz:
+     - cache krótkiego życia dla bootstrap payload
+     - reuse inflight bootstrap
+     - skip pełnego `fetchBootstrap()` przy świeżym stanie po reconnect
+
+4. **Przycięto auto scene push w rozruchu**
+   - `ControlRoomContext.tsx` nie robi już automatycznego `updateSceneDocument()` podczas najwcześniejszej fazy hydratacji / bootstrappingu
+   - dodano krótki startup gate oraz logowanie `scene-sync`
+
+### Jak czytać nową instrumentację
+
+W devtools console i w runtime można teraz sprawdzić:
+
+```js
+window.__FULLMAG_DEBUG_EVENTS__
+```
+
+Najważniejsze scope:
+
+- `root-route`
+- `live-intent`
+- `workspace-entry`
+- `run-control-room`
+- `live-stream`
+- `scene-sync`
+
+To powinno pozwolić złapać dokładnie:
+
+- kto robi przejście `/ -> /study`
+- kto inicjuje kolejne bootstrapy
+- czy auto scene push odpala się jeszcze za wcześnie
+
+### Wniosek architektoniczny
+
+Tak: problem rzeczywiście częściowo polega na tym, że frontend próbował mieć za dużo „aktywnych” subsystemów naraz.
+
+To nie jest jeszcze tak, że cały Analyze viewport renderował się zawsze, ale:
+
+- dane Analyze były eager-loadowane z sidebara,
+- live session bootstrap był uruchamiany za szeroko,
+- scene sync wchodził zbyt wcześnie,
+- routing root/workspace miał zbyt wiele miejsc, które mogły wywołać kolejne przejście.
+
+Czyli problem nie sprowadza się do „jednego widoku”, tylko do **braku ostrego ownershipu danych i lifecycle per ekran / per stage**.

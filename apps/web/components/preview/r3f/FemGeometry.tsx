@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useRef, useCallback } from "react";
+import React, { memo, useMemo, useEffect, useRef, useCallback } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
 import { FemMeshData, FemColorField, RenderMode } from "../FemMeshView3D";
@@ -191,7 +191,7 @@ function getBaseVertexColorCache(meshData: FemMeshData): Map<string, Float32Arra
   return cache;
 }
 
-export function FemGeometry({
+export const FemGeometry = memo(function FemGeometry({
   meshData,
   field,
   renderMode,
@@ -436,17 +436,61 @@ export function FemGeometry({
     } else {
       const sourceFaceIndices = preferredFaceIndices
         ?? Array.from({ length: boundaryFaces.length / 3 }, (_, faceIndex) => faceIndex);
-      finalIndices = new Uint32Array(sourceFaceIndices.length * 3);
-      faceIndexMap = new Int32Array(sourceFaceIndices.length);
-      let offset = 0;
-      for (let displayFaceIndex = 0; displayFaceIndex < sourceFaceIndices.length; displayFaceIndex += 1) {
-        const originalFaceIndex = sourceFaceIndices[displayFaceIndex];
-        const base = originalFaceIndex * 3;
-        finalIndices[offset] = boundaryFaces[base];
-        finalIndices[offset + 1] = boundaryFaces[base + 1];
-        finalIndices[offset + 2] = boundaryFaces[base + 2];
-        faceIndexMap[displayFaceIndex] = originalFaceIndex;
-        offset += 3;
+
+      // Collect unique nodes referenced by displayed faces
+      const usedNodeSet = new Set<number>();
+      const maxFaceIdx = Math.floor(boundaryFaces.length / 3);
+      for (const faceIndex of sourceFaceIndices) {
+        if (faceIndex < 0 || faceIndex >= maxFaceIdx) continue;
+        const base = faceIndex * 3;
+        usedNodeSet.add(boundaryFaces[base]);
+        usedNodeSet.add(boundaryFaces[base + 1]);
+        usedNodeSet.add(boundaryFaces[base + 2]);
+      }
+      const compactCount = usedNodeSet.size;
+
+      // Compact positions when rendering a per-part subset (saves memory + CPU for normals/wireframe)
+      if (compactCount > 0 && compactCount < nNodes * 0.9) {
+        const usedNodesSorted = Array.from(usedNodeSet).sort((a, b) => a - b);
+        const globalToLocal = new Int32Array(nNodes).fill(-1);
+        for (let i = 0; i < compactCount; i++) {
+          globalToLocal[usedNodesSorted[i]] = i;
+        }
+        finalPositions = new Float32Array(compactCount * 3);
+        vMap = new Int32Array(compactCount);
+        for (let i = 0; i < compactCount; i++) {
+          const g = usedNodesSorted[i];
+          vMap[i] = g;
+          finalPositions[i * 3] = positions[g * 3];
+          finalPositions[i * 3 + 1] = positions[g * 3 + 1];
+          finalPositions[i * 3 + 2] = positions[g * 3 + 2];
+        }
+        finalIndices = new Uint32Array(sourceFaceIndices.length * 3);
+        faceIndexMap = new Int32Array(sourceFaceIndices.length);
+        let offset = 0;
+        for (let displayFaceIndex = 0; displayFaceIndex < sourceFaceIndices.length; displayFaceIndex++) {
+          const originalFaceIndex = sourceFaceIndices[displayFaceIndex];
+          const base = originalFaceIndex * 3;
+          finalIndices[offset] = globalToLocal[boundaryFaces[base]];
+          finalIndices[offset + 1] = globalToLocal[boundaryFaces[base + 1]];
+          finalIndices[offset + 2] = globalToLocal[boundaryFaces[base + 2]];
+          faceIndexMap[displayFaceIndex] = originalFaceIndex;
+          offset += 3;
+        }
+      } else {
+        // Full mesh or nearly full - no compaction needed
+        finalIndices = new Uint32Array(sourceFaceIndices.length * 3);
+        faceIndexMap = new Int32Array(sourceFaceIndices.length);
+        let offset = 0;
+        for (let displayFaceIndex = 0; displayFaceIndex < sourceFaceIndices.length; displayFaceIndex += 1) {
+          const originalFaceIndex = sourceFaceIndices[displayFaceIndex];
+          const base = originalFaceIndex * 3;
+          finalIndices[offset] = boundaryFaces[base];
+          finalIndices[offset + 1] = boundaryFaces[base + 1];
+          finalIndices[offset + 2] = boundaryFaces[base + 2];
+          faceIndexMap[displayFaceIndex] = originalFaceIndex;
+          offset += 3;
+        }
       }
     }
 
@@ -859,4 +903,4 @@ export function FemGeometry({
       )}
     </group>
   );
-}
+});

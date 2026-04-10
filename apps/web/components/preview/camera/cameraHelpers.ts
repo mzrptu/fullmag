@@ -120,6 +120,7 @@ export function fitCameraToBounds(
   camera: THREE.Camera,
   maxDim: number,
   targetCenter?: THREE.Vector3,
+  controls?: { target: THREE.Vector3; update(): void } | null,
 ) {
   if (maxDim <= 0) return;
   const d = maxDim * 2;
@@ -133,6 +134,10 @@ export function fitCameraToBounds(
     camera.position.set(center.x + d * 0.75, center.y + d * 0.6, center.z + d * 0.75);
     camera.lookAt(center);
     ortho.updateProjectionMatrix();
+    if (controls) {
+      controls.target.copy(center);
+      controls.update();
+    }
     return;
   }
   const perspCam = camera as THREE.PerspectiveCamera;
@@ -141,4 +146,8 @@ export function fitCameraToBounds(
   camera.position.set(center.x + d * 0.75, center.y + d * 0.6, center.z + d * 0.75);
   camera.lookAt(center);
   perspCam.updateProjectionMatrix();
+  if (controls) {
+    controls.target.copy(center);
+    controls.update();
+  }
 }

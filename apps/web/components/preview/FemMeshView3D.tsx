@@ -49,6 +49,8 @@ import TextureTransformGizmo, {
 } from "./TextureTransformGizmo";
 import type { TextureTransform3D } from "@/lib/textureTransform";
 
+const STABLE_ORIGIN: [number, number, number] = [0, 0, 0];
+
 const AIR_OBJECT_SEGMENT_ID = "__air__";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
@@ -169,7 +171,7 @@ interface RenderLayer {
   viewState: MeshEntityViewState;
   boundaryFaceIndices: number[] | null;
   elementIndices: number[] | null;
-  nodeMask: boolean[] | null;
+  nodeMask: Uint8Array | null;
   surfaceFaces: [number, number, number][] | null;
   isPrimaryForCamera: boolean;
   isMagnetic: boolean;
@@ -194,7 +196,7 @@ function uniqueSortedMarkers(markers: readonly number[]): number[] {
   );
 }
 
-function countActiveNodes(mask: readonly boolean[] | null | undefined): number {
+function countActiveNodes(mask: ArrayLike<number | boolean> | null | undefined): number {
   if (!mask || mask.length === 0) {
     return 0;
   }
@@ -340,11 +342,11 @@ function collectSegmentNodeMask(
   objectSegments: readonly FemLiveMeshObjectSegment[],
   nNodes: number,
   segmentIds: ReadonlySet<string>,
-): boolean[] | null {
+): Uint8Array | null {
   if (segmentIds.size === 0) {
     return null;
   }
-  const nodeMask = new Array<boolean>(nNodes).fill(false);
+  const nodeMask = new Uint8Array(nNodes);
   let sawNode = false;
   for (const segment of objectSegments) {
     if (!segmentIds.has(segment.object_id)) {
@@ -354,7 +356,7 @@ function collectSegmentNodeMask(
     const count = Math.max(0, Math.trunc(segment.node_count));
     const end = Math.min(start + count, nNodes);
     for (let nodeIndex = start; nodeIndex < end; nodeIndex += 1) {
-      nodeMask[nodeIndex] = true;
+      nodeMask[nodeIndex] = 1;
       sawNode = true;
     }
   }
@@ -409,15 +411,15 @@ function collectPartElementIndices(
 function collectPartNodeMask(
   part: FemMeshPart,
   nNodes: number,
-): boolean[] | null {
+): Uint8Array | null {
   if (part.node_indices.length > 0) {
-    const nodeMask = new Array<boolean>(nNodes).fill(false);
+    const nodeMask = new Uint8Array(nNodes);
     let sawNode = false;
     for (const nodeIndex of part.node_indices) {
       if (!Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex >= nNodes) {
         continue;
       }
-      nodeMask[nodeIndex] = true;
+      nodeMask[nodeIndex] = 1;
       sawNode = true;
     }
     return sawNode ? nodeMask : null;
@@ -428,9 +430,9 @@ function collectPartNodeMask(
   if (start >= end) {
     return null;
   }
-  const nodeMask = new Array<boolean>(nNodes).fill(false);
+  const nodeMask = new Uint8Array(nNodes);
   for (let nodeIndex = start; nodeIndex < end; nodeIndex += 1) {
-    nodeMask[nodeIndex] = true;
+    nodeMask[nodeIndex] = 1;
   }
   return nodeMask;
 }
@@ -470,13 +472,13 @@ function FemClipPlanes({ enabled, axis, posPercentage, geomSize }: { enabled: bo
 }
 
 /** Auto-fit the R3F camera to the geometry bounding sphere whenever maxDim changes. */
-function CameraAutoFit({ maxDim, generation }: { maxDim: number; generation: number }) {
+function CameraAutoFit({ maxDim, generation, controlsRef }: { maxDim: number; generation: number; controlsRef?: React.MutableRefObject<any> }) {
   const { camera, invalidate } = useThree();
   useEffect(() => {
     if (maxDim <= 0 || generation === 0) return;
-    fitCameraToBounds(camera, maxDim);
+    fitCameraToBounds(camera, maxDim, undefined, controlsRef?.current ?? undefined);
     invalidate();
-  }, [camera, invalidate, maxDim, generation]);
+  }, [camera, controlsRef, invalidate, maxDim, generation]);
   return null;
 }
 
@@ -655,7 +657,7 @@ function FemMeshView3DInner({
       {
         boundaryFaceIndices: number[] | null;
         elementIndices: number[] | null;
-        nodeMask: boolean[] | null;
+        nodeMask: Uint8Array | null;
         surfaceFaces: [number, number, number][] | null;
       }
     >();
@@ -949,20 +951,24 @@ function FemMeshView3DInner({
         return meshData.activeMask ?? null;
       }
       const baseActiveMask = meshData.activeMask;
-      const combined = new Array<boolean>(meshData.nNodes).fill(false);
+      const combined = new Uint8Array(meshData.nNodes);
       for (const layer of visibleMagneticLayers) {
         const nodeMask = layer.nodeMask;
         if (!nodeMask) {
           continue;
         }
         for (let index = 0; index < nodeMask.length; index += 1) {
-          combined[index] = combined[index] || nodeMask[index];
+          if (nodeMask[index]) combined[index] = 1;
         }
       }
       if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
         return combined;
       }
-      return combined.map((visible, index) => visible && baseActiveMask[index]);
+      const result = new Uint8Array(meshData.nNodes);
+      for (let i = 0; i < result.length; i++) {
+        result[i] = combined[i] && baseActiveMask[i] ? 1 : 0;
+      }
+      return result;
     }
     const nodeMask = collectSegmentNodeMask(magneticSegments, meshData.nNodes, visibleMagneticIds);
     if (!nodeMask) {
@@ -972,7 +978,11 @@ function FemMeshView3DInner({
     if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
       return nodeMask;
     }
-    return nodeMask.map((visible, index) => visible && baseActiveMask[index]);
+    const result = new Uint8Array(meshData.nNodes);
+    for (let i = 0; i < result.length; i++) {
+      result[i] = nodeMask[i] && baseActiveMask[i] ? 1 : 0;
+    }
+    return result;
   }, [
     hasMeshParts,
     magneticSegments,
@@ -986,12 +996,14 @@ function FemMeshView3DInner({
       return null;
     }
     if (!hasMeshParts) {
-      return new Array<boolean>(meshData.nNodes).fill(true);
+      const mask = new Uint8Array(meshData.nNodes);
+      mask.fill(1);
+      return mask;
     }
     if (visibleLayers.length === 0) {
-      return new Array<boolean>(meshData.nNodes).fill(false);
+      return new Uint8Array(meshData.nNodes);
     }
-    const combined = new Array<boolean>(meshData.nNodes).fill(false);
+    const combined = new Uint8Array(meshData.nNodes);
     let sawExplicitMask = false;
     for (const layer of visibleLayers) {
       const nodeMask = layer.nodeMask;
@@ -1000,31 +1012,36 @@ function FemMeshView3DInner({
       }
       sawExplicitMask = true;
       for (let index = 0; index < nodeMask.length; index += 1) {
-        combined[index] = combined[index] || nodeMask[index];
+        if (nodeMask[index]) combined[index] = 1;
       }
     }
-    return sawExplicitMask ? combined : new Array<boolean>(meshData.nNodes).fill(true);
+    if (!sawExplicitMask) {
+      const allOnes = new Uint8Array(meshData.nNodes);
+      allOnes.fill(1);
+      return allOnes;
+    }
+    return combined;
   }, [hasMeshParts, meshData.nNodes, meshData.quantityDomain, visibleLayers]);
   const airArrowNodeMask = useMemo(() => {
     if (hasMeshParts) {
       const airLayers = visibleLayers.filter((layer) => layer.part.role === "air");
       if (airLayers.length === 0) {
-        return new Array<boolean>(meshData.nNodes).fill(false);
+        return new Uint8Array(meshData.nNodes);
       }
-      const combined = new Array<boolean>(meshData.nNodes).fill(false);
+      const combined = new Uint8Array(meshData.nNodes);
       for (const layer of airLayers) {
         const nodeMask = layer.nodeMask;
         if (!nodeMask) {
           continue;
         }
         for (let index = 0; index < nodeMask.length; index += 1) {
-          combined[index] = combined[index] || nodeMask[index];
+          if (nodeMask[index]) combined[index] = 1;
         }
       }
       return combined;
     }
     const nodeMask = collectSegmentNodeMask(objectSegments, meshData.nNodes, airSegmentIds);
-    return nodeMask ?? new Array<boolean>(meshData.nNodes).fill(false);
+    return nodeMask ?? new Uint8Array(meshData.nNodes);
   }, [airSegmentIds, hasMeshParts, meshData.nNodes, objectSegments, visibleLayers]);
   const resolvedVectorDomain: "magnetic_only" | "full_domain" | "airbox_only" = useMemo(() => {
     if (effectiveVectorDomainFilter === "airbox_only") {
@@ -2153,7 +2170,7 @@ function FemMeshView3DInner({
           interactionActive,
         }}
         onInteractionChange={setInteractionActive}
-        target={[0, 0, 0]}
+        target={STABLE_ORIGIN}
         bridgeRef={viewCubeSceneRef}
         controlsRef={controlsRef}
         onViewCubeRotate={handleViewCubeRotate}
@@ -2166,6 +2183,9 @@ function FemMeshView3DInner({
         }}
       >
         {!missingExactScopeSegment ? (
+          <>
+          <CameraAutoFit maxDim={dynamicMaxDim} generation={cameraFitGeneration} controlsRef={controlsRef} />
+          <FemClipPlanes enabled={clipEnabled} axis={clipAxis} posPercentage={clipPos} geomSize={dynamicGeomSize} />
           <FemViewportScene
             meshData={meshData}
             hasMeshParts={hasMeshParts}
@@ -2214,10 +2234,8 @@ function FemMeshView3DInner({
             onFaceHover={interactionActive ? undefined : handleFaceHover}
             onFaceUnhover={handleFaceUnhover}
             onFaceContextMenu={handleFaceContextMenu}
-            cameraFitGeneration={cameraFitGeneration}
-            CameraAutoFit={CameraAutoFit}
-            FemClipPlanes={FemClipPlanes}
           />
+          </>
         ) : null}
 
         {sceneTextureTransform && activeTransformScope === "texture" ? (

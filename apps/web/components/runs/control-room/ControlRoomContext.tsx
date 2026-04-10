@@ -16,6 +16,7 @@ import {
 } from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import { useWorkspaceStore } from "../../../lib/workspace/workspace-store";
+import { recordFrontendDebugEvent } from "../../../lib/workspace/navigation-debug";
 import type {
   ArtifactEntry,
   DisplaySelection,
@@ -501,7 +502,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     useState<VisualizationPresetRef | null>(() => loadLocalActiveVisualizationRef());
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const builderAutoPushGateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const builderAutoPushGateUntilRef = useRef(0);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
+  const [builderAutoPushGateVersion, setBuilderAutoPushGateVersion] = useState(0);
   const [meshSelection, setMeshSelection] = useState<MeshSelectionSnapshot>({
     selectedFaceIndices: [],
     primaryFaceIndex: null,
@@ -1144,6 +1148,11 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       clearTimeout(builderPushTimerRef.current);
       builderPushTimerRef.current = null;
     }
+    if (builderAutoPushGateTimerRef.current) {
+      clearTimeout(builderAutoPushGateTimerRef.current);
+      builderAutoPushGateTimerRef.current = null;
+    }
+    builderAutoPushGateUntilRef.current = 0;
   }, [workspaceHydrationKey]);
 
   useEffect(() => {
@@ -1234,6 +1243,14 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       setRunUntilInput(firstRunStage.until_seconds);
     }
     builderHydratedSessionRef.current = workspaceHydrationKey;
+    builderAutoPushGateUntilRef.current = Date.now() + 2500;
+    if (builderAutoPushGateTimerRef.current) {
+      clearTimeout(builderAutoPushGateTimerRef.current);
+    }
+    builderAutoPushGateTimerRef.current = setTimeout(() => {
+      builderAutoPushGateTimerRef.current = null;
+      setBuilderAutoPushGateVersion((version) => version + 1);
+    }, 2550);
     lastBuilderPushSignatureRef.current = buildScriptBuilderSignature(incomingGraph, {
       solverSettings,
       meshOptions,
@@ -1425,17 +1442,38 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (lastBuilderPushSignatureRef.current === localBuilderSignature) {
       return;
     }
+    const startupGateActive =
+      Date.now() < builderAutoPushGateUntilRef.current ||
+      workspaceStatus === "bootstrapping" ||
+      workspaceStatus === "materializing_script";
+    if (startupGateActive) {
+      recordFrontendDebugEvent("scene-sync", "auto_push_deferred_during_startup", {
+        workspaceStatus,
+        gateUntil: builderAutoPushGateUntilRef.current,
+      });
+      return;
+    }
     if (builderPushTimerRef.current) {
       clearTimeout(builderPushTimerRef.current);
     }
     builderPushTimerRef.current = setTimeout(() => {
+      recordFrontendDebugEvent("scene-sync", "auto_push_start", {
+        workspaceStatus,
+      });
       void liveApi
         .updateSceneDocument(localBuilderDraft)
         .then(() => {
+          recordFrontendDebugEvent("scene-sync", "auto_push_success", {
+            workspaceStatus,
+          });
           lastBuilderPushSignatureRef.current = localBuilderSignature;
         })
         .catch((builderError) => {
           console.warn("Failed to persist scene document draft", builderError);
+          recordFrontendDebugEvent("scene-sync", "auto_push_failed", {
+            workspaceStatus,
+            message: builderError instanceof Error ? builderError.message : String(builderError),
+          });
           lastBuilderPushSignatureRef.current = null;
         });
     }, 250);
@@ -1451,13 +1489,18 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     localBuilderSignature,
     remoteBuilderSignature,
     scriptBuilder,
+    workspaceStatus,
     workspaceHydrationKey,
+    builderAutoPushGateVersion,
   ]);
 
   useEffect(() => {
     return () => {
       if (builderPushTimerRef.current) {
         clearTimeout(builderPushTimerRef.current);
+      }
+      if (builderAutoPushGateTimerRef.current) {
+        clearTimeout(builderAutoPushGateTimerRef.current);
       }
     };
   }, []);
@@ -3759,7 +3802,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
     requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
     previewIsStale, previewIsBootstrapStale,
-    selectedVectors, fieldStats,
     setViewMode, setComponent, setPlane, setSliceIndex, setSelectedQuantity,
     setConsoleCollapsed, setSidebarCollapsed,
     updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
@@ -3778,7 +3820,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     requestedPreviewXChosenSize, requestedPreviewYChosenSize, requestedPreviewAutoScale,
     requestedPreviewMaxPoints, previewEveryNOptions, previewMaxPointOptions,
     previewIsStale, previewIsBootstrapStale,
-    selectedVectors, fieldStats,
     updatePreview, handleViewModeChange, handleCapture, handleExport, requestPreviewQuantity,
   ]);
 

@@ -128,7 +128,7 @@ function AntennaOverlayMeshes({
   );
 }
 
-export function FemViewportScene({
+export const FemViewportScene = React.memo(function FemViewportScene({
   meshData,
   hasMeshParts,
   visibleLayers,
@@ -172,9 +172,6 @@ export function FemViewportScene({
   onFaceHover,
   onFaceUnhover,
   onFaceContextMenu,
-  cameraFitGeneration,
-  CameraAutoFit,
-  FemClipPlanes,
 }: {
   meshData: FemMeshData;
   hasMeshParts: boolean;
@@ -206,7 +203,7 @@ export function FemViewportScene({
   arrowAlpha: number;
   arrowLengthScale: number;
   arrowThickness: number;
-  arrowActiveNodeMask: boolean[] | null;
+  arrowActiveNodeMask: Uint8Array | boolean[] | null;
   arrowBoundaryFaceIndices: number[] | null;
   selectedFaces: number[];
   antennaOverlays: AntennaOverlay[];
@@ -219,25 +216,9 @@ export function FemViewportScene({
   onFaceHover?: (e: any) => void;
   onFaceUnhover?: (e: any) => void;
   onFaceContextMenu?: (e: any) => void;
-  cameraFitGeneration: number;
-  CameraAutoFit: React.ComponentType<{ maxDim: number; generation: number }>;
-  FemClipPlanes: React.ComponentType<{
-    enabled: boolean;
-    axis: ClipAxis;
-    posPercentage: number;
-    geomSize: [number, number, number];
-  }>;
 }) {
   return (
     <>
-      <CameraAutoFit maxDim={dynamicMaxDim} generation={cameraFitGeneration} />
-      <FemClipPlanes
-        enabled={clipEnabled}
-        axis={clipAxis}
-        posPercentage={clipPos}
-        geomSize={dynamicGeomSize}
-      />
-
       {hasMeshParts
         ? visibleLayers.map((layer) => (
             <FemGeometry
@@ -339,4 +320,4 @@ export function FemViewportScene({
       <SceneAxes3D worldExtent={axesWorldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
     </>
   );
-}
+});

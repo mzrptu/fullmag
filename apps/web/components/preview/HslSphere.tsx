@@ -17,12 +17,13 @@
  * reference sphere must swap Y/Z when sampling the HSL map for FEM/FDM.
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Text, Billboard, Line } from "@react-three/drei";
 import { magnetizationHslColor } from "./magnetizationColor";
 import { cn } from "@/lib/utils";
+import { useCanvasHost } from "./shared/useCanvasHost";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -76,6 +77,7 @@ function CameraSync({
   mainCameraRef: React.MutableRefObject<{ camera: THREE.Camera; controls?: any } | null>;
 }) {
   const { camera, invalidate } = useThree();
+  const syncRafRef = useRef<number | null>(null);
   const syncCamera = useCallback(() => {
     const main = mainCameraRef.current;
     if (!main) {
@@ -94,6 +96,15 @@ function CameraSync({
       addEventListener?: (type: string, listener: () => void) => void;
       removeEventListener?: (type: string, listener: () => void) => void;
     } | null = null;
+    const scheduleSync = () => {
+      if (syncRafRef.current !== null) {
+        return;
+      }
+      syncRafRef.current = requestAnimationFrame(() => {
+        syncRafRef.current = null;
+        syncCamera();
+      });
+    };
 
     const attachToControls = () => {
       const controls = mainCameraRef.current?.controls;
@@ -102,8 +113,8 @@ function CameraSync({
         return;
       }
       boundControls = controls;
-      controls.addEventListener("change", syncCamera);
-      syncCamera();
+      controls.addEventListener("change", scheduleSync);
+      scheduleSync();
     };
 
     attachToControls();
@@ -111,7 +122,11 @@ function CameraSync({
       if (frameId !== null) {
         cancelAnimationFrame(frameId);
       }
-      boundControls?.removeEventListener?.("change", syncCamera);
+      if (syncRafRef.current !== null) {
+        cancelAnimationFrame(syncRafRef.current);
+        syncRafRef.current = null;
+      }
+      boundControls?.removeEventListener?.("change", scheduleSync);
     };
   }, [mainCameraRef, syncCamera]);
 
@@ -130,8 +145,10 @@ export default function HslSphere({
   embedded = false,
 }: HslSphereProps) {
   const sphereSize = compact ? Math.round(size * 0.82) : size;
+  const { hostRef, hostNode } = useCanvasHost<HTMLDivElement>();
   return (
     <div
+      ref={hostRef}
       className={cn(
         "pointer-events-none relative",
         embedded ? "self-start" : null,
@@ -140,33 +157,36 @@ export default function HslSphere({
       )}
       style={{ width: sphereSize, height: sphereSize }}
     >
-      <Canvas
-        frameloop="demand"
-        orthographic
-        camera={{
-          left: -1.4,
-          right: 1.4,
-          top: 1.4,
-          bottom: -1.4,
-          near: 0.1,
-          far: 10,
-          position: [0, 0, 3],
-        }}
-        gl={{ alpha: true, antialias: true }}
-        dpr={Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)}
-        style={{
-          width: sphereSize,
-          height: sphereSize,
-          borderRadius: "50%",
-          overflow: "hidden",
-        }}
-      >
-        <HslSphereScene
-          mainCameraRef={sceneRef}
-          axisConvention={axisConvention}
-          compact={compact}
-        />
-      </Canvas>
+      {hostNode ? (
+        <Canvas
+          eventSource={hostNode}
+          frameloop="demand"
+          orthographic
+          camera={{
+            left: -1.4,
+            right: 1.4,
+            top: 1.4,
+            bottom: -1.4,
+            near: 0.1,
+            far: 10,
+            position: [0, 0, 3],
+          }}
+          gl={{ alpha: true, antialias: true }}
+          dpr={Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)}
+          style={{
+            width: sphereSize,
+            height: sphereSize,
+            borderRadius: "50%",
+            overflow: "hidden",
+          }}
+        >
+          <HslSphereScene
+            mainCameraRef={sceneRef}
+            axisConvention={axisConvention}
+            compact={compact}
+          />
+        </Canvas>
+      ) : null}
     </div>
   );
 }
@@ -218,6 +238,12 @@ function HslSphereScene({
     () => new THREE.MeshBasicMaterial({ vertexColors: true }),
     [],
   );
+  useEffect(() => {
+    return () => {
+      sphereGeo.dispose();
+      sphereMat.dispose();
+    };
+  }, [sphereGeo, sphereMat]);
   const axisLabels =
     axisConvention === "swapYZ"
       ? {

@@ -59,7 +59,7 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
     const isRunning = session?.status === "running" || session?.status === "materializing_script";
     if (!isRunning) return;
     
-    const interval = setInterval(() => setNow(Date.now()), 200);
+    const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [session?.status]);
 
@@ -103,6 +103,8 @@ export function useControlRoomTransport(state: SessionState | null): TransportCo
     dtSpark,
     eTotalSpark,
     preview,
+    selectedVectors: null,
+    fieldStats: null,
     hasSolverTelemetry,
   };
 }

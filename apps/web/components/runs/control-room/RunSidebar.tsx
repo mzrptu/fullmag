@@ -27,7 +27,6 @@ import {
   buildVisualizationPresetNodeId,
 } from "./visualizationPresets";
 import { meshWorkspaceNodeToDockTab, meshWorkspaceNodeToPreset } from "./meshWorkspace";
-import { useCurrentAnalyzeArtifacts } from "./useCurrentAnalyzeArtifacts";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -88,6 +87,20 @@ function countTreeNodes(nodes: TreeNodeData[]): number {
   );
 }
 
+function uniqueSortedModeIndices(artifactPaths: string[]): number[] {
+  const indices = new Set<number>();
+  for (const path of artifactPaths) {
+    if (!path.startsWith("eigen/modes/")) continue;
+    const match = /mode_(\d+)\.json$/i.exec(path);
+    if (!match) continue;
+    const index = Number.parseInt(match[1], 10);
+    if (Number.isFinite(index)) {
+      indices.add(index);
+    }
+  }
+  return Array.from(indices).sort((a, b) => a - b);
+}
+
 /**
  * RunSidebar — horizontal two-column Master-Detail layout.
  * Column 1 (narrow): Model Builder tree — always visible, serves as the
@@ -126,28 +139,43 @@ export default function RunSidebar() {
     }
   }, [cmd.isFemBackend, model.worldExtentSource]);
   const runtimeDeclaredUniverse = model.domainFrame?.declared_universe ?? null;
-  const analyzeArtifacts = useCurrentAnalyzeArtifacts(model.analyzeSelection.refreshNonce);
+  const artifactPaths = useMemo(
+    () => (cmd.artifacts ?? []).map((artifact) => artifact.path),
+    [cmd.artifacts],
+  );
+  const hasEigenSpectrumArtifact = useMemo(
+    () =>
+      artifactPaths.some(
+        (path) => path === "eigen/spectrum.json" || path.startsWith("eigen/spectrum"),
+      ),
+    [artifactPaths],
+  );
+  const hasEigenDispersionArtifact = useMemo(
+    () =>
+      artifactPaths.some(
+        (path) => path === "eigen/dispersion.json" || path.startsWith("eigen/dispersion"),
+      ),
+    [artifactPaths],
+  );
+  const savedEigenModeIndices = useMemo(
+    () => uniqueSortedModeIndices(artifactPaths),
+    [artifactPaths],
+  );
 
   /* ── Derive eigen state from artifacts ── */
   const eigenModeCount = useMemo(() => {
-    if (analyzeArtifacts.spectrum) {
-      return analyzeArtifacts.spectrum.modes.length;
+    if (savedEigenModeIndices.length > 0) {
+      return savedEigenModeIndices.length;
     }
-    const artifacts = cmd.artifacts ?? [];
-    const hasSpectrum = artifacts.some(
-      (a) => a.path === "eigen/spectrum.json" || a.path.startsWith("eigen/spectrum"),
-    );
-    if (!hasSpectrum) return null;
-    const modeCount = artifacts.filter((a) => a.path.startsWith("eigen/modes/mode_")).length;
-    return modeCount > 0 ? modeCount : null;
-  }, [analyzeArtifacts.spectrum, cmd.artifacts]);
+    return null;
+  }, [savedEigenModeIndices.length]);
   const eigenModeSummaries = useMemo(
     () =>
-      analyzeArtifacts.spectrum?.modes.map((mode) => ({
-        index: mode.index,
-        label: `Mode ${mode.index} · ${(mode.frequency_hz / 1e9).toFixed(3)} GHz · ${mode.dominant_polarization}`,
-      })) ?? [],
-    [analyzeArtifacts.spectrum],
+      savedEigenModeIndices.map((index) => ({
+        index,
+        label: `Mode ${index}`,
+      })),
+    [savedEigenModeIndices],
   );
   const resultQuantityTree = useMemo(() => {
     const available = (cmd.quantities ?? []).filter((quantity) => quantity.available);
@@ -166,8 +194,8 @@ export default function RunSidebar() {
     return { field, scalar };
   }, [cmd.quantities]);
   const hasResultsSection = useMemo(() => {
-    const hasEigen = Boolean(analyzeArtifacts.spectrum);
-    const hasDispersion = analyzeArtifacts.dispersionRows.length > 0;
+    const hasEigen = hasEigenSpectrumArtifact || savedEigenModeIndices.length > 0;
+    const hasDispersion = hasEigenDispersionArtifact;
     const hasScalarRows = tp.scalarRows.length > 0;
     const hasRuntimeSteps = (cmd.run?.total_steps ?? 0) > 0;
     return (
@@ -180,12 +208,13 @@ export default function RunSidebar() {
       resultQuantityTree.scalar.length > 0
     );
   }, [
-    analyzeArtifacts.dispersionRows.length,
-    analyzeArtifacts.spectrum,
     cmd.run?.total_steps,
+    hasEigenDispersionArtifact,
+    hasEigenSpectrumArtifact,
     model.resultWorkspaceEntries.length,
     resultQuantityTree.field.length,
     resultQuantityTree.scalar.length,
+    savedEigenModeIndices.length,
     tp.scalarRows.length,
   ]);
   const resultWorkspaceEntriesForTree = useMemo(
@@ -262,7 +291,7 @@ export default function RunSidebar() {
         resultWorkspaceEntries: resultWorkspaceEntriesForTree,
         eigenModeCount,
         eigenModeSummaries,
-        eigenHasDispersion: analyzeArtifacts.dispersionRows.length > 0,
+        eigenHasDispersion: hasEigenDispersionArtifact,
         hasVortexData: tp.scalarRows.length > 4,
         visualizationProjectPresets: model.visualizationProjectPresets,
         visualizationLocalPresets: model.visualizationLocalPresets,
@@ -274,7 +303,7 @@ export default function RunSidebar() {
       model.solverPlan?.integrator, model.solverPlan?.relaxation?.algorithm,
       model.solverSettings.integrator, model.solverSettings.relaxAlgorithm, model.solverSettings.torqueTolerance,
       tp.effectiveDmDt, tp.scalarRows.length, model.worldCenter, model.worldExtent, runtimeDeclaredUniverse?.mode, runtimeDeclaredUniverse?.padding, runtimeDeclaredUniverse?.size,
-      universeRole, hasResultsSection, resultQuantityTree.field, resultQuantityTree.scalar, resultWorkspaceEntriesForTree, eigenModeCount, eigenModeSummaries, analyzeArtifacts.dispersionRows.length,
+      universeRole, hasResultsSection, resultQuantityTree.field, resultQuantityTree.scalar, resultWorkspaceEntriesForTree, eigenModeCount, eigenModeSummaries, hasEigenDispersionArtifact,
       launchIntent?.displayName, model.airPart?.element_count, model.airPart?.node_count,
       model.visualizationProjectPresets, model.visualizationLocalPresets, model.activeVisualizationPresetRef,
     ],

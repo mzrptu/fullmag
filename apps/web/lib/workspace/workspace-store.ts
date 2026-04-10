@@ -118,6 +118,5 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
 }));
 
 export function useActiveStageLayout(): StageLayoutState {
-  const state = useWorkspaceStore();
-  return state.stageLayouts[state.currentPerspective];
+  return useWorkspaceStore((state) => state.stageLayouts[state.currentPerspective]);
 }

@@ -18,6 +18,7 @@ import {
 } from "@/lib/workspace/launch-intent";
 import { detectLiveSessionIntent, type DetectedLiveSession } from "@/lib/workspace/launch-intent-live";
 import { pickTextFile, stageLaunchTextFile } from "@/lib/workspace/file-access";
+import { recordFrontendDebugEvent } from "@/lib/workspace/navigation-debug";
 
 function toIntentFromRecent(entry: RecentSimulationEntry): LaunchIntent {
   return {
@@ -46,8 +47,13 @@ export default function StartHubPage() {
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
+      recordFrontendDebugEvent("start-hub", "detect_live_session_start");
       const detected = await detectLiveSessionIntent();
       if (cancelled) return;
+      recordFrontendDebugEvent("start-hub", "detect_live_session_complete", {
+        detected: Boolean(detected),
+        targetStage: detected?.intent.targetStage ?? null,
+      });
       setLiveSession(detected);
       if (!detected) return;
       const recentEntry: RecentSimulationEntry = {
@@ -79,6 +85,16 @@ export default function StartHubPage() {
     if (intent.resumeProjectId) params.set("projectId", intent.resumeProjectId);
     if (intent.displayName) params.set("name", intent.displayName);
     if (intent.launchAssetId) params.set("asset", intent.launchAssetId);
+    recordFrontendDebugEvent(
+      "start-hub",
+      "router_push_launch_intent",
+      {
+        target,
+        params: params.toString(),
+        source: intent.source,
+      },
+      { includeStack: true },
+    );
     router.push(`${target}?${params.toString()}` as any);
   };
 

@@ -88,6 +88,16 @@ export function useCurrentAnalyzeArtifacts(
         // Prefer live artifact listing (fresh filesystem scan). Bootstrap can be stale.
         const artifacts =
           liveArtifacts.length > 0 ? liveArtifacts : bootstrapArtifacts;
+        const artifactPaths = artifacts.map((artifact) => artifact.path);
+        const hasSpectrum = artifactPaths.some(
+          (path) => path === "eigen/spectrum.json" || path.startsWith("eigen/spectrum"),
+        );
+        const hasDispersion = artifactPaths.some(
+          (path) => path === "eigen/dispersion.json" || path.startsWith("eigen/dispersion"),
+        );
+        const hasBranches = artifactPaths.some(
+          (path) => path === "eigen/branches.json" || path.startsWith("eigen/branches"),
+        );
 
         const nextModeArtifactMap = new Map<number, string>();
         for (const a of artifacts) {
@@ -98,15 +108,21 @@ export function useCurrentAnalyzeArtifacts(
         }
 
         const [nextSpectrum, nextDispersion, nextBranches] = await Promise.all([
-          fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`).catch(
-            () => null,
-          ),
-          fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`).catch(
-            () => null,
-          ),
-          fetchJson<EigenBranchesArtifact>(`${base}/v1/live/current/eigen/branches`).catch(
-            () => null,
-          ),
+          hasSpectrum
+            ? fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`).catch(
+                () => null,
+              )
+            : Promise.resolve(null),
+          hasDispersion
+            ? fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`).catch(
+                () => null,
+              )
+            : Promise.resolve(null),
+          hasBranches
+            ? fetchJson<EigenBranchesArtifact>(`${base}/v1/live/current/eigen/branches`).catch(
+                () => null,
+              )
+            : Promise.resolve(null),
         ]);
 
         if (cancelled) return;
@@ -157,7 +173,10 @@ export function useCurrentAnalyzeArtifacts(
     }
   }, [modeCache]);
 
-  const hasEigenArtifacts = useMemo(() => Boolean(spectrum), [spectrum]);
+  const hasEigenArtifacts = useMemo(
+    () => Boolean(spectrum) || Boolean(branches) || dispersionRows.length > 0 || modeArtifactMap.size > 0,
+    [branches, dispersionRows.length, modeArtifactMap, spectrum],
+  );
 
   const savedModeIndices = useMemo(
     () => Array.from(modeArtifactMap.keys()).sort((a, b) => a - b),

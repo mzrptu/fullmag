@@ -8,6 +8,7 @@ import { PivotControls, TrackballControls } from "@react-three/drei";
 import ViewCube from "./ViewCube";
 import { fitCameraToBounds, focusCameraOnBounds, rotateCameraAroundTarget } from "./camera/cameraHelpers";
 import SceneAxes3D from "./r3f/SceneAxes3D";
+import { useCanvasHost } from "./shared/useCanvasHost";
 import type {
   BuilderObjectOverlay,
   FocusObjectRequest,
@@ -271,6 +272,7 @@ export default function BoundsPreview3D({
   onRequestObjectSelect,
   onGeometryTranslate,
 }: BoundsPreview3DProps) {
+  const { hostRef, hostNode } = useCanvasHost<HTMLDivElement>();
   const bounds = useMemo(() => combineOverlayBounds(objectOverlays), [objectOverlays]);
   const frameCenter = worldCenter
     ? new THREE.Vector3(worldCenter[0], worldCenter[1], worldCenter[2])
@@ -353,41 +355,47 @@ export default function BoundsPreview3D({
     : [0, 0, 0];
 
   return (
-    <div className="relative flex flex-1 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-md bg-background">
-      <Canvas camera={{ position: [3, 2.4, 3], fov: 45, near: 0.0001, far: 10000 }}>
-        <color attach="background" args={[0x1e1e2e]} />
-        <ambientLight intensity={0.45} />
-        <directionalLight position={[1, 2, 3]} intensity={0.8} />
-        <directionalLight position={[-1, -1, -2]} intensity={0.25} color={0x6688cc} />
+    <div ref={hostRef} className="relative flex flex-1 h-full w-full min-h-0 min-w-0 overflow-hidden rounded-md bg-background">
+      {hostNode ? (
+        <Canvas
+          eventSource={hostNode}
+          frameloop="demand"
+          camera={{ position: [3, 2.4, 3], fov: 45, near: 0.0001, far: 10000 }}
+        >
+          <color attach="background" args={[0x1e1e2e]} />
+          <ambientLight intensity={0.45} />
+          <directionalLight position={[1, 2, 3]} intensity={0.8} />
+          <directionalLight position={[-1, -1, -2]} intensity={0.25} color={0x6688cc} />
 
-        <CameraAutoFit maxDim={sceneMaxDim} center={new THREE.Vector3(0, 0, 0)} />
+          <CameraAutoFit maxDim={sceneMaxDim} center={new THREE.Vector3(0, 0, 0)} />
 
-        {worldExtent ? (
-          <DomainFrameBox
-            worldExtent={worldExtent}
-            worldCenter={worldCenter ?? [0, 0, 0]}
+          {worldExtent ? (
+            <DomainFrameBox
+              worldExtent={worldExtent}
+              worldCenter={worldCenter ?? [0, 0, 0]}
+              geomCenter={frameCenter}
+            />
+          ) : null}
+
+          <OverlayBoxes
+            overlays={objectOverlays}
             geomCenter={frameCenter}
+            selectedObjectId={selectedObjectId}
+            onRequestObjectSelect={onRequestObjectSelect}
+            onGeometryTranslate={onGeometryTranslate}
           />
-        ) : null}
 
-        <OverlayBoxes
-          overlays={objectOverlays}
-          geomCenter={frameCenter}
-          selectedObjectId={selectedObjectId}
-          onRequestObjectSelect={onRequestObjectSelect}
-          onGeometryTranslate={onGeometryTranslate}
-        />
+          {worldExtent ? (
+            <SceneAxes3D worldExtent={worldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
+          ) : null}
 
-        {worldExtent ? (
-          <SceneAxes3D worldExtent={worldExtent} center={axesCenter} sceneScale={[1, 1, 1]} />
-        ) : null}
-
-        <SyncedControls
-          controlsRefObject={controlsRef}
-          viewCubeBridgeRef={viewCubeSceneRef}
-          target={[0, 0, 0]}
-        />
-      </Canvas>
+          <SyncedControls
+            controlsRefObject={controlsRef}
+            viewCubeBridgeRef={viewCubeSceneRef}
+            target={[0, 0, 0]}
+          />
+        </Canvas>
+      ) : null}
 
       <ViewCube
         sceneRef={viewCubeSceneRef}

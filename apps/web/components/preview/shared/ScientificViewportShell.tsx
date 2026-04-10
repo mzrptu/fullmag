@@ -11,10 +11,13 @@ import {
 } from "@react-three/drei";
 import { getViewportQualityProfile, type ViewportQualityProfileId } from "./viewportQualityProfiles";
 import ViewportGizmoStack from "./ViewportGizmoStack";
+import { useCanvasHost } from "./useCanvasHost";
 
 export type ShellProjection = "perspective" | "orthographic";
 export type ShellNavigation = "trackball" | "cad";
 export type ViewportFrameloopMode = "always" | "demand" | "never";
+
+const DEFAULT_SHELL_TARGET: [number, number, number] = [0, 0, 0];
 
 export interface ViewportRenderPolicy {
   mode: "always" | "demand" | "paused";
@@ -143,7 +146,7 @@ export default function ScientificViewportShell({
   projection = "perspective",
   navigation = "trackball",
   qualityProfile = "interactive",
-  target = [0, 0, 0],
+  target = DEFAULT_SHELL_TARGET,
   onViewCubeRotate,
   onResetView,
   showOrientationSphere = false,
@@ -162,6 +165,7 @@ export default function ScientificViewportShell({
   const internalControlsRef = useRef<any>(null);
   const effectiveBridgeRef = bridgeRef ?? internalBridgeRef;
   const effectiveControlsRef = externalControlsRef ?? internalControlsRef;
+  const { hostRef, hostNode } = useCanvasHost<HTMLDivElement>();
   const profile = getViewportQualityProfile(qualityProfile);
   const interactionActiveRef = useRef(false);
   const resolvedRenderMode = renderPolicy?.mode ?? "demand";
@@ -190,44 +194,47 @@ export default function ScientificViewportShell({
   );
 
   return (
-    <div className="relative flex h-full w-full min-h-0 min-w-0 overflow-hidden rounded-md bg-background">
-      <Canvas
-        frameloop={frameloop}
-        gl={glOptions}
-        dpr={Math.min(
-          typeof window !== "undefined" ? window.devicePixelRatio : 1,
-          profile.dprCap,
-        )}
-        onPointerMissed={onPointerMissed}
-        onContextMenu={onCanvasContextMenu}
-        onCreated={({ gl, camera }) => {
-          if (profile.toneMapping === "aces") {
-            gl.toneMapping = THREE.ACESFilmicToneMapping;
-            gl.toneMappingExposure = 1.05;
-          } else {
-            gl.toneMapping = THREE.NoToneMapping;
-          }
-          if (effectiveBridgeRef) {
-            effectiveBridgeRef.current = { camera, controls: effectiveControlsRef.current };
-          }
-          onCanvasCreated?.({ gl, camera });
-        }}
-      >
-        <ShellCamera projection={projection} />
-        <color attach="background" args={[backgroundColor]} />
-        <ambientLight intensity={0.32} />
-        <directionalLight position={[1.5, 2.5, 3.5]} intensity={1.0} />
-        <directionalLight position={[-1.2, -1.4, -2.5]} intensity={0.28} />
-        <hemisphereLight intensity={0.24} />
-        {children}
-        <ShellControls
-          navigation={navigation}
-          target={target}
-          controlsRef={effectiveControlsRef}
-          onInteractionChange={handleInteractionChange}
-        />
-        <ShellBridgeSync bridgeRef={effectiveBridgeRef} controlsRef={effectiveControlsRef} />
-      </Canvas>
+    <div ref={hostRef} className="relative flex h-full w-full min-h-0 min-w-0 overflow-hidden rounded-md bg-background">
+      {hostNode ? (
+        <Canvas
+          eventSource={hostNode}
+          frameloop={frameloop}
+          gl={glOptions}
+          dpr={Math.min(
+            typeof window !== "undefined" ? window.devicePixelRatio : 1,
+            profile.dprCap,
+          )}
+          onPointerMissed={onPointerMissed}
+          onContextMenu={onCanvasContextMenu}
+          onCreated={({ gl, camera }) => {
+            if (profile.toneMapping === "aces") {
+              gl.toneMapping = THREE.ACESFilmicToneMapping;
+              gl.toneMappingExposure = 1.05;
+            } else {
+              gl.toneMapping = THREE.NoToneMapping;
+            }
+            if (effectiveBridgeRef) {
+              effectiveBridgeRef.current = { camera, controls: effectiveControlsRef.current };
+            }
+            onCanvasCreated?.({ gl, camera });
+          }}
+        >
+          <ShellCamera projection={projection} />
+          <color attach="background" args={[backgroundColor]} />
+          <ambientLight intensity={0.32} />
+          <directionalLight position={[1.5, 2.5, 3.5]} intensity={1.0} />
+          <directionalLight position={[-1.2, -1.4, -2.5]} intensity={0.28} />
+          <hemisphereLight intensity={0.24} />
+          {children}
+          <ShellControls
+            navigation={navigation}
+            target={target}
+            controlsRef={effectiveControlsRef}
+            onInteractionChange={handleInteractionChange}
+          />
+          <ShellBridgeSync bridgeRef={effectiveBridgeRef} controlsRef={effectiveControlsRef} />
+        </Canvas>
+      ) : null}
 
       {toolbar}
       {hud}

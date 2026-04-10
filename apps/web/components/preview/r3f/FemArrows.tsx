@@ -20,7 +20,7 @@ interface FemArrowsProps {
   center: THREE.Vector3;
   maxDim: number;
   visible: boolean;
-  activeNodeMask?: boolean[] | null;
+  activeNodeMask?: Uint8Array | boolean[] | null;
   boundaryFaceIndices?: number[] | null;
   lengthMode?: ArrowLengthMode;
 }

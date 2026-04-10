@@ -22,7 +22,7 @@ study.engine("fem")
 study.device("cpu", precision="double")
 study.universe(
     mode="auto",
-    size=(500e-9, 500e-9, 50e-9),
+    size=(150e-9, 150e-9, 20e-9),
     center=(0, 0, 0),
     padding=(0, 0, 0),
     airbox_hmax=200e-9,
@@ -36,7 +36,7 @@ free = study.geometry(
     # path (with internal geometric scaling), which is more robust for very
     # thin nanoscale cylinders than the direct cylinder mesher path.
     fm.Translate(
-        fm.Cylinder(radius=200e-9, height=9e-9, name="free_disk"),
+        fm.Cylinder(radius=50e-9, height=9e-9, name="free_disk"),
         (0.0, 0.0, 0.0),
     ),
     name="free",

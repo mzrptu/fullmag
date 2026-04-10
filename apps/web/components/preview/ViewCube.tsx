@@ -104,8 +104,17 @@ export default function ViewCube({
   useEffect(() => {
     let frameId: number | null = null;
     let boundControls: any = null;
+    let syncRafId: number | null = null;
 
-    const onControlsChange = () => syncTransform();
+    const onControlsChange = () => {
+      if (syncRafId !== null) {
+        return;
+      }
+      syncRafId = requestAnimationFrame(() => {
+        syncRafId = null;
+        syncTransform();
+      });
+    };
     const attachToControls = () => {
       const controls = sceneRef?.current?.controls as any;
       if (!controls || typeof controls.addEventListener !== "function") {
@@ -121,6 +130,9 @@ export default function ViewCube({
     return () => {
       if (frameId !== null) {
         cancelAnimationFrame(frameId);
+      }
+      if (syncRafId !== null) {
+        cancelAnimationFrame(syncRafId);
       }
       boundControls?.removeEventListener?.("change", onControlsChange);
     };

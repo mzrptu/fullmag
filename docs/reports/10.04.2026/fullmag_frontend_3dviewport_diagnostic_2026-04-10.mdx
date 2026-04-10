@@ -433,3 +433,86 @@ Najmocniejsze winne dziś:
 - per-layer `FemGeometry` rebuild,
 - dodatkowe sync/render subsystemy (`HslSphere`, `ViewCube`, overlays).
 
+---
+
+## Status wdrożenia napraw
+
+### Zaimplementowane
+
+1. **`viewportValue` został oczyszczony z danych transportowych.**  
+   `selectedVectors` i `fieldStats` zostały przeniesione do `TransportContextValue`, więc viewport context nie jest już tykany przez szybkie dane solvera tylko dlatego, że są potrzebne do renderu pola.
+
+2. **Ukryty FDM viewport nie jest już utrzymywany jako stale mounted canvas.**  
+   `MagnetizationView3D` jest teraz renderowany tylko wtedy, gdy FDM 3D lub FDM Mesh naprawdę jest aktywny.
+
+3. **Canvasy R3F dostały stabilny host / event source.**  
+   Dodano wspólny helper `useCanvasHost`, a `MagnetizationView3D`, `BoundsPreview3D` i `ScientificViewportShell` nie montują już canvasa zanim istnieje realny host DOM.  
+   To adresuje błąd typu `Cannot read properties of null (reading 'addEventListener')` w lifecycle R3F.
+
+4. **`BoundsPreview3D` przeszedł na `frameloop="demand"`.**  
+   Ten preview nie renderuje się już stale bez potrzeby.
+
+5. **Pomocnicze gizma zostały odchudzone.**  
+   `ViewCube` i `HslSphere` aktualizują się przez `requestAnimationFrame` zamiast wykonywać pełną synchronizację na każdy event kontrolera.
+
+6. **Dodano cleanup geometrii/materialów FDM.**  
+   `FdmInstances` dispose’uje zasoby przy przełączaniu geometrii i materiału, co ogranicza degradację podczas dłuższej sesji.
+
+7. **Ciężkie subtree viewportowe zostały ustabilizowane.**  
+   `ViewportBar`, `ViewportCanvasArea`, `WorkspaceControlStrip`, `FemViewportScene` i `FemGeometry` zostały opakowane w memoizację, żeby nie odświeżały się od każdego parent re-render.
+
+8. **Ograniczono część globalnego churnu UI.**  
+   `useActiveStageLayout()` przestał czytać cały store, a kilka callbacków/effectów w `RunControlRoom` i `ViewportPanels` dostało węższe zależności.
+
+9. **Analyze nie spamuje już pustych endpointów `eigen/*`.**  
+   Frontend sprawdza listę artefaktów przed fetchowaniem `spectrum`, `dispersion` i `branches`, więc nie generuje już niepotrzebnych `404`.
+
+10. **`useSessionStream` został ustabilizowany pod dev/StrictMode.**  
+    Początkowe łączenie WebSocketu jest minimalnie odroczone, żeby nie tworzyć i nie zamykać natychmiast socketu w czasie remountów developerskich.
+
+11. **Tick transportowy został odchudzony.**  
+    Odświeżanie `elapsed/stepsPerSec` podczas pracy solvera nie chodzi już co `200 ms`, tylko co `1000 ms`, co zmniejsza globalny churn UI bez realnej utraty użyteczności.
+
+### Zmitigowane, ale nie zlikwidowane architektonicznie
+
+1. **`useControlRoom()` nadal istnieje w kilku miejscach shella.**  
+   Najcięższe subtree viewportowe zostały od niego odseparowane memoizacją i przeniesieniem szybkich danych do transportu, ale sam legacy facade nadal istnieje i warto go docelowo wycofać z `ControlRoomShell`, `SettingsPanel` i inspektorów.
+
+2. **FEM nadal renderuje kilka `FemGeometry` dla wielu warstw.**  
+   Memoizacja ogranicza zbędne przebudowy, ale docelowy refactor „jedna baza topologii + lekkie overlaye” nadal byłby lepszy.
+
+### Weryfikacja wykonana po zmianach
+
+- `pnpm web:typecheck` — **OK**
+- targetowany eslint dla zmienionych plików — **OK**
+- czysty `pnpm --dir apps/web build` — **OK**
+- świeżo uruchomiony dev control-room po restarcie `.next` — **OK (`GET /` zwraca `200`)**
+
+### Dodatkowy incydent dev-runtime wykryty podczas walidacji
+
+W czasie walidacji pojawił się osobny problem, który **nie jest tym samym co regresja wydajności viewportu**:
+
+- aktywny Next dev-serwer pracował na porcie `3000`,
+- równolegle został uruchomiony pełny `next build`, który czyści `apps/web/.next`,
+- działający proces dev-serwera pozostał podpięty do niekompletnego stanu chunków,
+- skutkiem było `500` na `/` oraz błędy klienta typu:
+  - `Cannot find module './778.js'`
+  - `originalFactory is undefined`
+
+To jest awaria stanu bundlera / HMR, a nie błąd logiki React komponentów.  
+Naprawa była operacyjna:
+
+- zatrzymanie starego procesu `dev-server.mjs`,
+- czysty restart control-room,
+- ponowna kompilacja dev bundle.
+
+Wniosek praktyczny: nie należy czyścić `apps/web/.next` ani odpalać pełnego `next build` równolegle z działającym live control-room, jeśli chcemy zachować zdrowy stan developerskiego runtime.
+
+### Czego jeszcze nie potwierdza sam build
+
+Ten pakiet zmian usuwa główne źródła render-churn i błędów lifecycle, ale pełne potwierdzenie wymaga jeszcze uruchomienia workspace w przeglądarce i sprawdzenia:
+
+- płynności orbit/pan/zoom dla małej sceny FDM,
+- płynności zmiany zakładek `Model / Study / Results`,
+- braku błędu R3F `addEventListener` na `null`,
+- braku sztucznych `404` dla `eigen/spectrum`, `eigen/dispersion`, `eigen/branches`.

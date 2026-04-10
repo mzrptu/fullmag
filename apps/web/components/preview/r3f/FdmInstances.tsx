@@ -233,6 +233,13 @@ function FdmInstances({
         });
   }, [mode, settings.quality, settings.voxelOpacity, sceneOpacityMultiplier]);
 
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+    };
+  }, [geometry, material]);
+
   /* ── Initialize instanceColor on mount ────────────────────────── */
   useEffect(() => {
     const mesh = meshRef.current;

@@ -11,6 +11,7 @@ import FdmInstances from "./r3f/FdmInstances";
 import { rotateCameraAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import FdmLighting from "./r3f/FdmLighting";
 import SceneAxes3D from "./r3f/SceneAxes3D";
+import { useCanvasHost } from "./shared/useCanvasHost";
 import TextureTransformGizmo, {
   type TextureGizmoMode,
   type TexturePreviewProxy,
@@ -575,6 +576,7 @@ function MagnetizationView3DInner({
   onSettingsChange,
   viewportVisible = true,
 }: Props) {
+  const { hostRef, hostNode } = useCanvasHost<HTMLDivElement>();
   const [internalSettings, setInternalSettings] = useState<Settings>(loadSettings);
   const settings = useMemo(
     () => (externalSettings ? settingsFromPreset(externalSettings) : internalSettings),
@@ -1069,102 +1071,105 @@ function MagnetizationView3DInner({
       </ViewportOverlayLayout>
 
       {/* ── R3F Canvas ────────────────────────────────────── */}
-      <div className="absolute inset-0 pointer-events-none z-0">
-        <Canvas
-          frameloop={viewportVisible ? "demand" : "never"}
-          className="w-full h-full pointer-events-auto"
-          camera={{
-            fov: 50,
-            near: 0.1,
-            far: 1000,
-            position: [
-              cx + DEFAULT_CAMERA_DIRECTION[0] * orbitDist,
-              cy + DEFAULT_CAMERA_DIRECTION[1] * orbitDist,
-              cz + DEFAULT_CAMERA_DIRECTION[2] * orbitDist,
-            ],
-            up: DEFAULT_CAMERA_UP,
-          }}
-          gl={{
-            antialias: settings.quality !== "low",
-          }}
-          onCreated={({ gl, scene, camera }) => {
-            canvasRef.current = gl.domElement;
-            glRef.current = gl;
-            r3fSceneRef.current = scene;
-            r3fCameraRef.current = camera;
-          }}
-          dpr={settings.quality === "ultra"
-            ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
-            : 1
-          }
-          style={{ background: `#${BG_COLOR.toString(16).padStart(6, "0")}` }}
-        >
-          <color attach="background" args={[BG_COLOR]} />
-          <SceneConfig toneMapping={settings.quality !== "low"} />
+      <div ref={hostRef} className="absolute inset-0 pointer-events-none z-0">
+        {hostNode ? (
+          <Canvas
+            eventSource={hostNode}
+            frameloop={viewportVisible ? "demand" : "never"}
+            className="w-full h-full pointer-events-auto"
+            camera={{
+              fov: 50,
+              near: 0.1,
+              far: 1000,
+              position: [
+                cx + DEFAULT_CAMERA_DIRECTION[0] * orbitDist,
+                cy + DEFAULT_CAMERA_DIRECTION[1] * orbitDist,
+                cz + DEFAULT_CAMERA_DIRECTION[2] * orbitDist,
+              ],
+              up: DEFAULT_CAMERA_UP,
+            }}
+            gl={{
+              antialias: settings.quality !== "low",
+            }}
+            onCreated={({ gl, scene, camera }) => {
+              canvasRef.current = gl.domElement;
+              glRef.current = gl;
+              r3fSceneRef.current = scene;
+              r3fCameraRef.current = camera;
+            }}
+            dpr={settings.quality === "ultra"
+              ? Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2)
+              : 1
+            }
+            style={{ background: `#${BG_COLOR.toString(16).padStart(6, "0")}` }}
+          >
+            <color attach="background" args={[BG_COLOR]} />
+            <SceneConfig toneMapping={settings.quality !== "low"} />
 
-          <FdmLighting brightness={settings.brightness} quality={settings.quality} />
+            <FdmLighting brightness={settings.brightness} quality={settings.quality} />
 
-          <FdmInstances
-            grid={grid}
-            vectors={deferredVectors}
-            geometryMode={geometryMode}
-            activeMask={activeMask}
-            settings={deferredSettings}
-            sceneOpacityMultiplier={sceneOpacityMultiplier}
-            isolateGridBounds={isolateGridBounds}
-          />
-
-          {worldExtent && objectOverlays.length > 0 ? (
-            <FdmObjectOverlayMeshes
-              overlays={objectOverlays}
-              selectedObjectId={selectedObjectId}
-              objectViewMode={objectViewMode}
+            <FdmInstances
               grid={grid}
-              worldExtent={worldExtent}
-              universeCenter={universeCenter}
-              onRequestObjectSelect={onRequestObjectSelect}
-              onGeometryTranslate={onGeometryTranslate}
+              vectors={deferredVectors}
+              geometryMode={geometryMode}
+              activeMask={activeMask}
+              settings={deferredSettings}
+              sceneOpacityMultiplier={sceneOpacityMultiplier}
+              isolateGridBounds={isolateGridBounds}
             />
-          ) : null}
 
-          {worldExtent && antennaOverlays.length > 0 && objectViewMode !== "isolate" ? (
-            <FdmAntennaOverlayMeshes
-              overlays={antennaOverlays}
-              selectedAntennaId={selectedAntennaId}
+            {worldExtent && objectOverlays.length > 0 ? (
+              <FdmObjectOverlayMeshes
+                overlays={objectOverlays}
+                selectedObjectId={selectedObjectId}
+                objectViewMode={objectViewMode}
+                grid={grid}
+                worldExtent={worldExtent}
+                universeCenter={universeCenter}
+                onRequestObjectSelect={onRequestObjectSelect}
+                onGeometryTranslate={onGeometryTranslate}
+              />
+            ) : null}
+
+            {worldExtent && antennaOverlays.length > 0 && objectViewMode !== "isolate" ? (
+              <FdmAntennaOverlayMeshes
+                overlays={antennaOverlays}
+                selectedAntennaId={selectedAntennaId}
+                grid={grid}
+                worldExtent={worldExtent}
+                universeCenter={universeCenter}
+                onAntennaTranslate={onAntennaTranslate}
+              />
+            ) : null}
+
+            {axesWorldExtent && axesWorldExtent[0] > 0 && axesWorldExtent[1] > 0 && axesWorldExtent[2] > 0 && (
+              <SceneAxes3D
+                worldExtent={axesWorldExtent}
+                center={[cx, cy, cz]}
+                sceneScale={axesSceneScale}
+                axisLabels={["x", "z", "y"]}
+              />
+            )}
+
+            <SyncedControls
+              controlsRefObject={controlsRef}
+              viewCubeBridgeRef={viewCubeSceneRef}
               grid={grid}
-              worldExtent={worldExtent}
-              universeCenter={universeCenter}
-              onAntennaTranslate={onAntennaTranslate}
+              cameraEnabled={cameraActive && viewportVisible}
             />
-          ) : null}
 
-          {axesWorldExtent && axesWorldExtent[0] > 0 && axesWorldExtent[1] > 0 && axesWorldExtent[2] > 0 && (
-            <SceneAxes3D
-              worldExtent={axesWorldExtent}
-              center={[cx, cy, cz]}
-              sceneScale={axesSceneScale}
-              axisLabels={["x", "z", "y"]}
-            />
-          )}
-
-          <SyncedControls
-            controlsRefObject={controlsRef}
-            viewCubeBridgeRef={viewCubeSceneRef}
-            grid={grid}
-            cameraEnabled={cameraActive && viewportVisible}
-          />
-
-          {activeTextureTransform && !cameraActive && (
-            <TextureTransformGizmo
-              transform={activeTextureTransform}
-              mode={derivedGizmoMode}
-              previewProxy={activeTexturePreviewProxy}
-              onLiveChange={onTextureTransformChange}
-              visible
-              onCommit={onTextureTransformCommit}
-            />
-          )}
-        </Canvas>
+            {activeTextureTransform && !cameraActive && (
+              <TextureTransformGizmo
+                transform={activeTextureTransform}
+                mode={derivedGizmoMode}
+                previewProxy={activeTexturePreviewProxy}
+                onLiveChange={onTextureTransformChange}
+                visible
+                onCommit={onTextureTransformCommit}
+              />
+            )}
+          </Canvas>
+        ) : null}
       </div>
     </div>
   );

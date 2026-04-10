@@ -7,6 +7,7 @@ import type { WorkspaceMode } from "@/components/runs/control-room/context-hooks
 import { resolveLaunchIntentFromSearchParams } from "@/lib/workspace/launch-intent";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
 import { readStagedLaunchAsset } from "@/lib/workspace/file-access";
+import { recordFrontendDebugEvent } from "@/lib/workspace/navigation-debug";
 
 interface WorkspaceEntryPageProps {
   stage: WorkspaceMode;
@@ -32,6 +33,13 @@ export default function WorkspaceEntryPage({ stage }: WorkspaceEntryPageProps) {
           },
         }
       : intent;
+    recordFrontendDebugEvent("workspace-entry", "mount_stage_entry", {
+      stage,
+      source: enrichedIntent.source,
+      targetStage: enrichedIntent.targetStage,
+      entryPath: enrichedIntent.entryPath,
+      projectId: enrichedIntent.resumeProjectId,
+    });
     setLaunchIntent(enrichedIntent);
     setActiveProjectId(enrichedIntent.resumeProjectId ?? enrichedIntent.entryPath ?? null);
     setCurrentPerspective(stage);

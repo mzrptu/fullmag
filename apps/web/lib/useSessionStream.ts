@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { currentLiveApiClient } from "./liveApiClient";
+import { recordFrontendDebugEvent } from "./workspace/navigation-debug";
 
 /* ── Re-export all types ── */
 export type {
@@ -61,6 +62,67 @@ import { normalizeSessionState } from "./session/normalize";
 import { mergeSessionState, mergeCommandStatusEvent } from "./session/merge";
 import { decodePreviewBinaryFrame, attachPreviewBinaryPayload } from "./session/binary-preview";
 
+type BootstrapCacheEntry = {
+  raw: unknown | null;
+  fetchedAt: number;
+  inFlight: Promise<unknown> | null;
+};
+
+const bootstrapCache = new Map<string, BootstrapCacheEntry>();
+const BOOTSTRAP_CACHE_TTL_MS = 4000;
+const BOOTSTRAP_RECONNECT_TTL_MS = 15000;
+
+function bootstrapCacheAge(cacheKey: string): number | null {
+  const cached = bootstrapCache.get(cacheKey);
+  if (!cached || !cached.fetchedAt) {
+    return null;
+  }
+  return Math.max(0, Date.now() - cached.fetchedAt);
+}
+
+function fetchBootstrapCached(
+  cacheKey: string,
+  fetcher: () => Promise<unknown>,
+): Promise<unknown> {
+  const now = Date.now();
+  const cached = bootstrapCache.get(cacheKey);
+  if (cached?.raw && now - cached.fetchedAt < BOOTSTRAP_CACHE_TTL_MS) {
+    recordFrontendDebugEvent("live-stream", "bootstrap_cache_hit", {
+      cacheKey,
+      ageMs: now - cached.fetchedAt,
+    });
+    return Promise.resolve(cached.raw);
+  }
+  if (cached?.inFlight) {
+    recordFrontendDebugEvent("live-stream", "bootstrap_inflight_reused", { cacheKey });
+    return cached.inFlight;
+  }
+  const inFlight = fetcher()
+    .then((raw) => {
+      bootstrapCache.set(cacheKey, {
+        raw,
+        fetchedAt: Date.now(),
+        inFlight: null,
+      });
+      return raw;
+    })
+    .catch((error) => {
+      const previous = bootstrapCache.get(cacheKey);
+      bootstrapCache.set(cacheKey, {
+        raw: previous?.raw ?? null,
+        fetchedAt: previous?.fetchedAt ?? 0,
+        inFlight: null,
+      });
+      throw error;
+    });
+  bootstrapCache.set(cacheKey, {
+    raw: cached?.raw ?? null,
+    fetchedAt: cached?.fetchedAt ?? 0,
+    inFlight,
+  });
+  return inFlight;
+}
+
 /* ── Hook ── */
 
 export function useCurrentLiveStream(): UseSessionStreamResult {
@@ -76,9 +138,15 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
   const intentionallyClosedRef = useRef(new WeakSet<WebSocket>());
   const pendingPreviewPayloadsRef = useRef(new Map<number, Float64Array>());
   const connectionGenerationRef = useRef(0);
+  const bootstrapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stateRef = useRef<SessionState | null>(null);
 
   // Ref-based generation tracker to avoid React Compiler strict dependencies
   const executeConnectRef = useRef<() => void>(null);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     (executeConnectRef as any).current = () => {
@@ -95,19 +163,45 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       }
       pendingPreviewPayloadsRef.current.clear();
 
-      client
-        .fetchBootstrap()
-        .then((raw: any) => {
-          if (unmountedRef.current || connectionGenerationRef.current !== connectionGeneration) return;
-          const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
-          if (!nextState.session) { setState(null); setError(null); return; }
-          if (nextState.live_state?.finished) (finishedRef as any).current = true;
-          setState((prevState) => mergeSessionState(prevState, nextState));
-        })
-        .catch((err: any) => {
-          if (unmountedRef.current || connectionGenerationRef.current !== connectionGeneration) return;
-          setError(err instanceof Error ? err.message : "Failed to load live state");
+      const cacheKey = client.urls.bootstrap;
+      const hasSessionState = Boolean(stateRef.current?.session);
+      const ageMs = bootstrapCacheAge(cacheKey);
+      const shouldFetchBootstrap =
+        !hasSessionState ||
+        ageMs == null ||
+        ageMs > BOOTSTRAP_RECONNECT_TTL_MS;
+
+      if (shouldFetchBootstrap) {
+        recordFrontendDebugEvent("live-stream", "bootstrap_fetch_scheduled", {
+          cacheKey,
+          connectionGeneration,
+          hasSessionState,
+          ageMs,
         });
+        void fetchBootstrapCached(cacheKey, () => client.fetchBootstrap())
+          .then((raw: any) => {
+            if (unmountedRef.current || connectionGenerationRef.current !== connectionGeneration) return;
+            const nextState = normalizeSessionState(raw, pendingPreviewPayloadsRef.current);
+            if (!nextState.session) {
+              setState(null);
+              stateRef.current = null;
+              setError(null);
+              return;
+            }
+            if (nextState.live_state?.finished) (finishedRef as any).current = true;
+            setState((prevState) => mergeSessionState(prevState, nextState));
+          })
+          .catch((err: any) => {
+            if (unmountedRef.current || connectionGenerationRef.current !== connectionGeneration) return;
+            setError(err instanceof Error ? err.message : "Failed to load live state");
+          });
+      } else {
+        recordFrontendDebugEvent("live-stream", "bootstrap_fetch_skipped_recent_state", {
+          cacheKey,
+          connectionGeneration,
+          ageMs,
+        });
+      }
 
       const ws = client.connectWebSocket();
       ws.binaryType = "arraybuffer";
@@ -117,6 +211,7 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
         if (unmountedRef.current || wsRef.current !== ws || connectionGenerationRef.current !== connectionGeneration) return;
         if (disconnectTimerRef.current) { clearTimeout(disconnectTimerRef.current); (disconnectTimerRef as any).current = null; }
         if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); (reconnectTimerRef as any).current = null; }
+        recordFrontendDebugEvent("live-stream", "ws_open", { connectionGeneration });
         setConnection("connected"); setError(null); (reconnectAttemptRef as any).current = 0;
       };
 
@@ -153,6 +248,10 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       ws.onclose = () => {
         if (unmountedRef.current || wsRef.current !== ws || intentionallyClosedRef.current.has(ws)) return;
         if (finishedRef.current) { setConnection("disconnected"); return; }
+        recordFrontendDebugEvent("live-stream", "ws_close_schedule_reconnect", {
+          connectionGeneration,
+          reconnectAttempt: reconnectAttemptRef.current,
+        });
         setConnection("connecting");
         (disconnectTimerRef as any).current = setTimeout(() => { (disconnectTimerRef as any).current = null; setConnection("disconnected"); }, 2000);
         (reconnectTimerRef as any).current = setTimeout(() => {
@@ -170,14 +269,16 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
     (finishedRef as any).current = false;
     (connectionGenerationRef as any).current = 0;
     
-    // Defer state update to avoid 'set-state-in-effect' compiler warning
-    setTimeout(() => {
+    // Delay the first connect slightly so React StrictMode dev remounts
+    // do not create and immediately tear down a connecting WebSocket.
+    bootstrapTimerRef.current = setTimeout(() => {
+      bootstrapTimerRef.current = null;
       if (unmountedRef.current) return;
       setState(null);
       setConnection("connecting");
       setError(null);
       executeConnectRef.current?.();
-    }, 0);
+    }, 60);
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       const ws = wsRef.current;
@@ -187,7 +288,12 @@ export function useCurrentLiveStream(): UseSessionStreamResult {
       const disconnectTimer = disconnectTimerRef.current;
       // eslint-disable-next-line react-hooks/exhaustive-deps
       const reconnectTimer = reconnectTimerRef.current;
+      const bootstrapTimer = bootstrapTimerRef.current;
       (unmountedRef as any).current = true;
+      if (bootstrapTimer !== null) {
+        clearTimeout(bootstrapTimer);
+        (bootstrapTimerRef as any).current = null;
+      }
       if (ws) {
         intentionallyClosedSet.add(ws);
         ws.close();

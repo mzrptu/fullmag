@@ -2,6 +2,7 @@
 
 import type { LaunchEntryKind, LaunchIntent, WorkspaceStage } from "./launch-intent";
 import { resolveApiBase } from "@/lib/apiBase";
+import { recordFrontendDebugEvent } from "./navigation-debug";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -35,20 +36,46 @@ export interface DetectedLiveSession {
   status: string | null;
 }
 
+type LiveIntentCacheEntry = {
+  promise: Promise<DetectedLiveSession | null>;
+  startedAt: number;
+};
+
+const liveIntentInFlight = new Map<string, LiveIntentCacheEntry>();
+const LIVE_INTENT_DEDUP_WINDOW_MS = 1500;
+
 export async function detectLiveSessionIntent(): Promise<DetectedLiveSession | null> {
   const baseUrl = resolveApiBase();
+  const now = Date.now();
+  const cached = liveIntentInFlight.get(baseUrl);
+  if (cached && now - cached.startedAt < LIVE_INTENT_DEDUP_WINDOW_MS) {
+    recordFrontendDebugEvent("live-intent", "dedup_reuse_inflight", {
+      baseUrl,
+      ageMs: now - cached.startedAt,
+    });
+    return cached.promise;
+  }
+
+  const promise = (async (): Promise<DetectedLiveSession | null> => {
+  recordFrontendDebugEvent("live-intent", "bootstrap_fetch_start", { baseUrl });
   let response: Response;
 
   try {
     response = await fetch(`${baseUrl}/v1/live/current/bootstrap`, { cache: "no-store" });
   } catch {
+    recordFrontendDebugEvent("live-intent", "bootstrap_fetch_network_error", { baseUrl });
     return null;
   }
 
   if (response.status === 404) {
+    recordFrontendDebugEvent("live-intent", "bootstrap_fetch_not_found", { baseUrl });
     return null;
   }
   if (!response.ok) {
+    recordFrontendDebugEvent("live-intent", "bootstrap_fetch_http_error", {
+      baseUrl,
+      status: response.status,
+    });
     return null;
   }
 
@@ -75,7 +102,7 @@ export async function detectLiveSessionIntent(): Promise<DetectedLiveSession | n
   const entryKind = inferEntryKind(scriptPath);
   const targetStage = inferStage(status);
 
-  return {
+  const result: DetectedLiveSession = {
     intent: {
       source: "electron_cli",
       entryPath: scriptPath,
@@ -96,4 +123,22 @@ export async function detectLiveSessionIntent(): Promise<DetectedLiveSession | n
     scriptPath,
     status,
   };
+  recordFrontendDebugEvent("live-intent", "bootstrap_fetch_success", {
+    baseUrl,
+    runId,
+    targetStage,
+    status,
+  });
+  return result;
+  })();
+
+  liveIntentInFlight.set(baseUrl, { promise, startedAt: now });
+  try {
+    return await promise;
+  } finally {
+    const current = liveIntentInFlight.get(baseUrl);
+    if (current?.promise === promise) {
+      liveIntentInFlight.delete(baseUrl);
+    }
+  }
 }

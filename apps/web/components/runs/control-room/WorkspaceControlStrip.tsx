@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 import {
   Activity,
   BarChart3,
@@ -59,7 +61,7 @@ function solverAcceleratorLabel(
   return null;
 }
 
-export default function WorkspaceControlStrip() {
+const WorkspaceControlStrip = memo(function WorkspaceControlStrip() {
   const ctx = useControlRoom();
   const solverAccelerator = solverAcceleratorLabel(
     ctx.runtimeEngineLabel,
@@ -375,4 +377,6 @@ export default function WorkspaceControlStrip() {
       </div>
     </div>
   );
-}
+});
+
+export default WorkspaceControlStrip;
