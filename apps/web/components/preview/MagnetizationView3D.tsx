@@ -1171,6 +1171,7 @@ function MagnetizationView3DInner({
                 transform={activeTextureTransform}
                 mode={derivedGizmoMode}
                 previewProxy={activeTexturePreviewProxy}
+                showPreviewProxy
                 onLiveChange={onTextureTransformChange}
                 visible
                 onCommit={onTextureTransformCommit}

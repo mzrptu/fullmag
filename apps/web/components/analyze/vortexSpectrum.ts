@@ -265,7 +265,7 @@ export function fitLorentzianLinewidth(
   let iHi = peakIdx;
   while (iLo > 0 && y[iLo] >= halfMax) iLo--;
   while (iHi < n - 1 && y[iHi] >= halfMax) iHi++;
-  let gamma_init = Math.max((f[iHi] - f[iLo]) / 2, (f[1] - f[0]) * 2);
+  const gamma_init = Math.max((f[iHi] - f[iLo]) / 2, (f[1] - f[0]) * 2);
 
   // params: [f0, gamma, A, B0, B1]
   const p = [f0_init, gamma_init, A_init - B0_init, B0_init, 0];

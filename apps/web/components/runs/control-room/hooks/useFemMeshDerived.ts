@@ -287,17 +287,9 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
   const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
     if (!femMeshBase || !selectedVectors || selectedVectors.length < femMeshBase.nNodes * 3) return undefined;
     const nNodes = femMeshBase.nNodes;
-    let buffers = femFieldBuffersRef.current;
-    if (!buffers || buffers.nNodes !== nNodes) {
-      buffers = {
-        nNodes,
-        x: new Float64Array(nNodes),
-        y: new Float64Array(nNodes),
-        z: new Float64Array(nNodes),
-      };
-      femFieldBuffersRef.current = buffers;
-    }
-    const { x, y, z } = buffers;
+    const x = new Float64Array(nNodes);
+    const y = new Float64Array(nNodes);
+    const z = new Float64Array(nNodes);
     for (let i = 0; i < nNodes; i++) {
       x[i] = selectedVectors[i * 3] ?? 0;
       y[i] = selectedVectors[i * 3 + 1] ?? 0;
@@ -319,7 +311,9 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
       quantityDomain: spatialPreview?.quantity_domain ?? "full_domain",
     };
   }, [activeMask, femFieldData, femMeshBase, spatialPreview?.quantity_domain]);
-  femMeshDataRef.current = femMeshData;
+  useEffect(() => {
+    femMeshDataRef.current = femMeshData;
+  }, [femMeshData, femMeshDataRef]);
 
   const femHasFieldData = Boolean(femMeshData?.fieldData);
   const femMagnetization3DActive = isFemBackend && effectiveViewMode === "3D" && activeQuantityId === "m" && femHasFieldData;
@@ -442,10 +436,18 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
     });
   }, [airMeshOpacity, airMeshVisible, airRelatedParts]);
 
-  // Keep femTopologyKeyRef in sync so study-domain remesh actions can snapshot the current key
-  femTopologyKeyRef.current = femTopologyKey;
-  femGenerationIdRef.current =
-    effectiveFemMesh?.generation_id ?? meshSummary?.generation_id ?? null;
+  // Keep refs in sync so remesh actions can snapshot current topology/generation safely.
+  useEffect(() => {
+    femTopologyKeyRef.current = femTopologyKey;
+    femGenerationIdRef.current =
+      effectiveFemMesh?.generation_id ?? meshSummary?.generation_id ?? null;
+  }, [
+    effectiveFemMesh?.generation_id,
+    femGenerationIdRef,
+    femTopologyKey,
+    femTopologyKeyRef,
+    meshSummary?.generation_id,
+  ]);
 
   // Effect: clear meshGenerating on topology change
   useEffect(() => {

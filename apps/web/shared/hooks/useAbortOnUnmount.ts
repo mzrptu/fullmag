@@ -3,16 +3,16 @@
  *
  * Returns an AbortSignal that aborts automatically when the component unmounts.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo } from "react";
 
 export function useAbortOnUnmount(): AbortSignal {
-  const ref = useRef<AbortController>(new AbortController());
+  const controller = useMemo(() => new AbortController(), []);
 
   useEffect(() => {
     return () => {
-      ref.current.abort();
+      controller.abort();
     };
-  }, []);
+  }, [controller]);
 
-  return ref.current.signal;
+  return controller.signal;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import MagneticTextureLibraryPanel from "../MagneticTextureLibraryPanel";
 import {
@@ -99,8 +100,6 @@ const DEFAULT_TEXTURE_TRANSFORM = {
   scale: [1, 1, 1] as [number, number, number],
   pivot: [0, 0, 0] as [number, number, number],
 } as const;
-const NON_PRESET_TEXTURE_BASELINE = "__non_preset_texture_baseline__";
-
 function clampFinite(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
@@ -187,7 +186,6 @@ export default function MaterialPanel({
     () => ensureObjectPhysicsStack(sceneObject?.physics_stack, materialAsset?.properties.Dind ?? null),
     [materialAsset?.properties.Dind, sceneObject?.physics_stack],
   );
-  const [selectedPresetKindUi, setSelectedPresetKindUi] = useState<MagneticPresetKind | null>(null);
 
   const updateMaterial = useCallback(
     (updater: (asset: SceneMaterialAsset) => SceneMaterialAsset) => {
@@ -255,7 +253,6 @@ export default function MaterialPanel({
       const descriptor = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === kind);
       const magnetizationRef = sceneObject?.magnetization_ref;
       if (!descriptor || !sceneObject || !magnetizationRef) return;
-      setSelectedPresetKindUi(kind);
       model.setSceneDocument((prev) =>
         prev
           ? (() => {
@@ -476,7 +473,6 @@ export default function MaterialPanel({
   };
 
   const selectedPresetKind =
-    selectedPresetKindUi ??
     (magnetizationAsset?.preset_kind as MagneticPresetKind | null | undefined) ??
     null;
   const selectedPresetDescriptor: MagneticPresetDescriptor | null = selectedPresetKind
@@ -494,8 +490,9 @@ export default function MaterialPanel({
   const presetTextureSyncTickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presetTextureSyncModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presetTextureSyncGenerationRef = useRef(0);
-  const presetTextureSyncObjectRef = useRef<string | null>(null);
-  const lastAppliedPresetTextureHashRef = useRef<string | null>(null);
+  const lastSyncedPresetHashRef = useRef<string | null>(null);
+  const autoApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const applyPresetTextureChangesRef = useRef<() => void>(() => {});
   const [numericTransformOpen, setNumericTransformOpen] = useState(false);
   const [numericMode, setNumericMode] = useState<NumericTransformMode>("translate");
   const [numericAbsolute, setNumericAbsolute] = useState<[number, number, number]>([0, 0, 0]);
@@ -529,11 +526,7 @@ export default function MaterialPanel({
       textureTransform: magnetizationAsset.texture_transform ?? DEFAULT_TEXTURE_TRANSFORM,
     });
   }, [magnetizationAsset, sceneObject]);
-  const isPresetTextureDirty = useMemo(() => {
-    if (!presetTextureHash) return false;
-    if (lastAppliedPresetTextureHashRef.current == null) return false;
-    return lastAppliedPresetTextureHashRef.current !== presetTextureHash;
-  }, [presetTextureHash]);
+  const isPresetTextureDirty = Boolean(presetTextureHash);
   const presetTextureSyncPercent = useMemo(() => {
     if (presetTextureSync.status === "done") return 100;
     if (presetTextureSync.status === "error") return 100;
@@ -550,7 +543,7 @@ export default function MaterialPanel({
     }
     return 55;
   }, [presetTextureSync]);
-  const applyPresetTextureChanges = useCallback(() => {
+  const applyPresetTextureChanges = () => {
     if (!sceneObject || !presetTextureHash || !model.sceneDocument) {
       return;
     }
@@ -604,7 +597,6 @@ export default function MaterialPanel({
           clearInterval(presetTextureSyncTickerRef.current);
           presetTextureSyncTickerRef.current = null;
         }
-        lastAppliedPresetTextureHashRef.current = presetTextureHash;
         setPresetTextureSync({
           status: "done",
           totalSpins,
@@ -617,7 +609,7 @@ export default function MaterialPanel({
         presetTextureSyncModalTimerRef.current = setTimeout(() => {
           setPresetTextureModalOpen(false);
           presetTextureSyncModalTimerRef.current = null;
-        }, 1400);
+        }, 1800);
       })
       .catch((error) => {
         if (presetTextureSyncGenerationRef.current !== generation) {
@@ -638,7 +630,13 @@ export default function MaterialPanel({
         });
         setPresetTextureModalOpen(true);
       });
-  }, [liveApi, model.sceneDocument, presetTextureHash, sceneObject, targetSpinCount]);
+  };
+  applyPresetTextureChangesRef.current = applyPresetTextureChanges;
+
+  useEffect(() => {
+    if (model.activeTransformScope != null) return;
+    model.setActiveTransformScope("texture");
+  }, [magnetizationAsset?.kind, model, model.activeTransformScope, sceneObject]);
 
   useEffect(() => {
     return () => {
@@ -648,67 +646,38 @@ export default function MaterialPanel({
       if (presetTextureSyncModalTimerRef.current) {
         clearTimeout(presetTextureSyncModalTimerRef.current);
       }
+      if (autoApplyTimerRef.current) {
+        clearTimeout(autoApplyTimerRef.current);
+      }
     };
   }, []);
 
+  // Auto-apply: when the preset texture hash changes (new preset chosen or
+  // params/transform edited), debounce-push to the backend automatically.
   useEffect(() => {
-    if (!sceneObject) {
-      presetTextureSyncObjectRef.current = null;
-      lastAppliedPresetTextureHashRef.current = null;
-      setSelectedPresetKindUi(null);
-      setPresetTextureModalOpen(false);
-      if (presetTextureSyncModalTimerRef.current) {
-        clearTimeout(presetTextureSyncModalTimerRef.current);
-        presetTextureSyncModalTimerRef.current = null;
-      }
+    if (!presetTextureHash) {
+      lastSyncedPresetHashRef.current = null;
       return;
     }
-    if (presetTextureSyncObjectRef.current === sceneObject.id) return;
-    presetTextureSyncObjectRef.current = sceneObject.id;
-    setPresetTextureModalOpen(false);
-    if (presetTextureSyncModalTimerRef.current) {
-      clearTimeout(presetTextureSyncModalTimerRef.current);
-      presetTextureSyncModalTimerRef.current = null;
-    }
-    setSelectedPresetKindUi(
-      magnetizationAsset?.kind === "preset_texture"
-        ? ((magnetizationAsset.preset_kind as MagneticPresetKind | null | undefined) ?? null)
-        : null,
-    );
-    lastAppliedPresetTextureHashRef.current =
-      magnetizationAsset?.kind === "preset_texture" && presetTextureHash
-        ? presetTextureHash
-        : NON_PRESET_TEXTURE_BASELINE;
-    setPresetTextureSync({
-      status: "idle",
-      totalSpins: targetSpinCount,
-      processedSpins: null,
-      message: null,
-    });
-  }, [magnetizationAsset, presetTextureHash, sceneObject?.id, targetSpinCount]);
-
-  useEffect(() => {
-    if (!sceneObject) return;
-    if (magnetizationAsset?.kind !== "preset_texture") {
-      setSelectedPresetKindUi(null);
-      return;
-    }
-    setSelectedPresetKindUi(
-      (magnetizationAsset.preset_kind as MagneticPresetKind | null | undefined) ?? null,
-    );
-  }, [magnetizationAsset?.kind, magnetizationAsset?.preset_kind, sceneObject?.id]);
-
-  useEffect(() => {
-    if (!sceneObject) return;
+    if (presetTextureHash === lastSyncedPresetHashRef.current) return;
     if (presetTextureSync.status === "syncing") return;
-    if (!isPresetTextureDirty) return;
-    setPresetTextureSync({
-      status: "idle",
-      totalSpins: targetSpinCount,
-      processedSpins: null,
-      message: "Masz lokalne zmiany. Kliknij Apply, aby wysłać je do backendu.",
-    });
-  }, [isPresetTextureDirty, presetTextureSync.status, sceneObject?.id, targetSpinCount]);
+
+    if (autoApplyTimerRef.current) {
+      clearTimeout(autoApplyTimerRef.current);
+    }
+    autoApplyTimerRef.current = setTimeout(() => {
+      autoApplyTimerRef.current = null;
+      lastSyncedPresetHashRef.current = presetTextureHash;
+      applyPresetTextureChangesRef.current();
+    }, 350);
+
+    return () => {
+      if (autoApplyTimerRef.current) {
+        clearTimeout(autoApplyTimerRef.current);
+        autoApplyTimerRef.current = null;
+      }
+    };
+  }, [presetTextureHash, presetTextureSync.status]);
 
   if (!sceneObject || !materialAsset || !magnetizationAsset) {
     if (!model.material) {
@@ -742,23 +711,20 @@ export default function MaterialPanel({
   };
   const activeTextureMode = model.sceneDocument?.editor.gizmo_mode ?? "translate";
 
-  const openNumericTransform = useCallback(
-    (mode: NumericTransformMode) => {
-      setNumericMode(mode);
-      if (mode === "rotate") {
-        setNumericAbsolute(eulerDegFromQuat(textureTransform.rotation_quat));
-      } else if (mode === "scale") {
-        setNumericAbsolute([...textureTransform.scale] as [number, number, number]);
-      } else {
-        setNumericAbsolute([...textureTransform.translation] as [number, number, number]);
-      }
-      setNumericOffset([0, 0, 0]);
-      setNumericTransformOpen(true);
-    },
-    [textureTransform.rotation_quat, textureTransform.scale, textureTransform.translation],
-  );
+  const openNumericTransform = (mode: NumericTransformMode) => {
+    setNumericMode(mode);
+    if (mode === "rotate") {
+      setNumericAbsolute(eulerDegFromQuat(textureTransform.rotation_quat));
+    } else if (mode === "scale") {
+      setNumericAbsolute([...textureTransform.scale] as [number, number, number]);
+    } else {
+      setNumericAbsolute([...textureTransform.translation] as [number, number, number]);
+    }
+    setNumericOffset([0, 0, 0]);
+    setNumericTransformOpen(true);
+  };
 
-  const applyNumericTransform = useCallback(() => {
+  const applyNumericTransform = () => {
     updateMagnetization((asset) => {
       const currentTransform = asset.texture_transform ?? {
         translation: [0, 0, 0],
@@ -807,7 +773,7 @@ export default function MaterialPanel({
       };
     });
     setNumericTransformOpen(false);
-  }, [numericAbsolute, numericMode, numericOffset, updateMagnetization]);
+  };
   const hasDmi = hasObjectInteraction(physicsStack, "interfacial_dmi");
   const hasUniaxial = hasObjectInteraction(physicsStack, "uniaxial_anisotropy");
   const uniaxial = physicsStack.find((entry) => entry.kind === "uniaxial_anisotropy");
@@ -1372,8 +1338,9 @@ export default function MaterialPanel({
           )}
         </div>
       </SidebarSection>
-      {mag.kind === "preset_texture" && presetTextureModalOpen ? (
-        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm">
+      {mag.kind === "preset_texture" && presetTextureModalOpen && typeof document !== "undefined"
+        ? createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-background/95 p-4 shadow-[0_20px_90px_rgba(0,0,0,0.55)]">
             <div className="mb-2 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-primary/90">
               Magnetization Texture Apply
@@ -1423,8 +1390,10 @@ export default function MaterialPanel({
               </Button>
             </div>
           </div>
-        </div>
-      ) : null}
+        </div>,
+        document.body,
+      )
+        : null}
       {numericTransformOpen ? (
         <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/65 px-6 py-8 backdrop-blur-sm">
           <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/12 bg-[linear-gradient(180deg,rgba(20,26,42,0.98),rgba(10,14,24,0.99))] shadow-[0_24px_120px_rgba(0,0,0,0.58)]">

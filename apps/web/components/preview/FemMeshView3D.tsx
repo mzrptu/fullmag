@@ -684,11 +684,9 @@ function FemMeshView3DInner({
     arrowBoundaryFaceIndices,
     baseArrowDensity,
     effectiveArrowDensity,
-    resolvedVectorDomain,
     runtimeQualityProfile,
     runtimeRenderMode,
     runtimeArrowDensity,
-    shouldRenderMagneticGeometry,
     shouldRenderMagneticGeometryResolved,
     shouldRenderAirGeometry,
     visibleArrowNodeCount,
@@ -1375,7 +1373,7 @@ function FemMeshView3DInner({
     setSelectedFaces([]);
   }, [geometryPointerInteractionsEnabled]);
   useEffect(() => {
-    if (activeTransformScope !== "texture" && textureGizmoDragging) {
+    if (activeTransformScope === "object" && textureGizmoDragging) {
       setTextureGizmoDragging(false);
     }
   }, [activeTransformScope, textureGizmoDragging]);
@@ -1921,11 +1919,12 @@ function FemMeshView3DInner({
         {wrapperFlags.enableTextureTransformGizmo &&
         FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showTextureTransformGizmo &&
         sceneTextureTransform &&
-        activeTransformScope === "texture" ? (
+        activeTransformScope !== "object" ? (
           <TextureTransformGizmo
             transform={sceneTextureTransform}
             mode={textureGizmoMode}
             previewProxy={activeTexturePreviewProxy}
+            showPreviewProxy
             onDragStart={() => setTextureGizmoDragging(true)}
             onDragEnd={() => setTextureGizmoDragging(false)}
             onLiveChange={handleTextureTransformLiveChange}

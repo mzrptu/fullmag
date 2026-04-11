@@ -70,15 +70,6 @@ export function useCurrentAnalyzeArtifacts(
 
   useEffect(() => {
     if (!enabled) {
-      setLoadState("idle");
-      setModeLoadState("idle");
-      setError(null);
-      setModeError(null);
-      setSpectrum(null);
-      setBranches(null);
-      setDispersionRows([]);
-      setModeArtifactMap(new Map());
-      setModeCache({});
       return;
     }
 
@@ -272,18 +263,18 @@ export function useCurrentAnalyzeArtifacts(
   }, []);
 
   return {
-    loadState,
-    modeLoadState,
-    error,
-    modeError,
-    mesh,
-    spectrum,
-    branches,
-    dispersionRows,
-    modeCache,
-    hasEigenArtifacts,
-    modeArtifactMap,
-    savedModeIndices,
+    loadState: enabled ? loadState : "idle",
+    modeLoadState: enabled ? modeLoadState : "idle",
+    error: enabled ? error : null,
+    modeError: enabled ? modeError : null,
+    mesh: enabled ? mesh : null,
+    spectrum: enabled ? spectrum : null,
+    branches: enabled ? branches : null,
+    dispersionRows: enabled ? dispersionRows : [],
+    modeCache: enabled ? modeCache : {},
+    hasEigenArtifacts: enabled ? hasEigenArtifacts : false,
+    modeArtifactMap: enabled ? modeArtifactMap : new Map<number, string>(),
+    savedModeIndices: enabled ? savedModeIndices : [],
     refresh,
     ensureMode,
   };

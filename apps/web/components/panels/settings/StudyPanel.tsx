@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/preserve-manual-memoization */
 
 import { useMemo } from "react";
 import { fmtExp, fmtSIOrDash } from "@/lib/format";
@@ -241,9 +242,9 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
       ? ctx.studyStages.length
       : 0;
 
-  const authoringDocument = useMemo(
-    () => builtAuthoringDocument((ctx.studyPipeline as StudyPipelineDocument | null) ?? null, ctx.studyStages),
-    [ctx.studyPipeline, ctx.studyStages],
+  const authoringDocument = builtAuthoringDocument(
+    (ctx.studyPipeline as StudyPipelineDocument | null) ?? null,
+    ctx.studyStages,
   );
   const materialized = useMemo(
     () => materializeStudyPipeline(authoringDocument),
@@ -259,7 +260,7 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
     return Number.isFinite(flatIndex) ? authoringDocument.nodes[flatIndex] ?? null : null;
   }, [authoringDocument.nodes, studyNode]);
 
-  const selectedCompiledStages = useMemo(() => {
+  const selectedCompiledStages = (() => {
     if (studyNode.kind !== "study-stage") return [];
     if (studyNode.source === "pipeline" && selectedAuthoringNode) {
       const entry = findMaterializedEntry(materialized.map, selectedAuthoringNode.id);
@@ -269,7 +270,7 @@ export default function StudyPanel({ nodeId }: StudyPanelProps) {
     }
     const flatIndex = Number(studyNode.stageKey);
     return Number.isFinite(flatIndex) && ctx.studyStages[flatIndex] ? [ctx.studyStages[flatIndex]] : [];
-  }, [ctx.studyStages, materialized.map, materialized.stages, selectedAuthoringNode, studyNode]);
+  })();
 
   const selectedDiagnostics = useMemo(() => {
     if (studyNode.kind !== "study-stage" || !selectedAuthoringNode) return [];

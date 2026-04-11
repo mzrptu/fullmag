@@ -1602,13 +1602,20 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
 
   const selectedVectors = useMemo(() => {
     if (isGlobalScalarQuantity(activeQuantityId)) return null;
+    const liveField = fieldMap[activeQuantityId] ?? null;
+    // In FEM mode prefer full-resolution live vectors from latest_fields/live_state.
+    // Preview payloads can be decimated or stale right after scene-document texture edits.
+    if (isFemBackend && liveField && liveField.length > 0) {
+      return liveField;
+    }
     if (renderPreviewMatchesActiveQuantity && renderPreview?.vector_field_values) {
       return renderPreview.vector_field_values;
     }
-    return fieldMap[activeQuantityId] ?? null;
+    return liveField;
   }, [
     activeQuantityId,
     fieldMap,
+    isFemBackend,
     isGlobalScalarQuantity,
     renderPreviewMatchesActiveQuantity,
     renderPreview?.vector_field_values,

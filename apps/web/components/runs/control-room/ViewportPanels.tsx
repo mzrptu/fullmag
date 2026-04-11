@@ -499,7 +499,7 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   const selectedObjectTranslation =
     selectedSceneObject?.transform.translation ?? ([0, 0, 0] as [number, number, number]);
   const activeTextureTransform =
-    selectedMagnetizationAsset?.kind === "preset_texture" && ctx.activeTransformScope === "texture"
+    selectedMagnetizationAsset?.kind === "preset_texture" && ctx.activeTransformScope !== "object"
       ? (() => {
           const base = toPreviewTextureTransform(selectedMagnetizationAsset.texture_transform);
           if (activeTextureMappingSpace !== "object") {
