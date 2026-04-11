@@ -10,6 +10,20 @@ export type MagneticPresetKind =
   | "helical"
   | "conical";
 
+/**
+ * Presets whose parameters are physical metric quantities (meters).
+ * For these presets, auto-fit should adjust `preset_params` (radius, width, etc.)
+ * rather than `texture_transform.scale`, because scaling the coordinate system
+ * breaks the physical meaning of metric parameters.
+ */
+export const METRIC_ANALYTIC_PRESETS: ReadonlySet<MagneticPresetKind> = new Set([
+  "vortex",
+  "antivortex",
+  "bloch_skyrmion",
+  "neel_skyrmion",
+  "domain_wall",
+]);
+
 export interface MagneticPresetParameter {
   key: string;
   label: string;

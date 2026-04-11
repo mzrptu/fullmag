@@ -4,6 +4,8 @@ import { useThree } from "@react-three/fiber";
 import { FemMeshData, FemColorField, FemArrowColorMode } from "../FemMeshView3D";
 import { divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
+import { maskKind } from "../fem/femNodeMask";
 import { RENDER_POLICIES_V2 } from "../shared/renderPolicyV2";
 
 export type ArrowLengthMode = "constant" | "magnitude" | "sqrt" | "log";
@@ -271,7 +273,7 @@ export function FemArrows({
     if (!effectiveNodeMask) {
       return boundaryCandidateNodes;
     }
-    return boundaryCandidateNodes.filter((nodeIndex) => effectiveNodeMask[nodeIndex] === true);
+    return boundaryCandidateNodes.filter((nodeIndex) => Boolean(effectiveNodeMask[nodeIndex]));
   }, [boundaryCandidateNodes, effectiveNodeMask]);
 
   const sampledNodes = useMemo(() => {
@@ -502,7 +504,23 @@ export function FemArrows({
     scales,
   ]);
 
-  if (!visible || count === 0) return null;
+  if (!visible || count === 0) {
+    if (
+      visible &&
+      count === 0 &&
+      effectiveNodeMask &&
+      FRONTEND_DIAGNOSTIC_FLAGS.renderDebug.enableRenderLogging
+    ) {
+      console.debug("[FemArrows] zero sampled nodes", {
+        boundaryCandidateCount: boundaryCandidateNodes.length,
+        filteredCandidateCount: filteredBoundaryCandidateNodes.length,
+        hasFieldData: Boolean(meshData.fieldData),
+        quantityDomain: meshData.quantityDomain,
+        maskKind: maskKind(effectiveNodeMask),
+      });
+    }
+    return null;
+  }
 
   return (
     <instancedMesh

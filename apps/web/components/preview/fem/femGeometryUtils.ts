@@ -7,24 +7,13 @@ import type {
   FemMeshPart,
 } from "../../../lib/session/types";
 import type { FemArrowColorMode } from "../FemMeshView3D";
+export { countActiveNodes, isNodeActive, normalizeNodeMask, maskKind } from "./femNodeMask";
+import { countActiveNodes } from "./femNodeMask";
 
 export function uniqueSortedMarkers(markers: readonly number[]): number[] {
   return Array.from(new Set(markers.filter((value) => Number.isFinite(value) && value >= 0))).sort(
     (left, right) => left - right,
   );
-}
-
-export function countActiveNodes(mask: ArrayLike<number | boolean> | null | undefined): number {
-  if (!mask || mask.length === 0) {
-    return 0;
-  }
-  let count = 0;
-  for (let index = 0; index < mask.length; index += 1) {
-    if (mask[index]) {
-      count += 1;
-    }
-  }
-  return count;
 }
 
 export function markersForPart(

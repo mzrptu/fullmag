@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
   FemMeshPart,
@@ -373,29 +373,37 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
     }
   }, [focusedEntityId, meshParts, selectedEntityId]);
 
-  // Effect: sync sidebar selection to entity
+  // D-02 fix: Don't reduce object selection to a single part for toolbar scope.
+  // selectedObjectId remains the owner of scope for composite objects.
+  // selectedEntityId is set only for airbox or explicit part selection.
+  // focusedEntityId is set for camera anchor purposes only.
   useEffect(() => {
     if (!meshParts.length) {
       return;
     }
     let nextEntityId: string | null = null;
+    let nextFocusId: string | null = null;
     if (
       selectedSidebarNodeId === "universe-airbox" ||
       selectedSidebarNodeId === "universe-airbox-mesh"
     ) {
       nextEntityId = airPart?.id ?? null;
+      nextFocusId = nextEntityId;
     } else if (selectedObjectId) {
-      nextEntityId =
-        meshParts.find(
-          (part) =>
-            part.role === "magnetic_object" && part.object_id === selectedObjectId,
-        )?.id ?? null;
+      // D-02 fix: Do NOT set selectedEntityId to first part of the object.
+      // The object-level scope is handled via selectedObjectId + visibleLayers.isSelected.
+      // Only set focusedEntityId for camera anchor.
+      nextEntityId = null;
+      nextFocusId = meshParts.find(
+        (part) =>
+          part.role === "magnetic_object" && part.object_id === selectedObjectId,
+      )?.id ?? null;
     }
     if (nextEntityId !== selectedEntityId) {
       setSelectedEntityId(nextEntityId);
     }
-    if (nextEntityId !== focusedEntityId) {
-      setFocusedEntityId(nextEntityId);
+    if (nextFocusId !== focusedEntityId) {
+      setFocusedEntityId(nextFocusId);
     }
   }, [
     airPart?.id,
@@ -406,9 +414,20 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
     selectedSidebarNodeId,
   ]);
 
-  // Effect: sync air visibility
+  // D-04 fix: Sync air visibility to per-part state ONLY as a command (not continuous sync).
+  // Use a ref to track the previous airMeshVisible value so we only patch on intentional changes.
+  const prevAirVisibleRef = useRef(airMeshVisible);
+  const prevAirOpacityRef = useRef(airMeshOpacity);
   useEffect(() => {
     if (airRelatedParts.length === 0) {
+      return;
+    }
+    // Only trigger when airMeshVisible or airMeshOpacity actually changed from the UI
+    const visChanged = prevAirVisibleRef.current !== airMeshVisible;
+    const opChanged = prevAirOpacityRef.current !== airMeshOpacity;
+    prevAirVisibleRef.current = airMeshVisible;
+    prevAirOpacityRef.current = airMeshOpacity;
+    if (!visChanged && !opChanged) {
       return;
     }
     setMeshEntityViewState((prev) => {

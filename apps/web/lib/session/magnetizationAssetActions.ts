@@ -1,5 +1,6 @@
 import type { SceneDocument, MagnetizationAsset } from "./types";
-import { MAGNETIC_PRESET_CATALOG, type MagneticPresetDescriptor } from "../magnetizationPresetCatalog";
+import { MAGNETIC_PRESET_CATALOG, METRIC_ANALYTIC_PRESETS, type MagneticPresetDescriptor } from "../magnetizationPresetCatalog";
+import { fitPresetParamsToBounds } from "../textureTransform";
 
 function cloneSceneDocument(scene: SceneDocument): SceneDocument {
   // structuredClone is safe here as SceneDocument is pure JSON-serializable data
@@ -112,6 +113,26 @@ export function fitTextureToObject(
     return scene; // No bounds available to fit to
   }
 
+  const asset = scene.magnetization_assets.find((a) => a.id === assetId);
+  const presetKind = asset?.preset_kind ?? "";
+
+  // For metric analytic presets, fit *preset parameters* to geometry instead
+  // of scaling the coordinate system (which breaks physical dimensions).
+  if (METRIC_ANALYTIC_PRESETS.has(presetKind as any)) {
+    const currentParams = asset?.preset_params ?? {};
+    const { params: fittedParams, transform } = fitPresetParamsToBounds(
+      presetKind,
+      currentParams,
+      boundsMin as [number, number, number],
+      boundsMax as [number, number, number],
+    );
+    return patchMagnetizationAsset(scene, assetId, {
+      preset_params: fittedParams,
+      texture_transform: transform,
+    });
+  }
+
+  // For non-metric presets, use the classic bounds-extent fit.
   const cx = (boundsMin[0] + boundsMax[0]) / 2;
   const cy = (boundsMin[1] + boundsMax[1]) / 2;
   const cz = (boundsMin[2] + boundsMax[2]) / 2;
@@ -120,8 +141,6 @@ export function fitTextureToObject(
   const ey = Math.abs(boundsMax[1] - boundsMin[1]);
   const ez = Math.abs(boundsMax[2] - boundsMin[2]);
 
-  // We set scale to the extent, and translation to the center.
-  // Pivot remains [0,0,0] as it's typically the center for proxies.
   return patchMagnetizationAsset(scene, assetId, {
     texture_transform: {
       translation: [cx, cy, cz],

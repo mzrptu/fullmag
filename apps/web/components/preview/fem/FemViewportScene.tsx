@@ -256,7 +256,14 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   return (
     <>
       {showSceneGeometry && showPerPartGeometry && hasMeshParts
-        ? visibleLayers.map((layer) => (
+        ? visibleLayers
+            // P4-1: Skip layers with explicitly empty subsets (no faces AND no elements)
+            .filter((layer) => {
+              const emptyFaces = Array.isArray(layer.boundaryFaceIndices) && layer.boundaryFaceIndices.length === 0;
+              const emptyElements = Array.isArray(layer.elementIndices) && layer.elementIndices.length === 0;
+              return !(emptyFaces && emptyElements);
+            })
+            .map((layer) => (
             <FemGeometry
               key={layer.part.id}
               meshData={meshData}

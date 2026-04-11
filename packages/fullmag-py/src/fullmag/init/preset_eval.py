@@ -50,6 +50,10 @@ def _scale(v: Sequence[float], s: float) -> Vec3:
 
 
 def _plane_coords(point: Sequence[float], plane: str) -> tuple[float, float, float]:
+    """Extract in-plane (u, v) and out-of-plane (n) coordinates for *plane*.
+
+    Returns ``(u, v, n)`` where u/v span the chosen plane and n is normal.
+    """
     x, y, z = float(point[0]), float(point[1]), float(point[2])
     if plane == "xy":
         return x, y, z
@@ -58,6 +62,23 @@ def _plane_coords(point: Sequence[float], plane: str) -> tuple[float, float, flo
     if plane == "yz":
         return y, z, x
     return x, y, z
+
+
+def _plane_vec_to_world(mu: float, mv: float, mn: float, plane: str) -> Vec3:
+    """Map a vector from plane-local (u, v, n) basis back to world (x, y, z).
+
+    This is the inverse of ``_plane_coords`` applied to vector components:
+      xy: u=x, v=y, n=z  →  (mu, mv, mn)
+      xz: u=x, v=z, n=y  →  (mu, mn, mv)
+      yz: u=y, v=z, n=x  →  (mn, mu, mv)
+    """
+    if plane == "xy":
+        return (mu, mv, mn)
+    if plane == "xz":
+        return (mu, mn, mv)
+    if plane == "yz":
+        return (mn, mu, mv)
+    return (mu, mv, mn)
 
 
 def _domain_wall_profile(distance: float, width: float) -> float:
@@ -71,35 +92,37 @@ def _skyrmion_theta(radius: float, r: float, wall_width: float) -> float:
 
 
 def _vortex(point: Sequence[float], params: Mapping[str, object], anti: bool = False) -> Vec3:
-    px, py, pz = _plane_coords(point, str(params.get("plane", "xy")))
-    phi = math.atan2(py, px)
+    plane = str(params.get("plane", "xy"))
+    pu, pv, _pn = _plane_coords(point, plane)
+    phi = math.atan2(pv, pu)
     circulation = int(params.get("circulation", 1))
     if anti:
         circulation *= -1
     polarity = int(params.get("core_polarity", 1))
     core_radius = float(params.get("core_radius") or 1e-9)
-    r = math.hypot(px, py)
-    mz = polarity * math.exp(-(r / max(core_radius, 1e-30)) ** 2)
-    mx = -circulation * math.sin(phi)
-    my = circulation * math.cos(phi)
-    return _normalize((mx, my, mz))
+    r = math.hypot(pu, pv)
+    mn = polarity * math.exp(-(r / max(core_radius, 1e-30)) ** 2)
+    mu = -circulation * math.sin(phi)
+    mv = circulation * math.cos(phi)
+    return _normalize(_plane_vec_to_world(mu, mv, mn, plane))
 
 
 def _skyrmion(point: Sequence[float], params: Mapping[str, object], helicity: float) -> Vec3:
-    px, py, _ = _plane_coords(point, str(params.get("plane", "xy")))
+    plane = str(params.get("plane", "xy"))
+    pu, pv, _pn = _plane_coords(point, plane)
     radius = float(params["radius"])
     wall_width = float(params["wall_width"])
     core_polarity = int(params.get("core_polarity", -1))
     chirality = int(params.get("chirality", 1))
-    r = math.hypot(px, py)
-    phi = math.atan2(py, px)
+    r = math.hypot(pu, pv)
+    phi = math.atan2(pv, pu)
     theta = _skyrmion_theta(radius, r, wall_width)
     phase = chirality * phi + helicity
     sin_t = math.sin(theta)
-    mx = sin_t * math.cos(phase)
-    my = sin_t * math.sin(phase)
-    mz = core_polarity * math.cos(theta)
-    return _normalize((mx, my, mz))
+    mu = sin_t * math.cos(phase)
+    mv = sin_t * math.sin(phase)
+    mn = core_polarity * math.cos(theta)
+    return _normalize(_plane_vec_to_world(mu, mv, mn, plane))
 
 
 def _domain_wall(point: Sequence[float], params: Mapping[str, object]) -> Vec3:

@@ -311,12 +311,33 @@ export const FemGeometry = memo(function FemGeometry({
     const positions = new Float32Array(nNodes * 3);
     for (let i = 0; i < nNodes * 3; i++) positions[i] = nodes[i];
 
-    const preferredFaceIndices = Array.isArray(displayBoundaryFaceIndices) && displayBoundaryFaceIndices.length > 0
+    // D-03 fix: Distinguish null (full mesh), [] (empty — render nothing), and [a,b,c] (subset).
+    // Previously [] was collapsed to null which caused full-mesh fallback for empty subsets.
+    const preferredFaceIndices = Array.isArray(displayBoundaryFaceIndices)
       ? displayBoundaryFaceIndices
       : null;
-    const preferredElementIndices = Array.isArray(displayElementIndices) && displayElementIndices.length > 0
+    const preferredElementIndices = Array.isArray(displayElementIndices)
       ? displayElementIndices
       : null;
+
+    // D-03 fix: If both face and element subsets are explicitly empty, render nothing.
+    const emptyFaceSubset = preferredFaceIndices !== null && preferredFaceIndices.length === 0;
+    const emptyElementSubset = preferredElementIndices !== null && preferredElementIndices.length === 0;
+    if (emptyFaceSubset && emptyElementSubset) {
+      mark("post-inputs");
+      return {
+        geometry: new THREE.BufferGeometry(),
+        edgesGeometry: null,
+        tetraEdgesGeometry: null,
+        pointsGeometry: null,
+        center: new THREE.Vector3(),
+        maxDim: 0,
+        geoSize: new THREE.Vector3(),
+        vertexMap: null,
+        pointsVertexMap: null,
+        displayedToOriginalFace: null,
+      };
+    }
     mark("post-inputs");
 
     // Compute unclipped bounding box for stable centering. When the mesh includes

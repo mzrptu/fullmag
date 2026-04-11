@@ -28,29 +28,30 @@ function makePart(partial: Partial<FemMeshPart>): FemMeshPart {
   };
 }
 
+const BASE_INPUT = {
+  partRenderDataById: new Map(),
+  meshEntityViewState: {},
+  objectViewMode: "context" as const,
+  vectorDomainFilter: "auto" as const,
+  ferromagnetVisibilityMode: "hide" as const,
+  selectedObjectId: null,
+  selectedEntityId: null,
+  focusedEntityId: null,
+  airSegmentVisible: true,
+};
+
 describe("buildVisibleLayers", () => {
   it("returns empty list for empty mesh", () => {
     expect(
-      buildVisibleLayers({
-        meshParts: [],
-        partRenderDataById: new Map(),
-        meshEntityViewState: {},
-        objectViewMode: "context",
-        vectorDomainFilter: "auto",
-        ferromagnetVisibilityMode: "hide",
-        selectedObjectId: null,
-        selectedEntityId: null,
-        focusedEntityId: null,
-        airSegmentVisible: true,
-      }),
+      buildVisibleLayers({ ...BASE_INPUT, meshParts: [] }),
     ).toEqual([]);
   });
 
   it("marks one visible layer as primary for camera", () => {
     const part = makePart({});
     const layers = buildVisibleLayers({
+      ...BASE_INPUT,
       meshParts: [part],
-      partRenderDataById: new Map(),
       meshEntityViewState: {
         [part.id]: {
           visible: true,
@@ -59,16 +60,141 @@ describe("buildVisibleLayers", () => {
           colorField: "orientation",
         },
       },
-      objectViewMode: "context",
-      vectorDomainFilter: "auto",
-      ferromagnetVisibilityMode: "hide",
-      selectedObjectId: null,
-      selectedEntityId: null,
-      focusedEntityId: null,
-      airSegmentVisible: true,
     });
 
     expect(layers).toHaveLength(1);
     expect(layers[0].isPrimaryForCamera).toBe(true);
+  });
+
+  // D-01 regression: Composite object with 3 parts — all are selected
+  it("selects ALL parts of a composite object", () => {
+    const shell = makePart({ id: "shell", object_id: "obj-nf", label: "shell" });
+    const core = makePart({ id: "core", object_id: "obj-nf", label: "core" });
+    const cap = makePart({ id: "cap", object_id: "obj-nf", label: "cap" });
+    const viewState = {
+      shell: { visible: true, renderMode: "surface+edges" as const, opacity: 100, colorField: "orientation" as const },
+      core: { visible: true, renderMode: "surface+edges" as const, opacity: 100, colorField: "orientation" as const },
+      cap: { visible: true, renderMode: "surface+edges" as const, opacity: 100, colorField: "orientation" as const },
+    };
+
+    const layers = buildVisibleLayers({
+      ...BASE_INPUT,
+      meshParts: [shell, core, cap],
+      meshEntityViewState: viewState,
+      selectedObjectId: "obj-nf",
+    });
+
+    expect(layers).toHaveLength(3);
+    expect(layers.every((l) => l.isSelected)).toBe(true);
+  });
+
+  // D-04 regression: Airbox hidden by default
+  it("hides air parts when airSegmentVisible is false", () => {
+    const air = makePart({ id: "air-1", role: "air", object_id: "air" });
+    const mag = makePart({ id: "mag-1", object_id: "obj-1" });
+
+    const layers = buildVisibleLayers({
+      ...BASE_INPUT,
+      meshParts: [air, mag],
+      meshEntityViewState: {
+        "air-1": { visible: false, renderMode: "wireframe", opacity: 28, colorField: "none" },
+        "mag-1": { visible: true, renderMode: "surface+edges", opacity: 100, colorField: "orientation" },
+      },
+      airSegmentVisible: false,
+    });
+
+    expect(layers).toHaveLength(1);
+    expect(layers[0].part.id).toBe("mag-1");
+  });
+
+  // D-04 regression: Airbox does NOT come back after render mode change
+  it("keeps air hidden when only magnetic object is selected", () => {
+    const air = makePart({ id: "air-1", role: "air", object_id: "air" });
+    const mag = makePart({ id: "mag-1", object_id: "obj-1" });
+
+    const layers = buildVisibleLayers({
+      ...BASE_INPUT,
+      meshParts: [air, mag],
+      meshEntityViewState: {
+        "air-1": { visible: false, renderMode: "wireframe", opacity: 28, colorField: "none" },
+        "mag-1": { visible: true, renderMode: "wireframe", opacity: 100, colorField: "orientation" },
+      },
+      selectedObjectId: "obj-1",
+      airSegmentVisible: false,
+    });
+
+    expect(layers).toHaveLength(1);
+    expect(layers[0].part.id).toBe("mag-1");
+  });
+
+  // Isolate mode: only selected parts visible
+  it("shows only selected parts in isolate mode", () => {
+    const shell = makePart({ id: "shell", object_id: "obj-nf" });
+    const core = makePart({ id: "core", object_id: "obj-nf" });
+    const disk = makePart({ id: "disk", object_id: "obj-disk" });
+    const viewState = {
+      shell: { visible: true, renderMode: "surface" as const, opacity: 100, colorField: "orientation" as const },
+      core: { visible: true, renderMode: "surface" as const, opacity: 100, colorField: "orientation" as const },
+      disk: { visible: true, renderMode: "surface" as const, opacity: 100, colorField: "orientation" as const },
+    };
+
+    const layers = buildVisibleLayers({
+      ...BASE_INPUT,
+      meshParts: [shell, core, disk],
+      meshEntityViewState: viewState,
+      objectViewMode: "isolate",
+      selectedObjectId: "obj-nf",
+    });
+
+    expect(layers).toHaveLength(2);
+    expect(layers.map((l) => l.part.id).sort()).toEqual(["core", "shell"]);
+  });
+
+  // Airbox-only + magnetic hidden
+  it("hides magnetic parts in airbox_only + hide mode", () => {
+    const air = makePart({ id: "air-1", role: "air", object_id: "air" });
+    const mag = makePart({ id: "mag-1", object_id: "obj-1" });
+    const viewState = {
+      "air-1": { visible: true, renderMode: "wireframe" as const, opacity: 28, colorField: "none" as const },
+      "mag-1": { visible: true, renderMode: "surface" as const, opacity: 100, colorField: "orientation" as const },
+    };
+
+    const layers = buildVisibleLayers({
+      ...BASE_INPUT,
+      meshParts: [air, mag],
+      meshEntityViewState: viewState,
+      vectorDomainFilter: "airbox_only",
+      ferromagnetVisibilityMode: "hide",
+      airSegmentVisible: true,
+    });
+
+    expect(layers).toHaveLength(1);
+    expect(layers[0].part.role).toBe("air");
+  });
+
+  // Airbox-only + magnetic ghost
+  it("ghosts magnetic parts in airbox_only + ghost mode", () => {
+    const air = makePart({ id: "air-1", role: "air", object_id: "air" });
+    const mag = makePart({ id: "mag-1", object_id: "obj-1" });
+    const viewState = {
+      "air-1": { visible: true, renderMode: "wireframe" as const, opacity: 28, colorField: "none" as const },
+      "mag-1": { visible: true, renderMode: "surface" as const, opacity: 100, colorField: "orientation" as const },
+    };
+
+    const layers = buildVisibleLayers({
+      ...BASE_INPUT,
+      meshParts: [air, mag],
+      meshEntityViewState: viewState,
+      vectorDomainFilter: "airbox_only",
+      ferromagnetVisibilityMode: "ghost",
+      airSegmentVisible: true,
+    });
+
+    expect(layers).toHaveLength(2);
+    const ghostLayer = layers.find((l) => l.part.id === "mag-1");
+    expect(ghostLayer).toBeDefined();
+    expect(ghostLayer!.viewState.opacity).toBeLessThanOrEqual(22);
+    expect(ghostLayer!.viewState.colorField).toBe("none");
+    expect(ghostLayer!.meshColor).toBe("#94a3b8");
   });
 });

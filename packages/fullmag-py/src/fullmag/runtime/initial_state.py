@@ -103,8 +103,14 @@ def _project_mapping_coordinates(points: np.ndarray, *, projection: str) -> np.n
         return np.column_stack((points[:, 0], points[:, 2], np.zeros(points.shape[0], dtype=np.float64)))
     if projection == "planar_yz":
         return np.column_stack((points[:, 1], points[:, 2], np.zeros(points.shape[0], dtype=np.float64)))
-    # "object_local", "box", "triplanar", "cylindrical", "spherical" and unknown
-    # projections currently keep Cartesian coordinates unchanged.
+    # "object_local" keeps full 3D Cartesian — this is the correct default.
+    if projection in {"box", "triplanar", "cylindrical", "spherical"}:
+        import warnings
+        warnings.warn(
+            f"Projection mode '{projection}' is not yet implemented; "
+            "falling back to Cartesian (object_local) coordinates.",
+            stacklevel=2,
+        )
     return points
 
 
@@ -213,11 +219,14 @@ def prepare_initial_magnetization(
         # For analytic presets operating in metric space, skip unit-box clamping.
         # Clamp/repeat/mirror is only meaningful for image-based or normalized
         # texture mappings, not for preset evaluators using physical coordinates.
+        preset_kind = str(spec["preset_kind"])
+        _METRIC_ANALYTIC_PRESETS = frozenset({
+            "vortex", "antivortex", "bloch_skyrmion", "neel_skyrmion", "domain_wall",
+        })
         clamp_mode = _mapping_clamp_mode(mapping_ir)
-        if clamp_mode != "none":
+        if clamp_mode != "none" and preset_kind not in _METRIC_ANALYTIC_PRESETS:
             local_pts = _apply_clamp_mode(local_pts, clamp_mode=clamp_mode)
 
-        preset_kind = str(spec["preset_kind"])
         params = dict(spec.get("preset_params") or spec.get("params") or {})
 
         result = evaluate_preset_texture(preset_kind, params, local_pts.tolist())

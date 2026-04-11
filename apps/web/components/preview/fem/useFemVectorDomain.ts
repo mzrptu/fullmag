@@ -147,7 +147,10 @@ export function useFemVectorDomain({
     if (hasMeshParts) {
       const visibleMagneticLayers = visibleLayers.filter((layer) => layer.isMagnetic);
       if (visibleMagneticLayers.length === 0) {
-        return meshData.activeMask ?? null;
+        // D-07 fix: Return empty mask when no magnetic layers are visible,
+        // instead of falling back to broader activeMask which could show
+        // arrows outside the expected scope.
+        return new Uint8Array(meshData.nNodes);
       }
       const baseActiveMask = meshData.activeMask;
       const combined = new Uint8Array(meshData.nNodes);
@@ -171,7 +174,8 @@ export function useFemVectorDomain({
     }
     const nodeMask = collectSegmentNodeMask(magneticSegments, meshData.nNodes, visibleMagneticIds);
     if (!nodeMask) {
-      return meshData.activeMask ?? null;
+      // D-07 fix: Return empty mask instead of broad fallback
+      return new Uint8Array(meshData.nNodes);
     }
     const baseActiveMask = meshData.activeMask;
     if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {

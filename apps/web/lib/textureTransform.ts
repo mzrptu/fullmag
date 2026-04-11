@@ -44,3 +44,93 @@ export function fitTextureToBounds(
     pivot: [0, 0, 0],
   };
 }
+
+/**
+ * For metric analytic presets, fit the preset parameters to geometry bounds
+ * instead of abusing texture_transform.scale.
+ *
+ * Returns a new set of preset_params with physical dimensions adjusted
+ * to match the target bounds, plus a metric-safe texture transform
+ * (translation + pivot centered on bounds, scale = identity).
+ */
+export function fitPresetParamsToBounds(
+  presetKind: string,
+  params: Record<string, unknown>,
+  boundsMin: [number, number, number],
+  boundsMax: [number, number, number],
+): { params: Record<string, unknown>; transform: TextureTransform3D } {
+  const ex = Math.abs(boundsMax[0] - boundsMin[0]);
+  const ey = Math.abs(boundsMax[1] - boundsMin[1]);
+  const ez = Math.abs(boundsMax[2] - boundsMin[2]);
+  const center: [number, number, number] = [
+    0.5 * (boundsMin[0] + boundsMax[0]),
+    0.5 * (boundsMin[1] + boundsMax[1]),
+    0.5 * (boundsMin[2] + boundsMax[2]),
+  ];
+
+  // Metric-safe transform: only center, no scale distortion
+  const transform: TextureTransform3D = {
+    translation: center,
+    rotation_quat: [0, 0, 0, 1],
+    scale: [1, 1, 1],
+    pivot: [0, 0, 0],
+  };
+
+  const plane = (params.plane as string) ?? "xy";
+  const inPlaneExtents = _inPlaneExtents(ex, ey, ez, plane);
+  const minInPlane = Math.min(inPlaneExtents[0], inPlaneExtents[1]);
+  const normalExtent = _normalExtent(ex, ey, ez, plane);
+
+  const next = { ...params };
+
+  switch (presetKind) {
+    case "vortex":
+    case "antivortex":
+      next.core_radius = 0.12 * minInPlane;
+      break;
+
+    case "bloch_skyrmion":
+    case "neel_skyrmion":
+      next.radius = 0.40 * minInPlane;
+      next.wall_width = 0.10 * minInPlane;
+      break;
+
+    case "domain_wall": {
+      const axis = (params.normal_axis as string) ?? "x";
+      const extentAlongNormal =
+        axis === "x" ? ex : axis === "y" ? ey : ez;
+      next.center_offset = 0;
+      next.width = 0.12 * extentAlongNormal;
+      break;
+    }
+
+    default:
+      // Non-metric presets (uniform, random, helical, conical, two_domain)
+      // fall through — no parameter adjustment needed.
+      break;
+  }
+
+  return { params: next, transform };
+}
+
+function _inPlaneExtents(
+  ex: number,
+  ey: number,
+  ez: number,
+  plane: string,
+): [number, number] {
+  if (plane === "xz") return [ex, ez];
+  if (plane === "yz") return [ey, ez];
+  return [ex, ey]; // "xy" default
+}
+
+function _normalExtent(
+  ex: number,
+  ey: number,
+  ez: number,
+  plane: string,
+): number {
+  if (plane === "xz") return ey;
+  if (plane === "yz") return ex;
+  return ez; // "xy" default
+}
