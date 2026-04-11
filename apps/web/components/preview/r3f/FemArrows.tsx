@@ -5,7 +5,7 @@ import { FemMeshData, FemColorField, FemArrowColorMode } from "../FemMeshView3D"
 import { divergingColor, magnitudeColor } from "./colorUtils";
 import { applyMagnetizationHsl } from "../magnetizationColor";
 import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
-import { maskKind } from "../fem/femNodeMask";
+import { isNodeActive, maskKind } from "../fem/femNodeMask";
 import { RENDER_POLICIES_V2 } from "../shared/renderPolicyV2";
 
 export type ArrowLengthMode = "constant" | "magnitude" | "sqrt" | "log";
@@ -273,7 +273,7 @@ export function FemArrows({
     if (!effectiveNodeMask) {
       return boundaryCandidateNodes;
     }
-    return boundaryCandidateNodes.filter((nodeIndex) => Boolean(effectiveNodeMask[nodeIndex]));
+    return boundaryCandidateNodes.filter((nodeIndex) => isNodeActive(effectiveNodeMask, nodeIndex));
   }, [boundaryCandidateNodes, effectiveNodeMask]);
 
   const sampledNodes = useMemo(() => {

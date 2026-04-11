@@ -186,7 +186,6 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   enableGeometryVertexColors = true,
   enableGeometryPointerInteractions = true,
   enableGeometryHoverInteractions = true,
-  showArrowLayer = true,
   showSelectionHighlight = true,
   showAntennaOverlays = true,
   showSceneAxes = true,
@@ -248,7 +247,6 @@ export const FemViewportScene = React.memo(function FemViewportScene({
   enableGeometryVertexColors?: boolean;
   enableGeometryPointerInteractions?: boolean;
   enableGeometryHoverInteractions?: boolean;
-  showArrowLayer?: boolean;
   showSelectionHighlight?: boolean;
   showAntennaOverlays?: boolean;
   showSceneAxes?: boolean;
@@ -367,23 +365,24 @@ export const FemViewportScene = React.memo(function FemViewportScene({
         />
       ) : null}
 
-      {showArrowLayer ? (
-        <FemArrows
-          meshData={meshData}
-          field={arrowField}
-          arrowDensity={arrowDensity}
-          colorMode={arrowColorMode}
-          monoColor={arrowMonoColor}
-          alpha={arrowAlpha}
-          lengthScale={arrowLengthScale}
-          thickness={arrowThickness}
-          center={dynamicGeomCenter}
-          maxDim={dynamicMaxDim}
-          visible={effectiveShowArrows}
-          activeNodeMask={arrowActiveNodeMask}
-          boundaryFaceIndices={arrowBoundaryFaceIndices}
-        />
-      ) : null}
+      {/* Arrow visibility is controlled entirely via effectiveShowArrows
+          (which already incorporates the diagnostic showArrowLayer flag
+           through ArrowRenderState). No separate showArrowLayer gate needed. */}
+      <FemArrows
+        meshData={meshData}
+        field={arrowField}
+        arrowDensity={arrowDensity}
+        colorMode={arrowColorMode}
+        monoColor={arrowMonoColor}
+        alpha={arrowAlpha}
+        lengthScale={arrowLengthScale}
+        thickness={arrowThickness}
+        center={dynamicGeomCenter}
+        maxDim={dynamicMaxDim}
+        visible={effectiveShowArrows}
+        activeNodeMask={arrowActiveNodeMask}
+        boundaryFaceIndices={arrowBoundaryFaceIndices}
+      />
       {showSelectionHighlight ? (
         <FemHighlightView meshData={meshData} selectedFaces={selectedFaces} center={dynamicGeomCenter} />
       ) : null}

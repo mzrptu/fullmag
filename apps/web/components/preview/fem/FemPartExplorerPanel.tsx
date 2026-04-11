@@ -20,7 +20,7 @@ export interface PartQualitySummary {
 }
 
 function isPartVisible(part: FemMeshPart, viewState: MeshEntityViewState | undefined): boolean {
-  return viewState?.visible ?? part.role !== "air";
+  return viewState?.visible ?? (part.role !== "air" && part.role !== "outer_boundary");
 }
 
 function visibilityButtonLabel(visible: boolean): string {

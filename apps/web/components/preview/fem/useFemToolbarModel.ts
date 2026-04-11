@@ -272,17 +272,15 @@ export function useFemToolbarModel({
       })()
     : toolbarColorField;
 
-  const arrowRenderState = useMemo<ArrowRenderState>(
-    () =>
-      computeArrowRenderState({
-        requested: showArrows && !FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceHideArrows,
-        layerEnabled: FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showArrowLayer,
-        missingMagneticMask,
-        visibleNodeCount: visibleArrowNodeCount,
-        hasFieldData: Boolean(meshData.fieldData),
-      }),
-    [missingMagneticMask, showArrows, visibleArrowNodeCount, meshData.fieldData],
-  );
+  // Compute directly (no useMemo) because FRONTEND_DIAGNOSTIC_FLAGS is a
+  // mutable singleton that cannot participate in React dependency arrays.
+  const arrowRenderState: ArrowRenderState = computeArrowRenderState({
+    requested: showArrows && !FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceHideArrows,
+    layerEnabled: FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showArrowLayer,
+    missingMagneticMask,
+    visibleNodeCount: visibleArrowNodeCount,
+    hasFieldData: Boolean(meshData.fieldData),
+  });
 
   const effectiveShowArrows = arrowRenderState.visible;
 

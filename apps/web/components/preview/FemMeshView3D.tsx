@@ -730,12 +730,16 @@ function FemMeshView3DInner({
     }
   }, [hasMeshParts, onMeshPartViewStatePatch, onOpacityChange, toolbarStylePartIds]);
   const applyToolbarColorField = useCallback((next: FemColorField) => {
-    setField(next);
     if (hasMeshParts && toolbarColorPartIds.length > 0 && onMeshPartViewStatePatch) {
       onMeshPartViewStatePatch(toolbarColorPartIds, { colorField: next });
+      // Only sync global field when toolbar operates at universe scope.
+      if (selectionScope.kind === "universe") {
+        setField(next);
+      }
       return;
     }
-  }, [hasMeshParts, onMeshPartViewStatePatch, toolbarColorPartIds]);
+    setField(next);
+  }, [hasMeshParts, onMeshPartViewStatePatch, selectionScope, toolbarColorPartIds]);
   const effectiveShowOrientationLegend =
     showOrientationLegend ||
     legendField === "orientation" ||
@@ -959,7 +963,6 @@ function FemMeshView3DInner({
             enableGeometryVertexColors={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.enableGeometryVertexColors}
             enableGeometryPointerInteractions={geometryPointerInteractionsEnabled}
             enableGeometryHoverInteractions={geometryHoverInteractionsEnabled}
-            showArrowLayer={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showArrowLayer}
             showSelectionHighlight={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSelectionHighlight}
             showAntennaOverlays={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showAntennaOverlays}
             showSceneAxes={FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSceneAxes}

@@ -300,7 +300,9 @@ export function useFemVectorDomain({
     return Math.max(minBudget, Math.min(baseArrowDensity, scaled));
   }, [baseArrowDensity, baselineArrowNodeCount, visibleArrowNodeCount]);
 
-  const runtimeQualityProfile = useMemo<ViewportQualityProfileId>(() => {
+  // Compute directly (no useMemo) because FRONTEND_DIAGNOSTIC_FLAGS is a
+  // mutable singleton that cannot participate in React dependency arrays.
+  const runtimeQualityProfile: ViewportQualityProfileId = (() => {
     if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceLowQualityProfile) {
       return "interactive-lite";
     }
@@ -308,7 +310,7 @@ export function useFemVectorDomain({
       return "capture";
     }
     return interactionActive ? "interactive-lite" : qualityProfile;
-  }, [captureActive, interactionActive, qualityProfile]);
+  })();
 
   const runtimeRenderMode = useMemo<RenderMode>(() => {
     if (!interactionActive) {

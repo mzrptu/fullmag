@@ -48,18 +48,6 @@ export function buildMagneticArrowNodeMask(
 
 /* ── helpers ── */
 
-function activeMaskAsUint8(
-  mask: boolean[] | null | undefined,
-  nNodes: number,
-): Uint8Array | null {
-  if (!mask || mask.length !== nNodes) return null;
-  const out = new Uint8Array(nNodes);
-  for (let i = 0; i < nNodes; i++) {
-    out[i] = mask[i] ? 1 : 0;
-  }
-  return out;
-}
-
 function intersectWithActiveMask(
   base: Uint8Array,
   activeMask: boolean[] | null | undefined,
