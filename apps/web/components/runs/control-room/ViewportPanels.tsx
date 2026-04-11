@@ -44,7 +44,7 @@ function domainFrameSourceLabel(source: string | null): string {
     case "object_union_bounds":
       return "Object Union Bounds";
     case "mesh_bounds":
-      return "Mesh Bounds Fallback";
+      return "Mesh Bounds";
     default:
       return "Workspace Frame";
   }

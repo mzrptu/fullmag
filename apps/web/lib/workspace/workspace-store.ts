@@ -11,7 +11,6 @@ interface StageLayoutState {
 }
 
 interface WorkspaceStoreState {
-  currentPerspective: WorkspaceMode;
   currentStage: WorkspaceMode;
   activeCoreTab: string;
   activeContextualTab: string | null;
@@ -24,7 +23,6 @@ interface WorkspaceStoreState {
   settingsOpen: boolean;
   physicsDocsOpen: boolean;
   physicsDocsTopic: string | null;
-  setCurrentPerspective: (mode: WorkspaceMode) => void;
   setCurrentStage: (mode: WorkspaceMode) => void;
   setActiveCoreTab: (tab: string) => void;
   setActiveContextualTab: (tab: string | null) => void;
@@ -53,7 +51,6 @@ function updateStageLayout(
 }
 
 export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
-  currentPerspective: "analyze",
   currentStage: "analyze",
   activeCoreTab: "Home",
   activeContextualTab: null,
@@ -85,10 +82,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
   settingsOpen: false,
   physicsDocsOpen: false,
   physicsDocsTopic: null,
-  setCurrentPerspective: (currentPerspective) =>
-    set({ currentPerspective, currentStage: currentPerspective }),
-  setCurrentStage: (currentStage) =>
-    set({ currentStage, currentPerspective: currentStage }),
+  setCurrentStage: (currentStage) => set({ currentStage }),
   setActiveCoreTab: (activeCoreTab) => set({ activeCoreTab }),
   setActiveContextualTab: (activeContextualTab) => set({ activeContextualTab }),
   setLeftDock: (mode, leftDock) =>
@@ -113,5 +107,5 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
 }));
 
 export function useActiveStageLayout(): StageLayoutState {
-  return useWorkspaceStore((state) => state.stageLayouts[state.currentPerspective]);
+  return useWorkspaceStore((state) => state.stageLayouts[state.currentStage]);
 }

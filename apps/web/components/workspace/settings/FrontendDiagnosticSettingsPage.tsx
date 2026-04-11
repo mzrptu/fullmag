@@ -20,7 +20,7 @@ type FlagEntry = {
   value: Primitive;
 };
 
-const LOCKED_PATHS = new Set(["shell.showAppBar", "shell.showRibbonBar"]);
+const LOCKED_PATHS = new Set(["shell.showRibbonBar"]);
 
 const SECTION_LABELS: Record<string, string> = {
   workspace: "Workspace",
@@ -30,19 +30,21 @@ const SECTION_LABELS: Record<string, string> = {
   viewportChrome: "Viewport Chrome",
   viewportCore: "Viewport Core",
   renderDebug: "Render Debug",
+  magnetizationAuthoring: "Magnetization Authoring",
   femWrapper: "FEM Wrapper",
   femViewport: "FEM Viewport",
   fdmViewport: "FDM Viewport",
 };
 
 const DESCRIPTIONS: Record<string, string> = {
-  "shell.showAppBar": "Always ON. Global top bar cannot be disabled.",
   "shell.showRibbonBar": "Always ON. Ribbon bar cannot be disabled.",
   "femViewport.enableSelectionOnlyInteractionMode": "Selection mode: disables camera controls and enables face picking.",
   "femViewport.enableGeometryHoverInteractions": "Hover raycast on mouse move (expensive on large meshes).",
-  "session.enableSceneDraftAutoPush": "Auto-push scene draft to backend when builder changes.",
   "viewportCore.frameloopMode": "Render loop mode for viewport canvas.",
   "workspace.standaloneDiagnosticViewportMode": "Standalone diagnostic viewport mode.",
+  "magnetizationAuthoring.enablePresetTextureBackendSync": "Immediately sync preset texture edits to backend scene state.",
+  "magnetizationAuthoring.showPresetTextureBackendSyncProgress": "Show progress card for backend texture sync.",
+  "magnetizationAuthoring.presetTextureBackendSyncDebounceMs": "Debounce window for texture sync requests (ms).",
 };
 
 const ENUM_OPTIONS: Record<string, Array<{ label: string; value: string }>> = {
@@ -108,7 +110,6 @@ function setByPath(target: Record<string, unknown>, path: string, nextValue: Pri
 
 function enforceHardConstraints(next: FrontendDiagnosticFlags): FrontendDiagnosticFlags {
   const cloned = structuredClone(next);
-  cloned.shell.showAppBar = true;
   cloned.shell.showRibbonBar = true;
   return cloned;
 }

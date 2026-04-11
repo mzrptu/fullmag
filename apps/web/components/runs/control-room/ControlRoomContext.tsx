@@ -171,8 +171,8 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const { state, connection, error } = useCurrentLiveStream();
 
   /* ── Local UI state ── */
-  const workspaceMode = useWorkspaceStore((s) => s.currentPerspective);
-  const _setPerspective = useWorkspaceStore((s) => s.setCurrentPerspective);
+  const workspaceMode = useWorkspaceStore((s) => s.currentStage);
+  const _setPerspective = useWorkspaceStore((s) => s.setCurrentStage);
   const setWorkspaceMode = useCallback(
     (v: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
       _setPerspective(typeof v === "function" ? v(workspaceMode) : v);
@@ -889,15 +889,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   );
 
   /* ── Builder auto-sync (extracted hook) ── */
-  const builderAutoSync = useBuilderAutoSync({
-    liveApi,
-    localBuilderDraft,
-    localBuilderSignature,
-    remoteBuilderSignature,
-    scriptBuilder,
-    workspaceStatus,
-    workspaceHydrationKey,
-  });
+  const builderAutoSync = useBuilderAutoSync();
 
   /* Hydrate solver-settings panel from the actual backend plan on first load. */
   const [solverSettingsHydrated, setSolverSettingsHydrated] = useState(false);
@@ -1177,7 +1169,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     });
   }, [modelBuilderGraph, workspaceHydrationKey]);
 
-  /* Auto-push is now handled by useBuilderAutoSync hook. */
+  /* Scene draft sync is explicit (manual/script sync) — no hidden auto-push effect. */
 
   useEffect(() => {
     if (typeof window === "undefined") {

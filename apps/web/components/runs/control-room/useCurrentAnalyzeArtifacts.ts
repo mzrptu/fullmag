@@ -9,6 +9,7 @@ import type {
   EigenSpectrumArtifact,
   FemMeshPayload,
 } from "@/components/analyze/eigenTypes";
+import { fetchAnalyzeArtifact } from "@/features/analyze";
 import { resolveApiBase } from "@/lib/apiBase";
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
@@ -25,8 +26,8 @@ interface BootstrapLite {
   live_state?: { latest_step?: { fem_mesh?: FemMeshPayload | null } | null } | null;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: "no-store" });
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { cache: "no-store", signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;
 }
@@ -52,7 +53,9 @@ export interface CurrentAnalyzeArtifactsState {
 
 export function useCurrentAnalyzeArtifacts(
   refreshNonce: number,
+  options?: { enabled?: boolean },
 ): CurrentAnalyzeArtifactsState {
+  const enabled = options?.enabled ?? true;
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [modeLoadState, setModeLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -66,18 +69,50 @@ export function useCurrentAnalyzeArtifacts(
   const [internalRefreshNonce, setInternalRefreshNonce] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!enabled) {
+      setLoadState("idle");
+      setModeLoadState("idle");
+      setError(null);
+      setModeError(null);
+      setSpectrum(null);
+      setBranches(null);
+      setDispersionRows([]);
+      setModeArtifactMap(new Map());
+      setModeCache({});
+      return;
+    }
 
+    let cancelled = false;
     async function load() {
       setLoadState("loading");
       setError(null);
 
       try {
         const base = resolveApiBase();
+        const queryNonce = `${refreshNonce}:${internalRefreshNonce}`;
         const [bootstrap, liveArtifacts] = await Promise.all([
-          fetchJson<BootstrapLite>(`${base}/v1/live/current/bootstrap`),
-          fetchJson<Array<{ path: string; kind?: string }>>(
-            `${base}/v1/live/current/artifacts`,
+          fetchAnalyzeArtifact<BootstrapLite>(
+            {
+              domain: "eigenmodes",
+              tab: "bootstrap",
+              selectionFingerprint: `bootstrap:${queryNonce}`,
+              refreshNonce,
+            },
+            (requestSignal) =>
+              fetchJson<BootstrapLite>(`${base}/v1/live/current/bootstrap`, requestSignal),
+          ),
+          fetchAnalyzeArtifact<Array<{ path: string; kind?: string }>>(
+            {
+              domain: "eigenmodes",
+              tab: "artifacts",
+              selectionFingerprint: `artifacts:${queryNonce}`,
+              refreshNonce,
+            },
+            (requestSignal) =>
+              fetchJson<Array<{ path: string; kind?: string }>>(
+                `${base}/v1/live/current/artifacts`,
+                requestSignal,
+              ),
           ).catch(() => []),
         ]);
         if (cancelled) return;
@@ -109,17 +144,53 @@ export function useCurrentAnalyzeArtifacts(
 
         const [nextSpectrum, nextDispersion, nextBranches] = await Promise.all([
           hasSpectrum
-            ? fetchJson<EigenSpectrumArtifact>(`${base}/v1/live/current/eigen/spectrum`).catch(
+            ? fetchAnalyzeArtifact<EigenSpectrumArtifact>(
+                {
+                  domain: "eigenmodes",
+                  tab: "spectrum",
+                  selectionFingerprint: `spectrum:${queryNonce}`,
+                  refreshNonce,
+                },
+                (requestSignal) =>
+                  fetchJson<EigenSpectrumArtifact>(
+                    `${base}/v1/live/current/eigen/spectrum`,
+                    requestSignal,
+                  ),
+              ).catch(
                 () => null,
               )
             : Promise.resolve(null),
           hasDispersion
-            ? fetchJson<EigenDispersionResponse>(`${base}/v1/live/current/eigen/dispersion`).catch(
+            ? fetchAnalyzeArtifact<EigenDispersionResponse>(
+                {
+                  domain: "eigenmodes",
+                  tab: "dispersion",
+                  selectionFingerprint: `dispersion:${queryNonce}`,
+                  refreshNonce,
+                },
+                (requestSignal) =>
+                  fetchJson<EigenDispersionResponse>(
+                    `${base}/v1/live/current/eigen/dispersion`,
+                    requestSignal,
+                  ),
+              ).catch(
                 () => null,
               )
             : Promise.resolve(null),
           hasBranches
-            ? fetchJson<EigenBranchesArtifact>(`${base}/v1/live/current/eigen/branches`).catch(
+            ? fetchAnalyzeArtifact<EigenBranchesArtifact>(
+                {
+                  domain: "eigenmodes",
+                  tab: "branches",
+                  selectionFingerprint: `branches:${queryNonce}`,
+                  refreshNonce,
+                },
+                (requestSignal) =>
+                  fetchJson<EigenBranchesArtifact>(
+                    `${base}/v1/live/current/eigen/branches`,
+                    requestSignal,
+                  ),
+              ).catch(
                 () => null,
               )
             : Promise.resolve(null),
@@ -148,9 +219,12 @@ export function useCurrentAnalyzeArtifacts(
     return () => {
       cancelled = true;
     };
-  }, [refreshNonce, internalRefreshNonce]);
+  }, [enabled, refreshNonce, internalRefreshNonce]);
 
   const ensureMode = useCallback(async (index: number, sampleIndex?: number | null) => {
+    if (!enabled) {
+      return;
+    }
     if (modeCache[index]) return;
 
     setModeLoadState("loading");
@@ -162,8 +236,18 @@ export function useCurrentAnalyzeArtifacts(
       if (sampleIndex != null) {
         params.set("sample_index", String(sampleIndex));
       }
-      const artifact = await fetchJson<EigenModeArtifact>(
-        `${base}/v1/live/current/eigen/mode?${params.toString()}`,
+      const artifact = await fetchAnalyzeArtifact<EigenModeArtifact>(
+        {
+          domain: "eigenmodes",
+          tab: "mode",
+          selectionFingerprint: `mode:${index}:${sampleIndex ?? "none"}`,
+          refreshNonce,
+        },
+        (requestSignal) =>
+          fetchJson<EigenModeArtifact>(
+            `${base}/v1/live/current/eigen/mode?${params.toString()}`,
+            requestSignal,
+          ),
       );
       setModeCache((prev) => ({ ...prev, [index]: artifact }));
       setModeLoadState("loaded");
@@ -171,7 +255,7 @@ export function useCurrentAnalyzeArtifacts(
       setModeError(err instanceof Error ? err.message : String(err));
       setModeLoadState("error");
     }
-  }, [modeCache]);
+  }, [enabled, modeCache, refreshNonce]);
 
   const hasEigenArtifacts = useMemo(
     () => Boolean(spectrum) || Boolean(branches) || dispersionRows.length > 0 || modeArtifactMap.size > 0,

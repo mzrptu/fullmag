@@ -15,7 +15,9 @@ export function useAnalyzeWorkspaceState(
   controller: AnalyzeWorkspaceController,
 ) {
   const { analyzeSelection, setSelectedModeIndex, setTab } = controller;
-  const artifacts = useCurrentAnalyzeArtifacts(analyzeSelection.refreshNonce);
+  const artifacts = useCurrentAnalyzeArtifacts(analyzeSelection.refreshNonce, {
+    enabled: analyzeSelection.domain === "eigenmodes",
+  });
   const selectedMode = analyzeSelection.selectedModeIndex;
 
   const selectedModeArtifact =

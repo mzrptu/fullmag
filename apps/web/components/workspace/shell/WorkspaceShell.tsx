@@ -1,7 +1,6 @@
 "use client";
 
 import { ControlRoomProvider } from "@/components/runs/control-room/ControlRoomContext";
-import { StoreBridge } from "@/components/runs/control-room/StoreBridge";
 import { ControlRoomShell } from "@/components/runs/RunControlRoom";
 import type { WorkspaceMode } from "@/components/runs/control-room/context-hooks";
 import StandaloneThreeDiagnosticViewport from "./StandaloneThreeDiagnosticViewport";
@@ -32,7 +31,6 @@ export default function WorkspaceShell({ initialStage }: WorkspaceShellProps) {
   }
   return (
     <ControlRoomProvider>
-      <StoreBridge />
       <ControlRoomShell initialWorkspaceMode={initialStage} />
     </ControlRoomProvider>
   );

@@ -1,137 +1,19 @@
 /**
- * useBuilderAutoSync – extracted from ControlRoomContext.tsx
+ * useBuilderAutoSync
  *
- * Monitors local scene-draft signature vs remote, debounces 250 ms,
- * and pushes dirty drafts to the backend via liveApi.updateSceneDocument().
- *
- * Extracted as part of the master-plan Faza 4 (authoring).
+ * Kept as a lightweight lifecycle helper for hydration/sync metadata.
+ * The hidden auto-push effect was intentionally removed:
+ * scene draft synchronization is now explicit (manual/script sync actions only).
  */
 import { useEffect, useRef, useState } from "react";
-import { ApiHttpError } from "../../../../lib/liveApiClient";
-import { recordFrontendDebugEvent } from "../../../../lib/workspace/navigation-debug";
-import { FRONTEND_DIAGNOSTIC_FLAGS } from "../../../../lib/debug/frontendDiagnosticFlags";
 
-interface BuilderAutoSyncDeps {
-  liveApi: { updateSceneDocument: (payload: unknown) => Promise<unknown> };
-  localBuilderDraft: unknown;
-  localBuilderSignature: string | null;
-  remoteBuilderSignature: string | null;
-  scriptBuilder: unknown;
-  workspaceStatus: string;
-  workspaceHydrationKey: string | null;
-}
-
-/**
- * Manages the auto-push lifecycle for the local scene draft.
- *
- * Returns:
- *  - `resetAutoSync()` – call when the session changes to clear refs & timers.
- *  - `gateAutoSync(ms)` – delay auto-push for `ms` after hydration.
- *  - `markHydrated(key)` – note the session as hydrated.
- *  - `builderAutoPushGateVersion` – bump value to unblock gated pushes.
- */
-export function useBuilderAutoSync({
-  liveApi,
-  localBuilderDraft,
-  localBuilderSignature,
-  remoteBuilderSignature,
-  scriptBuilder,
-  workspaceStatus,
-  workspaceHydrationKey,
-}: BuilderAutoSyncDeps) {
+export function useBuilderAutoSync() {
   const builderHydratedSessionRef = useRef<string | null>(null);
   const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const builderAutoPushGateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const builderAutoPushGateUntilRef = useRef(0);
   const lastBuilderPushSignatureRef = useRef<string | null>(null);
-  const nonRetryableBuilderPushSignatureRef = useRef<string | null>(null);
   const [builderAutoPushGateVersion, setBuilderAutoPushGateVersion] = useState(0);
-
-  /* ── Core auto-push effect ── */
-  useEffect(() => {
-    if (!FRONTEND_DIAGNOSTIC_FLAGS.session.enableSceneDraftAutoPush) {
-      recordFrontendDebugEvent("scene-sync", "auto_push_disabled_by_diagnostic_flag", {
-        workspaceStatus,
-      });
-      return;
-    }
-    if (!workspaceHydrationKey || !scriptBuilder) {
-      return;
-    }
-    if (builderHydratedSessionRef.current !== workspaceHydrationKey) {
-      return;
-    }
-    if (remoteBuilderSignature === localBuilderSignature) {
-      lastBuilderPushSignatureRef.current = localBuilderSignature;
-      return;
-    }
-    if (lastBuilderPushSignatureRef.current === localBuilderSignature) {
-      return;
-    }
-    if (nonRetryableBuilderPushSignatureRef.current === localBuilderSignature) {
-      return;
-    }
-    const startupGateActive =
-      Date.now() < builderAutoPushGateUntilRef.current ||
-      workspaceStatus === "bootstrapping" ||
-      workspaceStatus === "materializing_script";
-    if (startupGateActive) {
-      recordFrontendDebugEvent("scene-sync", "auto_push_deferred_during_startup", {
-        workspaceStatus,
-        gateUntil: builderAutoPushGateUntilRef.current,
-      });
-      return;
-    }
-    if (builderPushTimerRef.current) {
-      clearTimeout(builderPushTimerRef.current);
-    }
-    builderPushTimerRef.current = setTimeout(() => {
-      recordFrontendDebugEvent("scene-sync", "auto_push_start", {
-        workspaceStatus,
-      });
-      void liveApi
-        .updateSceneDocument(localBuilderDraft)
-        .then(() => {
-          recordFrontendDebugEvent("scene-sync", "auto_push_success", {
-            workspaceStatus,
-          });
-          lastBuilderPushSignatureRef.current = localBuilderSignature;
-        })
-        .catch((builderError) => {
-          console.warn("Failed to persist scene document draft", builderError);
-          const nonRetryable =
-            builderError instanceof ApiHttpError &&
-            builderError.status >= 400 &&
-            builderError.status < 500;
-          recordFrontendDebugEvent("scene-sync", "auto_push_failed", {
-            workspaceStatus,
-            message: builderError instanceof Error ? builderError.message : String(builderError),
-            nonRetryable,
-          });
-          if (nonRetryable) {
-            nonRetryableBuilderPushSignatureRef.current = localBuilderSignature;
-            lastBuilderPushSignatureRef.current = localBuilderSignature;
-            return;
-          }
-          lastBuilderPushSignatureRef.current = null;
-        });
-    }, 250);
-    return () => {
-      if (builderPushTimerRef.current) {
-        clearTimeout(builderPushTimerRef.current);
-        builderPushTimerRef.current = null;
-      }
-    };
-  }, [
-    liveApi,
-    localBuilderDraft,
-    localBuilderSignature,
-    remoteBuilderSignature,
-    scriptBuilder,
-    workspaceStatus,
-    workspaceHydrationKey,
-    builderAutoPushGateVersion,
-  ]);
 
   /* ── Cleanup on unmount ── */
   useEffect(() => {
@@ -162,7 +44,6 @@ export function useBuilderAutoSync({
     resetAutoSync() {
       builderHydratedSessionRef.current = null;
       lastBuilderPushSignatureRef.current = null;
-      nonRetryableBuilderPushSignatureRef.current = null;
       if (builderPushTimerRef.current) {
         clearTimeout(builderPushTimerRef.current);
         builderPushTimerRef.current = null;

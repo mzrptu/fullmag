@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
-use fullmag_authoring::{SceneDocument, ScriptBuilderInitialState};
+use fullmag_authoring::{MagnetizationAsset, SceneDocument, ScriptBuilderInitialState};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -1785,6 +1785,18 @@ async fn update_current_live_scene(
     State(state): State<Arc<AppState>>,
     Json(mut scene_document): Json<SceneDocument>,
 ) -> Result<Json<SceneDocument>, ApiError> {
+    let preset_texture_count = scene_document
+        .magnetization_assets
+        .iter()
+        .filter(|asset| asset.kind == "preset_texture")
+        .count();
+    eprintln!(
+        "[fullmag-api] RX <- frontend scene rev={} objects={} magnetization_assets={} preset_texture_assets={}",
+        scene_document.revision,
+        scene_document.objects.len(),
+        scene_document.magnetization_assets.len(),
+        preset_texture_count
+    );
     info!(
         target: "fullmag_api::scene_sync",
         direction = "rx",
@@ -1795,7 +1807,7 @@ async fn update_current_live_scene(
         summary = %scene_magnetization_summary(&scene_document),
         "frontend scene update received"
     );
-    let (scene_document, session_state_messages, public_json) = {
+    let (scene_document, session_state_messages, public_json, preset_texture_change_logs) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
@@ -1809,6 +1821,7 @@ async fn update_current_live_scene(
             snapshot.builder_adapter = scene_document_builder_projection(&current_scene).ok();
             snapshot.scene_document = Some(current_scene);
         }
+        let previous_scene = snapshot.scene_document.clone();
         let next_revision = snapshot
             .scene_document
             .as_ref()
@@ -1834,11 +1847,30 @@ async fn update_current_live_scene(
         snapshot.scene_document = Some(scene_document.clone());
         let session_state_messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
-        (scene_document, session_state_messages, public_json)
+        let preset_texture_change_logs =
+            detect_preset_texture_changes(previous_scene.as_ref(), &scene_document);
+        (
+            scene_document,
+            session_state_messages,
+            public_json,
+            preset_texture_change_logs,
+        )
     };
 
     *state.current_live_public_snapshot.write().await = Some(public_json);
     send_current_live_ws_messages(&state, session_state_messages);
+    eprintln!(
+        "[fullmag-api] TX -> frontend scene rev={} preset_texture_assets={} status=committed",
+        scene_document.revision,
+        scene_document
+            .magnetization_assets
+            .iter()
+            .filter(|asset| asset.kind == "preset_texture")
+            .count()
+    );
+    for line in &preset_texture_change_logs {
+        eprintln!("[fullmag-api][mag-texture] {}", line);
+    }
     info!(
         target: "fullmag_api::scene_sync",
         direction = "tx",
@@ -1875,6 +1907,234 @@ fn scene_magnetization_summary(scene: &SceneDocument) -> String {
         }
     }
     format!("counts={counts:?}; assets={interesting:?}")
+}
+
+fn linked_objects_for_magnetization_asset(scene: &SceneDocument, asset_id: &str) -> Vec<String> {
+    scene
+        .objects
+        .iter()
+        .filter(|object| object.magnetization_ref.as_deref() == Some(asset_id))
+        .map(|object| object.name.clone())
+        .collect()
+}
+
+fn fmt_vec3_nm(vec: [f64; 3]) -> String {
+    format!(
+        "[{:+.3}, {:+.3}, {:+.3}]nm",
+        vec[0] * 1.0e9,
+        vec[1] * 1.0e9,
+        vec[2] * 1.0e9
+    )
+}
+
+fn fmt_quat4(quat: [f64; 4]) -> String {
+    format!(
+        "[{:+.6}, {:+.6}, {:+.6}, {:+.6}]",
+        quat[0], quat[1], quat[2], quat[3]
+    )
+}
+
+fn vec3_delta(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+}
+
+fn vec3_changed(a: [f64; 3], b: [f64; 3]) -> bool {
+    const EPS: f64 = 1.0e-21;
+    (a[0] - b[0]).abs() > EPS || (a[1] - b[1]).abs() > EPS || (a[2] - b[2]).abs() > EPS
+}
+
+fn quat_changed(a: [f64; 4], b: [f64; 4]) -> bool {
+    const EPS: f64 = 1.0e-21;
+    (a[0] - b[0]).abs() > EPS
+        || (a[1] - b[1]).abs() > EPS
+        || (a[2] - b[2]).abs() > EPS
+        || (a[3] - b[3]).abs() > EPS
+}
+
+fn detect_preset_texture_changes(
+    previous: Option<&SceneDocument>,
+    next: &SceneDocument,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let previous_assets: HashMap<&str, &MagnetizationAsset> = previous
+        .map(|scene| {
+            scene
+                .magnetization_assets
+                .iter()
+                .map(|asset| (asset.id.as_str(), asset))
+                .collect()
+        })
+        .unwrap_or_default();
+    let next_assets: HashMap<&str, &MagnetizationAsset> = next
+        .magnetization_assets
+        .iter()
+        .map(|asset| (asset.id.as_str(), asset))
+        .collect();
+
+    let mut asset_ids: Vec<&str> = previous_assets
+        .keys()
+        .copied()
+        .chain(next_assets.keys().copied())
+        .collect();
+    asset_ids.sort_unstable();
+    asset_ids.dedup();
+
+    for asset_id in asset_ids {
+        let prev_asset = previous_assets.get(asset_id).copied();
+        let next_asset = next_assets.get(asset_id).copied();
+        match (prev_asset, next_asset) {
+            (None, Some(next_asset)) => {
+                if next_asset.kind != "preset_texture" {
+                    continue;
+                }
+                let objects = linked_objects_for_magnetization_asset(next, asset_id);
+                out.push(format!(
+                    "ASSIGN objects={:?} asset={} preset={} mapping=({}/{}/{}) T={} S={} R={}",
+                    objects,
+                    next_asset.id,
+                    next_asset
+                        .preset_kind
+                        .as_deref()
+                        .unwrap_or("<none>"),
+                    next_asset.mapping.space,
+                    next_asset.mapping.projection,
+                    next_asset.mapping.clamp_mode,
+                    fmt_vec3_nm(next_asset.texture_transform.translation),
+                    fmt_vec3_nm(next_asset.texture_transform.scale),
+                    fmt_quat4(next_asset.texture_transform.rotation_quat),
+                ));
+            }
+            (Some(prev_asset), Some(next_asset)) => {
+                if prev_asset.kind != "preset_texture" && next_asset.kind != "preset_texture" {
+                    continue;
+                }
+                let objects = linked_objects_for_magnetization_asset(next, asset_id);
+                if prev_asset.kind != "preset_texture" && next_asset.kind == "preset_texture" {
+                    out.push(format!(
+                        "KIND_SWITCH objects={:?} asset={} {} -> preset_texture({})",
+                        objects,
+                        next_asset.id,
+                        prev_asset.kind,
+                        next_asset
+                            .preset_kind
+                            .as_deref()
+                            .unwrap_or("<none>"),
+                    ));
+                    continue;
+                }
+                if prev_asset.kind == "preset_texture" && next_asset.kind != "preset_texture" {
+                    out.push(format!(
+                        "KIND_SWITCH objects={:?} asset={} preset_texture -> {}",
+                        objects, next_asset.id, next_asset.kind
+                    ));
+                    continue;
+                }
+                let mut changes = Vec::new();
+                if prev_asset.preset_kind != next_asset.preset_kind {
+                    changes.push(format!(
+                        "preset={} -> {}",
+                        prev_asset.preset_kind.as_deref().unwrap_or("<none>"),
+                        next_asset.preset_kind.as_deref().unwrap_or("<none>")
+                    ));
+                }
+                if prev_asset.preset_params != next_asset.preset_params {
+                    changes.push("preset_params=changed".to_string());
+                }
+                if prev_asset.mapping != next_asset.mapping {
+                    changes.push(format!(
+                        "mapping=({}/{}/{}) -> ({}/{}/{})",
+                        prev_asset.mapping.space,
+                        prev_asset.mapping.projection,
+                        prev_asset.mapping.clamp_mode,
+                        next_asset.mapping.space,
+                        next_asset.mapping.projection,
+                        next_asset.mapping.clamp_mode
+                    ));
+                }
+                if vec3_changed(
+                    prev_asset.texture_transform.translation,
+                    next_asset.texture_transform.translation,
+                ) {
+                    let delta = vec3_delta(
+                        prev_asset.texture_transform.translation,
+                        next_asset.texture_transform.translation,
+                    );
+                    changes.push(format!(
+                        "translate Δ={} -> {}",
+                        fmt_vec3_nm(delta),
+                        fmt_vec3_nm(next_asset.texture_transform.translation),
+                    ));
+                }
+                if vec3_changed(
+                    prev_asset.texture_transform.scale,
+                    next_asset.texture_transform.scale,
+                ) {
+                    changes.push(format!(
+                        "scale {} -> {}",
+                        fmt_vec3_nm(prev_asset.texture_transform.scale),
+                        fmt_vec3_nm(next_asset.texture_transform.scale),
+                    ));
+                }
+                if vec3_changed(
+                    prev_asset.texture_transform.pivot,
+                    next_asset.texture_transform.pivot,
+                ) {
+                    changes.push(format!(
+                        "pivot {} -> {}",
+                        fmt_vec3_nm(prev_asset.texture_transform.pivot),
+                        fmt_vec3_nm(next_asset.texture_transform.pivot),
+                    ));
+                }
+                if quat_changed(
+                    prev_asset.texture_transform.rotation_quat,
+                    next_asset.texture_transform.rotation_quat,
+                ) {
+                    changes.push(format!(
+                        "rotation {} -> {}",
+                        fmt_quat4(prev_asset.texture_transform.rotation_quat),
+                        fmt_quat4(next_asset.texture_transform.rotation_quat),
+                    ));
+                }
+
+                if !changes.is_empty() {
+                    out.push(format!(
+                        "UPDATE objects={:?} asset={} {}",
+                        objects,
+                        next_asset.id,
+                        changes.join(" | "),
+                    ));
+                }
+            }
+            (Some(prev_asset), None) => {
+                if prev_asset.kind != "preset_texture" {
+                    continue;
+                }
+                if let Some(previous_scene) = previous {
+                    let objects = linked_objects_for_magnetization_asset(previous_scene, asset_id);
+                    out.push(format!(
+                        "REMOVE objects={:?} asset={} preset={}",
+                        objects,
+                        prev_asset.id,
+                        prev_asset
+                            .preset_kind
+                            .as_deref()
+                            .unwrap_or("<none>")
+                    ));
+                } else {
+                    out.push(format!(
+                        "REMOVE objects=[] asset={} preset={}",
+                        prev_asset.id,
+                        prev_asset
+                            .preset_kind
+                            .as_deref()
+                            .unwrap_or("<none>")
+                    ));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+    out
 }
 
 async fn list_physics_docs(

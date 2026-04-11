@@ -6,13 +6,10 @@ const DEFAULT_FRONTEND_DIAGNOSTIC_FLAGS = {
     standaloneDiagnosticViewportMode: "off",
   },
   session: {
-    enableSceneDraftAutoPush: true,
     enableLiveBootstrapFetch: true,
     enableLiveWebSocket: true,
   },
   shell: {
-    useViewportOnlyShell: false,
-    showAppBar: true,
     showRibbonBar: true,
     showSidebar: true,
     showViewportBar: true,
@@ -57,6 +54,11 @@ const DEFAULT_FRONTEND_DIAGNOSTIC_FLAGS = {
   },
   renderDebug: {
     enableRenderLogging: false,
+  },
+  magnetizationAuthoring: {
+    enablePresetTextureBackendSync: true,
+    showPresetTextureBackendSyncProgress: true,
+    presetTextureBackendSyncDebounceMs: 220,
   },
   femWrapper: {
     enableInteractiveState: true,

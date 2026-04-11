@@ -108,7 +108,6 @@ export const DIAGNOSTIC_PROFILES: readonly DiagnosticProfile[] = [
     description: "Viewport-only shell for embedding scenarios.",
     overrides: {
       shell: {
-        useViewportOnlyShell: true,
         showSidebar: false,
         showViewportBar: false,
         showPreviewNotices: false,
@@ -126,7 +125,6 @@ export const DIAGNOSTIC_PROFILES: readonly DiagnosticProfile[] = [
     description: "All chrome off, no localStorage persistence.",
     overrides: {
       shell: {
-        useViewportOnlyShell: true,
         showSidebar: false,
         showViewportBar: false,
         showPreviewNotices: false,
@@ -137,7 +135,6 @@ export const DIAGNOSTIC_PROFILES: readonly DiagnosticProfile[] = [
         showBackendErrorNotice: false,
       },
       session: {
-        enableSceneDraftAutoPush: false,
         enableLiveBootstrapFetch: false,
         enableLiveWebSocket: false,
       },

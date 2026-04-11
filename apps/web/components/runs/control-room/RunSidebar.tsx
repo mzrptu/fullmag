@@ -133,7 +133,7 @@ export default function RunSidebar() {
       case "object_union_bounds":
         return "Object union bounds / preview framing";
       case "mesh_bounds":
-        return "Mesh bounds fallback / preview framing";
+        return "Mesh bounds / preview framing";
       default:
         return "Workspace framing";
     }

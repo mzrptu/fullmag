@@ -1014,30 +1014,6 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
     </>
   );
 
-  const minimalFrontendMode = FRONTEND_DIAGNOSTIC_FLAGS.shell.useViewportOnlyShell;
-
-  if (minimalFrontendMode) {
-    return (
-      <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
-        {FRONTEND_DIAGNOSTIC_FLAGS.shell.showBackendErrorNotice && activeBackendError ? (
-          <div className="border-b border-rose-500/20 bg-rose-950/10 px-3 py-3">
-            <BackendErrorNotice
-              error={activeBackendError}
-              onDismiss={() => setDismissedBackendErrorAt(activeBackendError.timestampUnixMs)}
-            />
-          </div>
-        ) : null}
-        <div className="flex flex-1 min-h-0 min-w-0 bg-background">
-          <div className="flex flex-col flex-1 min-h-0 min-w-0">
-            {FRONTEND_DIAGNOSTIC_FLAGS.shell.showViewportBar ? <ViewportBar /> : null}
-            {FRONTEND_DIAGNOSTIC_FLAGS.shell.showPreviewNotices ? previewNotices : null}
-            <ViewportCanvasArea />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full flex flex-col bg-background font-sans text-foreground text-base overflow-hidden">
       <AppBar
