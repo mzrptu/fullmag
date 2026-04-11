@@ -435,14 +435,17 @@ export function useVisualizationPresets(params: UseVisualizationPresetsParams) {
   }, []);
 
   const applyVisualizationPreset = useCallback(
-    (ref: VisualizationPresetRef) => {
+    (ref: VisualizationPresetRef, options?: { scopePartIds?: string[] }) => {
       const sourceList =
         ref.source === "project" ? projectVisualizationPresets : localVisualizationPresets;
       const preset = sourceList.find((entry) => entry.id === ref.preset_id);
       if (!preset) {
         return;
       }
+      const isScoped = options?.scopePartIds != null && options.scopePartIds.length > 0;
       setActiveVisualizationPresetRef(ref);
+
+      // Global-only fields: quantity, viewMode, 2D settings (always applied)
       if (preset.quantity && preset.quantity !== selectedQuantity) {
         startTransition(() => {
           setSelectedQuantity(preset.quantity);
@@ -461,11 +464,7 @@ export function useVisualizationPresets(params: UseVisualizationPresetsParams) {
       }
 
       if (isFemBackend && preset.domain === "fem") {
-        setMeshRenderMode(preset.fem.render_mode);
-        setMeshOpacity(preset.fem.opacity);
-        setMeshClipEnabled(preset.fem.clip_enabled);
-        setMeshClipAxis(preset.fem.clip_axis);
-        setMeshClipPos(preset.fem.clip_pos);
+        // Arrow config is always global (no per-part arrow settings)
         setMeshShowArrows(preset.fem.show_arrows);
         setFemArrowColorMode(preset.fem.arrow_color_mode);
         setFemArrowMonoColor(preset.fem.arrow_mono_color);
@@ -475,11 +474,37 @@ export function useVisualizationPresets(params: UseVisualizationPresetsParams) {
         setObjectViewMode(preset.fem.object_view_mode);
         setFemVectorDomainFilter(preset.fem.vector_domain_filter);
         setFemFerromagnetVisibilityMode(preset.fem.ferromagnet_visibility_mode);
-        setAirMeshVisible(preset.fem.air_mesh_visible);
-        setAirMeshOpacity(preset.fem.air_mesh_opacity);
-        setMeshEntityViewState(
-          normalizePersistedMeshEntityViewState(preset.fem.mesh_entity_view_state),
-        );
+
+        if (isScoped) {
+          // ── Scoped apply: only merge targeted parts' view state ──
+          // Global defaults (meshRenderMode, meshOpacity, clip, air) are untouched.
+          const presetViewState = normalizePersistedMeshEntityViewState(
+            preset.fem.mesh_entity_view_state,
+          );
+          const scopeSet = new Set(options.scopePartIds);
+          setMeshEntityViewState((prev) => {
+            const next = { ...prev };
+            for (const partId of scopeSet) {
+              if (presetViewState[partId]) {
+                next[partId] = presetViewState[partId];
+              }
+            }
+            return next;
+          });
+        } else {
+          // ── Global apply (default): set everything ──
+          setMeshRenderMode(preset.fem.render_mode);
+          setMeshOpacity(preset.fem.opacity);
+          setMeshClipEnabled(preset.fem.clip_enabled);
+          setMeshClipAxis(preset.fem.clip_axis);
+          setMeshClipPos(preset.fem.clip_pos);
+          setAirMeshVisible(preset.fem.air_mesh_visible);
+          setAirMeshOpacity(preset.fem.air_mesh_opacity);
+          setMeshEntityViewState(
+            normalizePersistedMeshEntityViewState(preset.fem.mesh_entity_view_state),
+          );
+        }
+
         if (requestedPreviewMaxPoints !== preset.fem.max_points) {
           void updatePreview("/maxPoints", { maxPoints: preset.fem.max_points });
         }

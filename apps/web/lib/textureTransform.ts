@@ -5,6 +5,33 @@ export interface TextureTransform3D {
   pivot: [number, number, number];
 }
 
+/**
+ * Scale semantics for texture transforms.
+ *
+ * - `"size_multiplier"` — Non-metric presets (uniform, random, helical, conical, two_domain).
+ *   `scale` carries the spatial extent; the planner uses it to map texture coordinates
+ *   onto geometry.
+ *
+ * - `"identity_metric"` — Metric analytic presets (vortex, skyrmion, domain_wall).
+ *   Physical dimensions are encoded in `preset_params` (radius, wall_width, etc.);
+ *   `scale` MUST remain `[1, 1, 1]` to avoid double-scaling in the planner.
+ */
+export type TextureScaleSemantics = "size_multiplier" | "identity_metric";
+
+/** Metric presets whose physical dimensions live in preset_params, not scale. */
+const METRIC_PRESET_KINDS = new Set([
+  "vortex",
+  "antivortex",
+  "bloch_skyrmion",
+  "neel_skyrmion",
+  "domain_wall",
+]);
+
+/** Determine whether a preset kind uses scale as a size multiplier or identity. */
+export function textureScaleSemantics(presetKind: string): TextureScaleSemantics {
+  return METRIC_PRESET_KINDS.has(presetKind) ? "identity_metric" : "size_multiplier";
+}
+
 export const IDENTITY_TEXTURE_TRANSFORM: TextureTransform3D = {
   translation: [0, 0, 0],
   rotation_quat: [0, 0, 0, 1],
@@ -134,3 +161,27 @@ function _normalExtent(
   if (plane === "yz") return ex;
   return ez; // "xy" default
 }
+
+/* ── Texture Projection Mode ────────────────────────────────────── */
+
+/**
+ * Enumeration of supported texture projection modes.
+ *
+ * Kept in sync with the Rust IR (`TextureMappingIR.projection`)
+ * and the MaterialPanel dropdown.
+ */
+export type TextureProjectionMode =
+  | "object_local"
+  | "planar_xy"
+  | "planar_xz"
+  | "planar_yz";
+
+export const TEXTURE_PROJECTION_MODES: readonly {
+  label: string;
+  value: TextureProjectionMode;
+}[] = [
+  { label: "Object Local", value: "object_local" },
+  { label: "Planar XY", value: "planar_xy" },
+  { label: "Planar XZ", value: "planar_xz" },
+  { label: "Planar YZ", value: "planar_yz" },
+] as const;

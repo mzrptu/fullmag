@@ -37,6 +37,11 @@ import type {
   SessionFooterData,
 } from "../types";
 import type { EngineLogEntry } from "../../../../lib/useSessionStream";
+import {
+  resolveArrowVisibility,
+  type ArrowVisibilityStatus,
+} from "../../../../features/viewport-fem/model/femArrowVisibility";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "../../../../lib/debug/frontendDiagnosticFlags";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -117,6 +122,7 @@ export interface UseFemMeshDerivedReturn {
   femHasFieldData: boolean;
   femMagnetization3DActive: boolean;
   femShouldShowArrows: boolean;
+  arrowVisibility: ArrowVisibilityStatus;
   femTopologyKey: string | null;
   femColorField: FemColorField;
   isMeshWorkspaceView: boolean;
@@ -317,10 +323,14 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
 
   const femHasFieldData = Boolean(femMeshData?.fieldData);
   const femMagnetization3DActive = isFemBackend && effectiveViewMode === "3D" && activeQuantityId === "m" && femHasFieldData;
-  const femShouldShowArrows =
-    isFemBackend && effectiveViewMode === "3D" && femHasFieldData
-      ? meshShowArrows
-      : false;
+  const arrowVisibility = resolveArrowVisibility({
+    isFemBackend,
+    effectiveViewMode,
+    femHasFieldData,
+    meshShowArrows,
+    diagnosticForceHideArrows: FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceHideArrows,
+  });
+  const femShouldShowArrows = arrowVisibility.visible;
 
   // -------------------------------------------------------------------------
   // Memos: topology key
@@ -675,6 +685,7 @@ export function useFemMeshDerived(params: UseFemMeshDerivedParams): UseFemMeshDe
     femHasFieldData,
     femMagnetization3DActive,
     femShouldShowArrows,
+    arrowVisibility,
     femTopologyKey,
     femColorField,
     isMeshWorkspaceView,

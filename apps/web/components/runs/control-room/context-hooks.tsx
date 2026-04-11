@@ -83,6 +83,7 @@ import type {
 import type { MeshWorkspacePresetId } from "./meshWorkspace";
 import type { AnalyzeSelectionState, AnalyzeTab } from "./analyzeSelection";
 import type { VisibleSubmeshSnapshot } from "./submeshSnapshot";
+import type { ArrowVisibilityStatus } from "../../../features/viewport-fem/model/femArrowVisibility";
 
 /* ── Transport: high-frequency telemetry ── */
 export interface TransportContextValue {
@@ -308,6 +309,7 @@ export interface ModelContextValue {
   femColorField: FemColorField;
   femMagnetization3DActive: boolean;
   femShouldShowArrows: boolean;
+  arrowVisibility: ArrowVisibilityStatus;
   isMeshWorkspaceView: boolean;
   meshFaceDetail: ReturnType<typeof computeMeshFaceDetail>;
   meshQualitySummary: MeshQualitySummary | null;
@@ -442,7 +444,7 @@ export interface ModelContextValue {
   setActiveVisualizationPresetRef: React.Dispatch<
     React.SetStateAction<VisualizationPresetRef | null>
   >;
-  applyVisualizationPreset: (ref: VisualizationPresetRef) => void;
+  applyVisualizationPreset: (ref: VisualizationPresetRef, options?: { scopePartIds?: string[] }) => void;
   renameVisualizationPreset: (ref: VisualizationPresetRef, name: string) => void;
   duplicateVisualizationPreset: (
     ref: VisualizationPresetRef,
@@ -459,6 +461,7 @@ export interface ModelContextValue {
   ) => void;
   applyAntennaTranslation: (moduleName: string, dx: number, dy: number, dz: number) => void;
   applyGeometryTranslation: (geometryName: string, dx: number, dy: number, dz: number) => void;
+  resetViewportDisplayState: () => void;
 }
 
 /* ── React contexts ── */

@@ -109,6 +109,13 @@ import {
   buildMeshConfigurationSignature,
 } from "./meshWorkspace";
 import {
+  resolveViewportSelectionScope,
+} from "../../../features/viewport-fem/model/femViewportSelection";
+import {
+  buildViewportDisplayReset,
+  type ViewportDisplayDefaults,
+} from "../../../features/viewport-fem/model/femResetCommand";
+import {
   LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY,
   LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY,
 } from "./visualizationPresets";
@@ -1551,6 +1558,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     effectiveFemMesh, meshParts, magneticParts, airPart, airRelatedParts, interfaceParts,
     visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart,
     objectOverlays, femMeshData, femHasFieldData, femMagnetization3DActive, femShouldShowArrows,
+    arrowVisibility,
     femTopologyKey, femColorField, isMeshWorkspaceView, meshWorkspacePreset,
     meshConfigDirty, meshFaceDetail, meshQualitySummary, maxSliceCount,
     fieldStats, material, emptyStateMessage, sessionFooter, latestBackendError, mergedEngineLog,
@@ -1691,6 +1699,36 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     handleStateExport, handleStateImport, syncScriptBuilder,
   ]);
 
+  /* ── P2-2: Explicit viewport display reset command ── */
+  const resetViewportDisplayState = useCallback(() => {
+    const scope = resolveViewportSelectionScope({
+      selectedSidebarNodeId,
+      selectedObjectId,
+      selectedEntityId,
+      meshParts,
+    });
+    const result = buildViewportDisplayReset(
+      scope,
+      meshParts,
+      meshEntityViewState,
+      visibleMeshPartIds,
+    );
+    setMeshEntityViewState(result.meshEntityViewState);
+    if (result.resetGlobals) {
+      setMeshRenderMode(result.globals.meshRenderMode as RenderMode);
+      setMeshOpacity(result.globals.meshOpacity);
+      setMeshClipEnabled(result.globals.meshClipEnabled);
+      setMeshClipAxis(result.globals.meshClipAxis as ClipAxis);
+      setMeshClipPos(result.globals.meshClipPos);
+      setMeshShowArrows(result.globals.meshShowArrows);
+      setAirMeshVisible(result.globals.airMeshVisible);
+      setAirMeshOpacity(result.globals.airMeshOpacity);
+    }
+  }, [
+    selectedSidebarNodeId, selectedObjectId, selectedEntityId,
+    meshParts, meshEntityViewState, visibleMeshPartIds,
+  ]);
+
   const modelValue = useMemo<ModelContextValue>(() => ({
     sceneDocument: localBuilderDraft,
     modelBuilderGraph,
@@ -1722,7 +1760,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     activeVisualizationPresetRef,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
-    femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
+    femMagnetization3DActive, femShouldShowArrows, arrowVisibility, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
     meshConfigDirty, meshConfigSignature, lastBuiltMeshConfigSignature,
     meshName: effectiveFemMesh?.mesh_name ?? meshSummary?.mesh_name ?? liveMeshName ?? meshName,
@@ -1766,6 +1804,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setFemVectorDomainFilter, setFemFerromagnetVisibilityMode,
     setSelectedSidebarNodeId, setSelectedObjectId, setViewportScope, setObjectViewMode, setActiveTransformScope, setAirMeshVisible, setAirMeshOpacity, setMeshEntityViewState, setVisibleSubmeshSnapshot, setSelectedEntityId, setFocusedEntityId, setAnalyzeSelection, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, addResultWorkspaceEntry, openResultWorkspaceEntry, renameResultWorkspaceEntry, removeResultWorkspaceEntry, duplicateResultWorkspaceEntry, setResultWorkspacePinned, requestFocusObject, applyAntennaTranslation, applyGeometryTranslation, handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset,
     createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset,
+    resetViewportDisplayState,
   }), [
     localBuilderDraft, modelBuilderGraph, material, solverPlan, solverSettings, studyStages, studyPipeline, scriptBuilderDemagRealization, scriptBuilderUniverse, scriptBuilderGeometries, scriptBuilderCurrentModules, scriptBuilderExcitationAnalysis, antennaOverlays, objectOverlays, femMesh,
     meshRenderMode, meshOpacity, meshClipEnabled, meshClipAxis, meshClipPos, meshShowArrows,
@@ -1774,7 +1813,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     fdmVisualizationSettings, projectVisualizationPresets, localVisualizationPresets, activeVisualizationPresetRef,
     meshSelection, meshOptions, meshQualityData, meshGenerating, femDockTab,
     effectiveFemMesh, femMeshData, femTopologyKey, femColorField,
-    femMagnetization3DActive, femShouldShowArrows, isMeshWorkspaceView,
+    femMagnetization3DActive, femShouldShowArrows, arrowVisibility, isMeshWorkspaceView,
     meshFaceDetail, meshQualitySummary, meshWorkspace,
     meshConfigDirty, meshConfigSignature, lastBuiltMeshConfigSignature,
     meshSummary, meshName, meshSource, meshExtent, meshBoundsMin, meshBoundsMax, meshFeOrder, liveMeshName,
@@ -1784,6 +1823,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     setSceneDocument, setRequestedRuntimeSelection, setStudyStages, setStudyPipeline, setScriptBuilderDemagRealization, setScriptBuilderUniverse, setScriptBuilderGeometries, setScriptBuilderCurrentModules, setScriptBuilderExcitationAnalysis,
     handleStudyDomainMeshGenerate, handleAirboxMeshGenerate, handleObjectMeshOverrideRebuild, handleLassoRefine, openFemMeshWorkspace, applyMeshWorkspacePreset, createVisualizationPreset, setActiveVisualizationPresetRef, applyVisualizationPreset, renameVisualizationPreset, duplicateVisualizationPreset, deleteVisualizationPreset, copyVisualizationPresetToSource, updateVisualizationPreset, openAnalyze, selectAnalyzeTab, selectAnalyzeMode, refreshAnalyze, addResultWorkspaceEntry, openResultWorkspaceEntry, renameResultWorkspaceEntry, removeResultWorkspaceEntry, duplicateResultWorkspaceEntry, setResultWorkspacePinned,
     applyAntennaTranslation, applyGeometryTranslation, setMeshOptions, setSolverSettings, activeTransformScope,
+    resetViewportDisplayState,
   ]);
 
   if (!state) {
