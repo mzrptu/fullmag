@@ -19,6 +19,11 @@ import { SUPPORTED_ARROW_COLOR_FIELDS } from "./femGeometryUtils";
 import { computeArrowRenderState } from "./arrowRenderState";
 import type { ArrowRenderState, ArrowToolbarState } from "./arrowRenderState";
 import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
+import {
+  resolveViewportSelectionScope,
+  scopeLabel,
+  type ViewportSelectionScope,
+} from "@/features/viewport-fem/model/femViewportSelection";
 
 interface UseFemToolbarModelArgs {
   hasMeshParts: boolean;
@@ -43,9 +48,12 @@ interface UseFemToolbarModelArgs {
     label?: string;
     available: boolean;
   }>;
+  selectedObjectId?: string | null;
+  selectedEntityId?: string | null;
 }
 
 export interface FemToolbarModel {
+  selectionScope: ViewportSelectionScope;
   toolbarStylePartIds: string[];
   toolbarStylePartIdSet: Set<string>;
   toolbarColorPartIds: string[];
@@ -89,7 +97,21 @@ export function useFemToolbarModel({
   effectiveArrowDensity,
   qualityPerFace,
   quantityOptions = [],
+  selectedObjectId = null,
+  selectedEntityId = null,
 }: UseFemToolbarModelArgs): FemToolbarModel {
+  // P1-1: Resolve canonical selection scope from the viewport model
+  const selectionScope = useMemo<ViewportSelectionScope>(
+    () =>
+      resolveViewportSelectionScope({
+        selectedSidebarNodeId: null, // not available inside viewport
+        selectedObjectId,
+        selectedEntityId,
+        meshParts,
+      }),
+    [meshParts, selectedEntityId, selectedObjectId],
+  );
+
   // D-01 fix: Collect ALL selected layers for the toolbar scope,
   // not just the first one. For composite objects with multiple submeshes,
   // the toolbar must target all parts belonging to the selected object.
@@ -289,26 +311,11 @@ export function useFemToolbarModel({
     [arrowRenderState, baseArrowDensity, effectiveArrowDensity],
   );
 
-  // D-01 fix: Show scope label that reflects composite object selection
+  // P1-1: Use canonical resolveViewportSelectionScope for scope label
   const toolbarScopeLabel = useMemo<string | null>(() => {
     if (!hasMeshParts || toolbarStylePartIds.length === 0) return null;
-    const selectedLayers = visibleLayers.filter((layer) => layer.isSelected);
-    if (selectedLayers.length === 0) {
-      return `All visible (${toolbarStylePartIds.length} parts)`;
-    }
-    if (selectedLayers.length === 1) {
-      const part = selectedLayers[0].part;
-      return `Selected: ${part.label ?? part.id}`;
-    }
-    // Multiple selected parts — check if they all belong to the same object
-    const objectIds = new Set(selectedLayers.map((l) => l.part.object_id).filter(Boolean));
-    if (objectIds.size === 1) {
-      const firstPart = selectedLayers[0].part;
-      const objectLabel = firstPart.label?.replace(/_(shell|core|part\d+)$/i, "") ?? firstPart.object_id ?? "object";
-      return `Selected object: ${objectLabel} (${selectedLayers.length} parts)`;
-    }
-    return `Selected: ${selectedLayers.length} parts`;
-  }, [hasMeshParts, meshParts, toolbarStylePartIds, visibleLayers]);
+    return scopeLabel(selectionScope, meshParts);
+  }, [hasMeshParts, meshParts, selectionScope, toolbarStylePartIds]);
 
   const fieldMagnitudeStats = useMemo(() => {
     if (
@@ -358,6 +365,7 @@ export function useFemToolbarModel({
   }, [legendField, meshData.fieldData, meshData.nNodes, qualityPerFace]);
 
   return {
+    selectionScope,
     toolbarStylePartIds,
     toolbarStylePartIdSet,
     toolbarColorPartIds,

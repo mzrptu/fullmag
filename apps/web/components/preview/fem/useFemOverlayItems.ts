@@ -1,0 +1,455 @@
+/**
+ * Overlay items hook for FEM viewport.
+ *
+ * Builds the array of ViewportOverlayDescriptor items that form
+ * the toolbar, warnings, legend, HUD, and auxiliary overlays.
+ * Extracted from FemMeshView3D.tsx to reduce file size.
+ */
+
+import { useMemo } from "react";
+import type { MutableRefObject } from "react";
+import type { ViewportOverlayDescriptor } from "../ViewportOverlayManager";
+import type { ViewportQualityProfileId } from "../shared/viewportQualityProfiles";
+import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
+import { glyphBudgetToMaxPoints } from "./vectorDensityBudget";
+import { colorLegendLabel, colorLegendGradient } from "./femColorUtils";
+import { FemViewportToolbar } from "./FemViewportToolbar";
+import { FemRefineToolbar, FemSelectionHUD } from "./FemSelectionHUD";
+import { FieldLegend } from "../field/FieldLegend";
+import HslSphere from "../HslSphere";
+import ViewCube from "../ViewCube";
+import type {
+  FemColorField,
+  FemArrowColorMode,
+  RenderMode,
+  ClipAxis,
+  FemVectorDomainFilter,
+  FemFerromagnetVisibilityMode,
+  FemMeshData,
+} from "./femMeshTypes";
+import type { FemMeshPart } from "../../../lib/session/types";
+
+type CameraPresetKey = string;
+
+export interface UseFemOverlayItemsArgs {
+  // Feature flags
+  enableOverlayItemsModel: boolean;
+  captureOverlayHidden: boolean;
+
+  // Toolbar mode
+  toolbarMode: "visible" | "hidden";
+
+  // Toolbar-derived state
+  toolbarRenderMode: RenderMode;
+  toolbarRenderModeMixed: boolean;
+  toolbarColorField: FemColorField;
+  toolbarColorFieldMixed: boolean;
+  toolbarOpacity: number;
+  toolbarOpacityMixed: boolean;
+  toolbarScopeLabel: string | null;
+
+  // Arrow state
+  arrowColorMode: FemArrowColorMode;
+  arrowMonoColor: string;
+  arrowAlpha: number;
+  arrowLengthScale: number;
+  arrowThickness: number;
+  showArrows: boolean;
+  effectiveShowArrows: boolean;
+  arrowsBlockReason: string | null;
+  baseArrowDensity: number;
+  effectiveArrowDensity: number;
+
+  // Camera/navigation
+  cameraProjection: "perspective" | "orthographic";
+  navigationMode: "trackball" | "cad";
+  qualityProfile: ViewportQualityProfileId;
+
+  // Clip
+  clipEnabled: boolean;
+  clipAxis: ClipAxis;
+  clipPos: number;
+
+  // Parts & mesh
+  hasMeshParts: boolean;
+  meshParts: FemMeshPart[];
+  visibleLayersCount: number;
+  meshData: FemMeshData;
+  missingMagneticMask: boolean;
+  missingExactScopeSegment: boolean;
+  selectedObjectId?: string | null;
+
+  // Domain/visibility
+  effectiveVectorDomainFilter: FemVectorDomainFilter;
+  ferromagnetVisibilityMode: FemFerromagnetVisibilityMode;
+  supportsAirboxOnlyVectors: boolean;
+  shrinkFactor: number;
+
+  // UI state
+  labeledMode: boolean;
+  legendOpen: boolean;
+  partExplorerOpen?: boolean;
+  openPopover: string | null;
+  selectedFaces: number[];
+  effectiveShowOrientationLegend: boolean;
+  interactionActive: boolean;
+
+  // Legend data
+  arrowField: FemColorField;
+  legendField: FemColorField;
+  fieldLabel?: string;
+  fieldMagnitudeStats: { min: number; max: number; mean: number } | null;
+
+  // Quantity
+  quantityId?: string;
+  prominentQuantityOptions: Array<{
+    id: string;
+    shortLabel: string;
+    label?: string;
+    available: boolean;
+  }>;
+
+  // Callbacks
+  applyToolbarRenderMode: (next: RenderMode) => void;
+  applyToolbarColorField: (next: FemColorField) => void;
+  applyToolbarOpacity: (next: number) => void;
+  onArrowColorModeChange?: (v: FemArrowColorMode) => void;
+  onArrowMonoColorChange?: (v: string) => void;
+  onArrowAlphaChange?: (v: number) => void;
+  onArrowLengthScaleChange?: (v: number) => void;
+  onArrowThicknessChange?: (v: number) => void;
+  onClipEnabledChange?: (v: boolean) => void;
+  onClipAxisChange?: (v: ClipAxis) => void;
+  onClipPosChange?: (v: number) => void;
+  onShowArrowsChange?: (v: boolean) => void;
+  onVectorDomainFilterChange?: (v: FemVectorDomainFilter) => void;
+  onFerromagnetVisibilityModeChange?: (v: FemFerromagnetVisibilityMode) => void;
+  onShrinkFactorChange?: (v: number) => void;
+  onQuantityChange?: (id: string) => void;
+  onTogglePartExplorer?: () => void;
+  onRefine?: (faceIndices: number[], factor: number) => void;
+  updateSharedPreviewMaxPoints: (maxPoints: number) => void;
+
+  // Internal setters
+  setInternalArrowColorMode: (v: FemArrowColorMode) => void;
+  setInternalArrowMonoColor: (v: string) => void;
+  setInternalArrowAlpha: (v: number) => void;
+  setInternalArrowLengthScale: (v: number) => void;
+  setInternalArrowThickness: (v: number) => void;
+  setInternalClipEnabled: (v: boolean) => void;
+  setInternalClipAxis: (v: ClipAxis) => void;
+  setInternalClipPos: (v: number) => void;
+  setInternalShowArrows: (v: boolean) => void;
+  setInternalVectorDomainFilter: (v: FemVectorDomainFilter) => void;
+  setInternalFerromagnetVisibilityMode: (v: FemFerromagnetVisibilityMode) => void;
+  setInternalShrinkFactor: (v: number) => void;
+  setInternalPartExplorerOpen: (fn: (prev: boolean) => boolean) => void;
+
+  setLabeledMode: (v: boolean) => void;
+  setLegendOpen: (fn: (prev: boolean) => boolean) => void;
+  setOpenPopover: (id: string | null) => void;
+  setCameraProjection: (v: "perspective" | "orthographic") => void;
+  setNavigationMode: (v: "trackball" | "cad") => void;
+  setQualityProfile: (v: ViewportQualityProfileId) => void;
+  setCameraPreset: (key: CameraPresetKey) => void;
+  setSelectedFaces: (faces: number[] | ((prev: number[]) => number[])) => void;
+  takeScreenshot: () => void;
+  handleViewCubeRotate: (axis: string, angle: number) => void;
+  viewCubeSceneRef: MutableRefObject<any>;
+}
+
+export function useFemOverlayItems(args: UseFemOverlayItemsArgs): ViewportOverlayDescriptor[] {
+  return useMemo<ViewportOverlayDescriptor[]>(() => {
+    if (!args.enableOverlayItemsModel) {
+      return [];
+    }
+    if (args.captureOverlayHidden) {
+      return [];
+    }
+    const items: ViewportOverlayDescriptor[] = [];
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showToolbar && args.toolbarMode !== "hidden") {
+      items.push({
+        id: "toolbar",
+        anchor: "top-left",
+        priority: 1,
+        minWidth: 1080,
+        collapseTarget: "icon",
+        render: ({ variant }) => (
+          <FemViewportToolbar
+            compact={variant !== "full"}
+            renderMode={args.toolbarRenderMode}
+            surfaceColorField={args.toolbarColorField}
+            arrowColorMode={args.arrowColorMode}
+            arrowMonoColor={args.arrowMonoColor}
+            arrowAlpha={args.arrowAlpha}
+            arrowLengthScale={args.arrowLengthScale}
+            arrowThickness={args.arrowThickness}
+            projection={args.cameraProjection}
+            navigation={args.navigationMode}
+            qualityProfile={args.qualityProfile}
+            clipEnabled={args.clipEnabled}
+            clipAxis={args.clipAxis}
+            clipPos={args.clipPos}
+            arrowsVisible={args.showArrows}
+            arrowDensity={args.baseArrowDensity}
+            effectiveArrowDensity={args.effectiveArrowDensity}
+            vectorDomainFilter={args.effectiveVectorDomainFilter}
+            supportsAirboxOnlyVectors={args.supportsAirboxOnlyVectors}
+            ferromagnetVisibilityMode={args.ferromagnetVisibilityMode}
+            opacity={args.toolbarOpacity}
+            shrinkFactor={args.shrinkFactor}
+            showShrink={args.meshData.elements.length >= 4}
+            labeledMode={variant === "full" ? args.labeledMode : false}
+            legendOpen={args.legendOpen}
+            partExplorerOpen={args.partExplorerOpen}
+            visiblePartsCount={args.hasMeshParts ? args.visibleLayersCount : undefined}
+            totalPartsCount={args.hasMeshParts ? args.meshParts.length : undefined}
+            hasField={!args.missingMagneticMask}
+            fieldLabel={args.fieldLabel}
+            openPopover={args.openPopover}
+            onOpenPopoverChange={(id) => args.setOpenPopover(id as typeof args.openPopover)}
+            onRenderModeChange={args.applyToolbarRenderMode}
+            onSurfaceColorFieldChange={args.applyToolbarColorField}
+            onArrowColorModeChange={(next) => {
+              if (args.onArrowColorModeChange) {
+                args.onArrowColorModeChange(next);
+              } else {
+                args.setInternalArrowColorMode(next);
+              }
+            }}
+            onArrowMonoColorChange={(next) => {
+              if (args.onArrowMonoColorChange) {
+                args.onArrowMonoColorChange(next);
+              } else {
+                args.setInternalArrowMonoColor(next);
+              }
+            }}
+            onArrowAlphaChange={(next) => {
+              if (args.onArrowAlphaChange) {
+                args.onArrowAlphaChange(next);
+              } else {
+                args.setInternalArrowAlpha(next);
+              }
+            }}
+            onArrowLengthScaleChange={(next) => {
+              if (args.onArrowLengthScaleChange) {
+                args.onArrowLengthScaleChange(next);
+              } else {
+                args.setInternalArrowLengthScale(next);
+              }
+            }}
+            onArrowThicknessChange={(next) => {
+              if (args.onArrowThicknessChange) {
+                args.onArrowThicknessChange(next);
+              } else {
+                args.setInternalArrowThickness(next);
+              }
+            }}
+            onProjectionChange={args.setCameraProjection}
+            onNavigationChange={args.setNavigationMode}
+            onQualityProfileChange={args.setQualityProfile}
+            onClipEnabledChange={(v) => {
+              if (args.onClipEnabledChange) {
+                args.onClipEnabledChange(v);
+              } else {
+                args.setInternalClipEnabled(v);
+              }
+            }}
+            onClipAxisChange={(a) => {
+              if (args.onClipAxisChange) {
+                args.onClipAxisChange(a);
+              } else {
+                args.setInternalClipAxis(a);
+              }
+            }}
+            onClipPosChange={(v) => {
+              if (args.onClipPosChange) {
+                args.onClipPosChange(v);
+              } else {
+                args.setInternalClipPos(v);
+              }
+            }}
+            onArrowsVisibleChange={(v) => {
+              if (args.onShowArrowsChange) {
+                args.onShowArrowsChange(v);
+              } else {
+                args.setInternalShowArrows(v);
+              }
+            }}
+            onArrowDensityChange={(nextBudget) => {
+              args.updateSharedPreviewMaxPoints(glyphBudgetToMaxPoints(nextBudget));
+            }}
+            onVectorDomainFilterChange={(next) => {
+              if (args.onVectorDomainFilterChange) {
+                args.onVectorDomainFilterChange(next);
+              } else {
+                args.setInternalVectorDomainFilter(next);
+              }
+            }}
+            onFerromagnetVisibilityModeChange={(next) => {
+              if (args.onFerromagnetVisibilityModeChange) {
+                args.onFerromagnetVisibilityModeChange(next);
+              } else {
+                args.setInternalFerromagnetVisibilityMode(next);
+              }
+            }}
+            onOpacityChange={args.applyToolbarOpacity}
+            onShrinkFactorChange={(v) => {
+              if (args.onShrinkFactorChange) {
+                args.onShrinkFactorChange(v);
+              } else {
+                args.setInternalShrinkFactor(v);
+              }
+            }}
+            onLabeledModeChange={args.setLabeledMode}
+            onToggleLegend={() => args.setLegendOpen((prev) => !prev)}
+            onTogglePartExplorer={() => {
+              if (args.onTogglePartExplorer) {
+                args.onTogglePartExplorer();
+              } else {
+                args.setInternalPartExplorerOpen((prev) => !prev);
+              }
+            }}
+            onCameraPreset={args.setCameraPreset}
+            onCapture={args.takeScreenshot}
+            quantityId={args.quantityId}
+            quantityOptions={args.prominentQuantityOptions}
+            onQuantityChange={args.onQuantityChange}
+            renderModeMixed={args.toolbarRenderModeMixed}
+            opacityMixed={args.toolbarOpacityMixed}
+            colorFieldMixed={args.toolbarColorFieldMixed}
+            arrowsRequested={args.showArrows}
+            arrowsBlockReason={args.arrowsBlockReason}
+            toolbarScopeLabel={args.toolbarScopeLabel}
+            interactionSimplified={args.interactionActive}
+          />
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showWarnings && args.missingExactScopeSegment && args.selectedObjectId) {
+      items.push({
+        id: "segment-warning",
+        anchor: "top-left",
+        priority: 2,
+        minWidth: 960,
+        collapseTarget: "drawer",
+        render: () => (
+          <div className="pointer-events-none rounded-xl border border-error/25 bg-background/85 px-4 py-3 text-sm text-error/90 shadow-lg backdrop-blur-md">
+            Object mesh segmentation unavailable for shared-domain FEM: `{args.selectedObjectId}`
+          </div>
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showWarnings && args.missingMagneticMask) {
+      items.push({
+        id: "mask-warning",
+        anchor: "top-left",
+        priority: 3,
+        minWidth: 960,
+        collapseTarget: "drawer",
+        render: () => (
+          <div className="pointer-events-none rounded-xl border border-warning/25 bg-background/85 px-4 py-3 text-sm text-warning/90 shadow-lg backdrop-blur-md">
+            Magnetic masking unavailable for shared-domain FEM. View shows built airbox.
+          </div>
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showViewCube) {
+      items.push({
+        id: "gizmo-stack",
+        anchor: "top-right",
+        priority: 3,
+        render: () => (
+          <div className="flex flex-col items-end gap-2">
+            <ViewCube
+              sceneRef={args.viewCubeSceneRef}
+              onRotate={args.handleViewCubeRotate}
+              onReset={() => args.setCameraPreset("reset")}
+              embedded
+            />
+          </div>
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showFieldLegend && args.legendOpen) {
+      items.push({
+        id: "field-legend",
+        anchor: "bottom-left",
+        priority: 4,
+        render: ({ variant }) => (
+          <FieldLegend
+            compact={variant !== "full"}
+            className="pointer-events-none z-10"
+            colorLabel={colorLegendLabel(args.legendField, args.fieldLabel)}
+            lengthLabel={
+              args.effectiveShowArrows
+                ? args.arrowColorMode === "orientation"
+                  ? "vector magnitude, arrow color = orientation"
+                  : args.arrowColorMode === "monochrome"
+                    ? "vector magnitude, arrow color = monochrome"
+                    : `vector magnitude, arrow color = ${colorLegendLabel(args.arrowField, args.fieldLabel)}`
+                : undefined
+            }
+            min={args.legendField === "none" ? undefined : args.fieldMagnitudeStats?.min}
+            max={args.legendField === "none" ? undefined : args.fieldMagnitudeStats?.max}
+            mean={args.legendField === "none" ? undefined : args.fieldMagnitudeStats?.mean}
+            gradient={colorLegendGradient(args.legendField)}
+          />
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showOrientationSphere && args.effectiveShowOrientationLegend) {
+      items.push({
+        id: "orientation-legend",
+        anchor: "bottom-left",
+        priority: 5,
+        render: ({ variant }) => (
+          <HslSphere
+            sceneRef={args.viewCubeSceneRef}
+            axisConvention="identity"
+            compact={variant !== "full"}
+            embedded
+          />
+        ),
+      });
+    }
+    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showSelectionHud) {
+      items.push({
+        id: "selection-hud",
+        anchor: "bottom-center",
+        priority: 5,
+        render: ({ variant }) => (
+          <>
+            <FemSelectionHUD
+              compact={variant !== "full"}
+              nNodes={args.meshData.nNodes}
+              nElements={args.meshData.nElements}
+              nFaces={args.meshData.boundaryFaces.length / 3}
+              clipEnabled={args.clipEnabled}
+              clipAxis={args.clipAxis}
+              clipPos={args.clipPos}
+              selectedFacesCount={args.selectedFaces.length}
+            />
+            {args.onRefine ? (
+              <FemRefineToolbar
+                className={variant === "icon" ? "max-w-full flex-wrap justify-center" : undefined}
+                selectedFacesCount={args.selectedFaces.length}
+                onRefine={(factor) => {
+                  args.onRefine!(args.selectedFaces, factor);
+                  args.setSelectedFaces([]);
+                }}
+                onCoarsen={(factor) => {
+                  args.onRefine!(args.selectedFaces, factor);
+                  args.setSelectedFaces([]);
+                }}
+                onClear={() => args.setSelectedFaces([])}
+              />
+            ) : null}
+          </>
+        ),
+      });
+    }
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [args]);
+}

@@ -7,13 +7,12 @@
 
 import { useMemo } from "react";
 import {
-  collectSegmentBoundaryFaceIndices,
   collectSegmentBoundaryFaceIndicesByIds,
-  collectSegmentElementIndices,
   collectSegmentElementIndicesByIds,
   collectSegmentNodeMask,
-  countActiveNodes,
-} from "./femGeometryUtils";
+} from "@/features/viewport-fem/model/femTopologyCache";
+import { countActiveNodes } from "./femNodeMask";
+import { buildMagneticArrowNodeMask } from "@/features/viewport-fem/model/femSelectionMap";
 import {
   GLYPH_BUDGET_MIN,
   maxPointsToGlyphBudget,
@@ -72,10 +71,10 @@ export function useFemVectorDomain({
       return null;
     }
     if (selectedObjectId) {
-      return collectSegmentBoundaryFaceIndices(
+      return collectSegmentBoundaryFaceIndicesByIds(
         magneticSegments,
         Math.floor(meshData.boundaryFaces.length / 3),
-        selectedObjectId,
+        new Set([selectedObjectId]),
       );
     }
     return collectSegmentBoundaryFaceIndicesByIds(
@@ -100,10 +99,10 @@ export function useFemVectorDomain({
       return null;
     }
     if (selectedObjectId) {
-      return collectSegmentElementIndices(
+      return collectSegmentElementIndicesByIds(
         magneticSegments,
         meshData.nElements,
-        selectedObjectId,
+        new Set([selectedObjectId]),
       );
     }
     return collectSegmentElementIndicesByIds(
@@ -140,52 +139,19 @@ export function useFemVectorDomain({
     [airSegmentIds, meshData.nElements, objectSegments, enableVectorDerivedModel],
   );
 
+  // P3-2 consolidation: Delegate to pure buildMagneticArrowNodeMask from femSelectionMap.ts
   const magneticArrowNodeMask = useMemo(() => {
     if (!enableVectorDerivedModel) {
       return null;
     }
-    if (hasMeshParts) {
-      const visibleMagneticLayers = visibleLayers.filter((layer) => layer.isMagnetic);
-      if (visibleMagneticLayers.length === 0) {
-        // D-07 fix: Return empty mask when no magnetic layers are visible,
-        // instead of falling back to broader activeMask which could show
-        // arrows outside the expected scope.
-        return new Uint8Array(meshData.nNodes);
-      }
-      const baseActiveMask = meshData.activeMask;
-      const combined = new Uint8Array(meshData.nNodes);
-      for (const layer of visibleMagneticLayers) {
-        const nodeMask = layer.nodeMask;
-        if (!nodeMask) {
-          continue;
-        }
-        for (let index = 0; index < nodeMask.length; index += 1) {
-          if (nodeMask[index]) combined[index] = 1;
-        }
-      }
-      if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
-        return combined;
-      }
-      const result = new Uint8Array(meshData.nNodes);
-      for (let i = 0; i < result.length; i++) {
-        result[i] = combined[i] && baseActiveMask[i] ? 1 : 0;
-      }
-      return result;
-    }
-    const nodeMask = collectSegmentNodeMask(magneticSegments, meshData.nNodes, visibleMagneticIds);
-    if (!nodeMask) {
-      // D-07 fix: Return empty mask instead of broad fallback
-      return new Uint8Array(meshData.nNodes);
-    }
-    const baseActiveMask = meshData.activeMask;
-    if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
-      return nodeMask;
-    }
-    const result = new Uint8Array(meshData.nNodes);
-    for (let i = 0; i < result.length; i++) {
-      result[i] = nodeMask[i] && baseActiveMask[i] ? 1 : 0;
-    }
-    return result;
+    return buildMagneticArrowNodeMask(
+      visibleLayers,
+      magneticSegments,
+      visibleMagneticIds,
+      meshData.nNodes,
+      meshData.activeMask,
+      hasMeshParts,
+    );
   }, [
     hasMeshParts,
     magneticSegments,

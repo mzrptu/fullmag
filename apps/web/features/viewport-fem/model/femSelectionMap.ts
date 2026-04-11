@@ -24,7 +24,9 @@ export function buildMagneticArrowNodeMask(
   if (hasMeshParts) {
     const magneticLayers = visibleLayers.filter((l) => l.isMagnetic);
     if (magneticLayers.length === 0) {
-      return activeMaskAsUint8(activeMask, nNodes);
+      // D-07 fix: Return empty mask when no magnetic layers are visible,
+      // instead of falling back to broader activeMask.
+      return new Uint8Array(nNodes);
     }
     const combined = new Uint8Array(nNodes);
     for (const layer of magneticLayers) {
@@ -37,7 +39,10 @@ export function buildMagneticArrowNodeMask(
   }
 
   const nodeMask = collectSegmentNodeMask(magneticSegments, nNodes, visibleMagneticIds);
-  if (!nodeMask) return activeMaskAsUint8(activeMask, nNodes);
+  if (!nodeMask) {
+    // D-07 fix: Return empty mask instead of broad fallback.
+    return new Uint8Array(nNodes);
+  }
   return intersectWithActiveMask(nodeMask, activeMask, nNodes);
 }
 
