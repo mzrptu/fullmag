@@ -182,6 +182,12 @@ fn wrap_mirror(x: f64) -> f64 {
 
 fn apply_clamp_mode(point: [f64; 3], mode: &str) -> [f64; 3] {
     match mode {
+        "none" => point,
+        "clamp" => [
+            point[0].clamp(-0.5, 0.5),
+            point[1].clamp(-0.5, 0.5),
+            point[2].clamp(-0.5, 0.5),
+        ],
         "repeat" | "wrap" => [
             wrap_repeat(point[0]),
             wrap_repeat(point[1]),
@@ -192,11 +198,7 @@ fn apply_clamp_mode(point: [f64; 3], mode: &str) -> [f64; 3] {
             wrap_mirror(point[1]),
             wrap_mirror(point[2]),
         ],
-        _ => [
-            point[0].clamp(-0.5, 0.5),
-            point[1].clamp(-0.5, 0.5),
-            point[2].clamp(-0.5, 0.5),
-        ],
+        _ => point,
     }
 }
 

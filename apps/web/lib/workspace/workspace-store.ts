@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { LaunchIntent } from "./launch-intent";
 
 export type WorkspaceMode = "build" | "study" | "analyze";
+export type RightInspectorTab = "selected-submeshes" | "tools";
 
 interface StageLayoutState {
   leftDock: string | null;
@@ -20,6 +21,7 @@ interface WorkspaceStoreState {
   launcherVisible: boolean;
   launchIntent: LaunchIntent | null;
   rightInspectorOpen: boolean;
+  rightInspectorTab: RightInspectorTab;
   settingsOpen: boolean;
   physicsDocsOpen: boolean;
   physicsDocsTopic: string | null;
@@ -35,6 +37,7 @@ interface WorkspaceStoreState {
   setLauncherVisible: (visible: boolean) => void;
   setLaunchIntent: (intent: LaunchIntent | null) => void;
   setRightInspectorOpen: (open: boolean) => void;
+  setRightInspectorTab: (tab: RightInspectorTab) => void;
   setSettingsOpen: (open: boolean) => void;
   setPhysicsDocsOpen: (open: boolean, topic?: string | null) => void;
 }
@@ -79,6 +82,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
   launcherVisible: false,
   launchIntent: null,
   rightInspectorOpen: false,
+  rightInspectorTab: "selected-submeshes",
   settingsOpen: false,
   physicsDocsOpen: false,
   physicsDocsTopic: null,
@@ -98,6 +102,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
   setLauncherVisible: (launcherVisible) => set({ launcherVisible }),
   setLaunchIntent: (launchIntent) => set({ launchIntent }),
   setRightInspectorOpen: (rightInspectorOpen) => set({ rightInspectorOpen }),
+  setRightInspectorTab: (rightInspectorTab) => set({ rightInspectorTab }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setPhysicsDocsOpen: (physicsDocsOpen, topic = null) =>
     set((state) => ({

@@ -1,146 +1,225 @@
 "use client";
 
-import { useViewport, useCommand, useModel } from "../../runs/control-room/context-hooks";
+import { useCallback, useMemo } from "react";
+
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
-import { SidebarSection, InfoRow } from "../../panels/settings/primitives";
+import type { RightInspectorTab } from "@/lib/workspace/workspace-store";
+import {
+  defaultMeshEntityViewState,
+  type FemMeshPart,
+  type MeshEntityViewState,
+} from "@/lib/session/types";
+import {
+  useModel,
+} from "../../runs/control-room/context-hooks";
+import { FemPartExplorerPanel } from "../../preview/fem/FemPartExplorerPanel";
+import type { PartQualitySummary } from "../../preview/fem/FemPartExplorerPanel";
 
-function displayLaunchName(
-  displayName: string | null | undefined,
-  path: string | null | undefined,
-  fallback: string,
-) {
-  if (displayName) return displayName;
-  if (path) {
-    const parts = path.split(/[\\/]/).filter(Boolean);
-    return parts[parts.length - 1] ?? path;
-  }
-  return fallback;
-}
+const ROLE_GROUPS: Array<{ role: FemMeshPart["role"]; label: string }> = [
+  { role: "magnetic_object", label: "Magnetic" },
+  { role: "interface", label: "Interfaces" },
+  { role: "outer_boundary", label: "Boundary" },
+  { role: "air", label: "Air" },
+];
 
-/** Right inspector for Build mode — shows selected object properties */
-export function BuildRightInspector() {
-  const viewport = useViewport();
-  const cmd = useCommand();
+function WorkspaceRightToolbox() {
   const model = useModel();
-  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
-  const selectedId = model.selectedObjectId ?? model.selectedSidebarNodeId;
+  const rightInspectorTab = useWorkspaceStore((state) => state.rightInspectorTab);
+  const setRightInspectorTab = useWorkspaceStore((state) => state.setRightInspectorTab);
 
-  return (
-    <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
-      <div className="px-3 py-2 border-b border-border/30 shrink-0">
-        <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Object Inspector</span>
-      </div>
-      <ScrollArea className="flex-1 px-2 py-2">
-        {selectedId ? (
-          <>
-            <SidebarSection title="Selection" defaultOpen={true}>
-              <InfoRow label="ID" value={selectedId} />
-            </SidebarSection>
-            <SidebarSection title="Workspace" defaultOpen={true}>
-              <InfoRow
-                label="Simulation"
-                value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, cmd.session?.problem_name ?? "Workspace")}
-              />
-              <InfoRow label="Backend" value={cmd.session?.requested_backend ?? "—"} />
-              <InfoRow label="Objects" value={String(model.modelBuilderGraph?.objects.items.length ?? 0)} />
-            </SidebarSection>
-            <SidebarSection title="Geometry" defaultOpen={true}>
-              <InfoRow label="View mode" value={viewport.effectiveViewMode} />
-              <InfoRow label="Mesh mode" value={cmd.isFemBackend ? "FEM workspace" : "FDM grid"} />
-            </SidebarSection>
-          </>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-24 gap-1 text-center px-3">
-            <span className="text-[0.73rem] text-muted-foreground">No object selected</span>
-            <span className="text-[0.67rem] text-muted-foreground/60">Click an object in the model tree or viewport</span>
-          </div>
-        )}
-      </ScrollArea>
-    </div>
+  const snapshot = model.visibleSubmeshSnapshot;
+  const meshParts = model.meshParts;
+  const meshEntityViewState = model.meshEntityViewState;
+
+  const meshPartById = useMemo(
+    () => new Map(meshParts.map((part) => [part.id, part])),
+    [meshParts],
   );
-}
 
-/** Right inspector for Study mode — shows solver settings */
-export function StudyRightInspector() {
-  const cmd = useCommand();
-  const model = useModel();
-  const stages = model.studyStages ?? [];
-  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
+  const visiblePartsOrdered = useMemo(
+    () =>
+      (snapshot?.items ?? [])
+        .map((item) => meshPartById.get(item.id))
+        .filter((part): part is FemMeshPart => Boolean(part)),
+    [meshPartById, snapshot?.items],
+  );
+
+  const partQualityById = useMemo(() => {
+    const quality = new Map<string, PartQualitySummary>();
+    for (const item of snapshot?.items ?? []) {
+      quality.set(item.id, {
+        markers: item.markers,
+        domainCount: item.domainCount,
+        stats: item.qualityStats,
+      });
+    }
+    return quality;
+  }, [snapshot?.items]);
+
+  const partExplorerGroups = useMemo(
+    () =>
+      ROLE_GROUPS.map((group) => ({
+        label: group.label,
+        parts: visiblePartsOrdered.filter((part) => part.role === group.role),
+      })).filter((group) => group.parts.length > 0),
+    [visiblePartsOrdered],
+  );
+
+  const roleVisibilitySummary = useMemo(
+    () =>
+      ROLE_GROUPS.map((group) => {
+        const parts = meshParts.filter((part) => part.role === group.role);
+        const visible = parts.filter(
+          (part) =>
+            meshEntityViewState[part.id]?.visible ?? defaultMeshEntityViewState(part).visible,
+        ).length;
+        return {
+          role: group.role,
+          label: group.label,
+          total: parts.length,
+          visible,
+        };
+      }).filter((entry) => entry.total > 0),
+    [meshEntityViewState, meshParts],
+  );
+
+  const inspectedMeshPart = useMemo(() => {
+    const selected = snapshot?.items.find((item) => item.isSelected);
+    if (!selected) {
+      return null;
+    }
+    return meshPartById.get(selected.id) ?? null;
+  }, [meshPartById, snapshot?.items]);
+
+  const inspectedPartQuality = useMemo(
+    () => (inspectedMeshPart ? partQualityById.get(inspectedMeshPart.id) ?? null : null),
+    [inspectedMeshPart, partQualityById],
+  );
+
+  const patchMeshPartViewState = useCallback(
+    (partIds: string[], patch: Partial<MeshEntityViewState>) => {
+      if (partIds.length === 0) {
+        return;
+      }
+      model.setMeshEntityViewState((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const partId of partIds) {
+          const part = meshPartById.get(partId);
+          const current = next[partId] ?? (part ? defaultMeshEntityViewState(part) : null);
+          if (!current) {
+            continue;
+          }
+          const updated = { ...current, ...patch };
+          if (
+            !next[partId] ||
+            updated.visible !== current.visible ||
+            updated.renderMode !== current.renderMode ||
+            updated.opacity !== current.opacity ||
+            updated.colorField !== current.colorField
+          ) {
+            next[partId] = updated;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
+    [meshPartById, model],
+  );
+
+  const handlePartSelect = useCallback(
+    (partId: string) => {
+      model.setSelectedEntityId(partId);
+      model.setFocusedEntityId(partId);
+    },
+    [model],
+  );
+
+  const handleRoleVisibility = useCallback(
+    (role: FemMeshPart["role"], visible: boolean) => {
+      const ids = meshParts
+        .filter((part) => part.role === role)
+        .map((part) => part.id);
+      patchMeshPartViewState(ids, { visible });
+    },
+    [meshParts, patchMeshPartViewState],
+  );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
-      <div className="px-3 py-2 border-b border-border/30 shrink-0">
-        <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Study Inspector</span>
-      </div>
-      <ScrollArea className="flex-1 px-2 py-2">
-        <SidebarSection title="Study Stages" defaultOpen={true}>
-          {stages.length === 0 ? (
-            <div className="text-[0.72rem] text-muted-foreground italic">No stages declared.</div>
+    <div className="flex h-full flex-col overflow-hidden border-l border-border/30 bg-card/20">
+      <Tabs
+        className="flex h-full min-h-0 flex-col"
+        value={rightInspectorTab}
+        onValueChange={(value) => setRightInspectorTab(value as RightInspectorTab)}
+      >
+        <div className="border-b border-border/30 px-3 py-2.5">
+          <TabsList className="grid h-8 w-full grid-cols-2">
+            <TabsTrigger value="selected-submeshes" className="text-[0.68rem] uppercase tracking-[0.08em]">
+              Selected Submeshes
+            </TabsTrigger>
+            <TabsTrigger value="tools" className="text-[0.68rem] uppercase tracking-[0.08em]">
+              Tools
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="selected-submeshes" className="mt-0 flex min-h-0 flex-1 flex-col px-0 py-0">
+          {snapshot && snapshot.items.length > 0 ? (
+            <ScrollArea className="flex-1 px-2 py-2">
+              <FemPartExplorerPanel
+                className="max-h-none max-w-none rounded-xl"
+                meshParts={meshParts}
+                meshEntityViewState={meshEntityViewState}
+                partQualityById={partQualityById}
+                partExplorerGroups={partExplorerGroups}
+                roleVisibilitySummary={roleVisibilitySummary}
+                inspectedMeshPart={inspectedMeshPart}
+                inspectedPartQuality={inspectedPartQuality}
+                selectedEntityId={model.selectedEntityId}
+                focusedEntityId={model.focusedEntityId}
+                visiblePartsCount={snapshot.visiblePartsCount}
+                onClose={() => setRightInspectorTab("tools")}
+                onPartSelect={handlePartSelect}
+                onEntityFocus={model.setFocusedEntityId}
+                onPatchPart={(partId, patch) => patchMeshPartViewState([partId], patch)}
+                onRoleVisibility={handleRoleVisibility}
+              />
+            </ScrollArea>
           ) : (
-            <div className="flex flex-col gap-1.5">
-              {stages.map((stage, i) => (
-                <div key={i} className="flex items-center gap-2 rounded-md bg-muted/20 px-2.5 py-1.5">
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted/40 text-[0.6rem] font-bold text-muted-foreground">
-                    {i + 1}
-                  </span>
-                  <span className="text-[0.75rem] font-medium truncate">{stage.kind}</span>
-                  {stage.integrator && (
-                    <span className="ml-auto shrink-0 text-[0.65rem] text-muted-foreground">{stage.integrator}</span>
-                  )}
-                </div>
-              ))}
+            <div className="flex flex-1 items-center justify-center px-4 text-center">
+              <div className="rounded-xl border border-border/25 bg-background/35 px-4 py-3 text-[0.75rem] text-muted-foreground">
+                No active submesh snapshot.
+                <br />
+                Open FEM 3D/Mesh viewport to populate this list.
+              </div>
             </div>
           )}
-        </SidebarSection>
-        <SidebarSection title="Solver" defaultOpen={true}>
-          <InfoRow label="Torque tol." value={model.solverSettings?.torqueTolerance ?? "—"} />
-          <InfoRow label="Run until" value={cmd.runUntilInput || "—"} />
-          <InfoRow label="Status" value={cmd.workspaceStatus} />
-        </SidebarSection>
-        <SidebarSection title="Session" defaultOpen={true}>
-          <InfoRow
-            label="Simulation"
-            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, cmd.session?.problem_name ?? "Workspace")}
-          />
-          <InfoRow label="Runtime" value={cmd.runtimeEngineLabel ?? "—"} />
-          <InfoRow label="Command" value={cmd.commandMessage ?? "idle"} />
-        </SidebarSection>
-      </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="tools" className="mt-0 flex min-h-0 flex-1 flex-col">
+          <div className="flex flex-1 items-center justify-center px-4 text-center">
+            <div className="rounded-xl border border-border/25 bg-background/35 px-4 py-3 text-[0.75rem] text-muted-foreground">
+              Toolbox extensions coming soon.
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-/** Right inspector for Analyze mode — display settings */
+export function BuildRightInspector() {
+  return <WorkspaceRightToolbox />;
+}
+
+export function StudyRightInspector() {
+  return <WorkspaceRightToolbox />;
+}
+
 export function AnalyzeRightInspector() {
-  const viewport = useViewport();
-  const cmd = useCommand();
-  const launchIntent = useWorkspaceStore((state) => state.launchIntent);
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
-      <div className="px-3 py-2 border-b border-border/30 shrink-0">
-        <span className="text-[0.72rem] font-semibold tracking-wide uppercase text-muted-foreground">Display Settings</span>
-      </div>
-      <ScrollArea className="flex-1 px-2 py-2">
-        <SidebarSection title="Active Quantity" defaultOpen={true}>
-          <InfoRow label="Quantity" value={viewport.selectedQuantityLabel ?? "—"} />
-        </SidebarSection>
-        <SidebarSection title="Viewport" defaultOpen={true}>
-          <InfoRow label="View mode" value={viewport.effectiveViewMode} />
-        </SidebarSection>
-        <SidebarSection title="Preview" defaultOpen={true}>
-          <InfoRow label="Grid" value={`${viewport.previewGrid[0]}×${viewport.previewGrid[1]}×${viewport.previewGrid[2]}`} />
-          <InfoRow label="Artifacts" value={String(cmd.artifacts.length)} />
-        </SidebarSection>
-        <SidebarSection title="Dataset" defaultOpen={true}>
-          <InfoRow
-            label="Simulation"
-            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, cmd.session?.problem_name ?? "Workspace")}
-          />
-          <InfoRow label="Status" value={cmd.workspaceStatus} />
-        </SidebarSection>
-      </ScrollArea>
-    </div>
-  );
+  return <WorkspaceRightToolbox />;
 }
+

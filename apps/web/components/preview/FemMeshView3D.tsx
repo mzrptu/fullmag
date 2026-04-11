@@ -27,12 +27,11 @@ import type {
   FocusObjectRequest,
   ObjectViewMode,
 } from "../runs/control-room/shared";
+import type { VisibleSubmeshSnapshot } from "../runs/control-room/submeshSnapshot";
 import { FieldLegend } from "./field/FieldLegend";
-import { DraggableViewportBlock } from "./DraggableViewportBlock";
 import { combineMeshQualityStats } from "./fem/femQualityUtils";
 import { partMeshTint, partEdgeTint, colorLegendGradient, colorLegendLabel } from "./fem/femColorUtils";
 import { FemViewportToolbar } from "./fem/FemViewportToolbar";
-import { FemPartExplorerPanel } from "./fem/FemPartExplorerPanel";
 import { FemViewportScene } from "./fem/FemViewportScene";
 import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
 import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
@@ -228,6 +227,9 @@ interface Props {
   activeTransformScope?: "object" | "texture" | null;
   onTextureTransformChange?: (next: TextureTransform3D) => void;
   onTextureTransformCommit?: (next: TextureTransform3D) => void;
+  partExplorerOpen?: boolean;
+  onTogglePartExplorer?: () => void;
+  onVisibleSubmeshSnapshotChange?: (snapshot: VisibleSubmeshSnapshot | null) => void;
 }
 
 type CameraProjection = "perspective" | "orthographic";
@@ -301,8 +303,6 @@ function FemMeshView3DInner({
   airSegmentOpacity = 28,
   focusObjectRequest = null,
   onAntennaTranslate,
-  onEntitySelect,
-  onEntityFocus,
   onQuantityChange,
   activeTextureTransform = null,
   textureGizmoMode = "translate",
@@ -310,6 +310,9 @@ function FemMeshView3DInner({
   activeTransformScope = null,
   onTextureTransformChange,
   onTextureTransformCommit,
+  partExplorerOpen: controlledPartExplorerOpen,
+  onTogglePartExplorer,
+  onVisibleSubmeshSnapshotChange,
 }: Props) {
   if (FRONTEND_DIAGNOSTIC_FLAGS.renderDebug.enableRenderLogging) {
     recordFrontendRender("FemMeshView3DInner", {
@@ -343,7 +346,7 @@ function FemMeshView3DInner({
   const [internalShrinkFactor, setInternalShrinkFactor] = useState(1);
   const [cameraProjection, setCameraProjection] = useState<CameraProjection>("perspective");
   const [navigationMode, setNavigationMode] = useState<NavigationMode>("trackball");
-  const [partExplorerOpen, setPartExplorerOpen] = useState(true);
+  const [internalPartExplorerOpen, setInternalPartExplorerOpen] = useState(true);
   const [legendOpen, setLegendOpen] = useState(false);
   const [labeledMode, setLabeledMode] = useState(false);
   const [openPopover, setOpenPopover] = useState<"quantity" | "color" | "clip" | "display" | "vectors" | "camera" | "panels" | null>(null);
@@ -356,6 +359,8 @@ function FemMeshView3DInner({
   const [hoveredFace, setHoveredFace] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; faceIdx: number } | null>(null);
   const [selectedFaces, setSelectedFaces] = useState<number[]>([]);
+  const lastSubmeshSnapshotSignatureRef = useRef<string | null>(null);
+  const partExplorerOpen = controlledPartExplorerOpen ?? internalPartExplorerOpen;
   
 
   const [cameraFitGeneration, setCameraFitGeneration] = useState(0);
@@ -580,31 +585,6 @@ function FemMeshView3DInner({
     selectedObjectId,
     wrapperFlags.enablePartDerivedModel,
   ]);
-  const partExplorerGroups = useMemo(
-    () => [
-      {
-        label: "Magnetic",
-        parts: meshParts.filter((part) => part.role === "magnetic_object"),
-      },
-      {
-        label: "Interfaces",
-        parts: meshParts.filter((part) => part.role === "interface"),
-      },
-      {
-        label: "Boundary",
-        parts: meshParts.filter((part) => part.role === "outer_boundary"),
-      },
-      {
-        label: "Air",
-        parts: meshParts.filter((part) => part.role === "air"),
-      },
-    ].filter((group) => group.parts.length > 0),
-    [meshParts],
-  );
-  const selectedMeshPart = useMemo(
-    () => meshParts.find((part) => part.id === selectedEntityId) ?? null,
-    [meshParts, selectedEntityId],
-  );
   const partQualityById = useMemo(() => {
     const entries = new Map<string, PartQualitySummary>();
     for (const part of meshParts) {
@@ -620,50 +600,65 @@ function FemMeshView3DInner({
     }
     return entries;
   }, [elementMarkers, meshParts, perDomainQuality]);
-  const inspectedMeshPart = useMemo(() => {
-    if (selectedMeshPart) {
-      return selectedMeshPart;
+  useEffect(() => {
+    if (!onVisibleSubmeshSnapshotChange) {
+      return;
     }
-    if (objectViewMode === "isolate" && selectedObjectId) {
-      return (
-        meshParts.find(
-          (part) => part.role === "magnetic_object" && part.object_id === selectedObjectId,
-        ) ?? null
-      );
-    }
-    return null;
-  }, [meshParts, objectViewMode, selectedMeshPart, selectedObjectId]);
-  const inspectedPartQuality = useMemo(
-    () => (inspectedMeshPart ? partQualityById.get(inspectedMeshPart.id) ?? null : null),
-    [inspectedMeshPart, partQualityById],
-  );
-  const roleVisibilitySummary = useMemo(
-    () => {
-      const summary: Array<{
-        role: FemMeshPart["role"];
-        label: string;
-        total: number;
-        visible: number;
-      }> = [];
-      for (const [role, label] of [
-        ["air", "Air"],
-        ["magnetic_object", "Objects"],
-        ["interface", "Interfaces"],
-        ["outer_boundary", "Boundary"],
-      ] as const) {
-        const parts = meshParts.filter((part) => part.role === role);
-        if (parts.length === 0) {
-          continue;
-        }
-        const visible = parts.filter(
-          (part) => meshEntityViewState[part.id]?.visible ?? defaultMeshEntityViewState(part).visible,
-        ).length;
-        summary.push({ role, label, total: parts.length, visible });
+    if (!hasMeshParts) {
+      if (lastSubmeshSnapshotSignatureRef.current !== null) {
+        lastSubmeshSnapshotSignatureRef.current = null;
+        onVisibleSubmeshSnapshotChange(null);
       }
-      return summary;
-    },
-    [meshEntityViewState, meshParts],
-  );
+      return;
+    }
+    const items = visibleLayers.map((layer) => {
+      const quality = partQualityById.get(layer.part.id) ?? null;
+      return {
+        id: layer.part.id,
+        role: layer.part.role,
+        objectId: layer.part.object_id ?? null,
+        isSelected: layer.isSelected,
+        isFocused: focusedEntityId === layer.part.id,
+        isDimmed: layer.isDimmed,
+        markers: quality?.markers ?? [],
+        domainCount: quality?.domainCount ?? 0,
+        qualityStats: quality?.stats ?? null,
+      };
+    });
+    const signature = [
+      `total=${meshParts.length}`,
+      `visible=${visibleLayers.length}`,
+      `selected=${selectedEntityId ?? ""}`,
+      `focused=${focusedEntityId ?? ""}`,
+      items
+        .map(
+          (item) =>
+            `${item.id}:${item.isSelected ? 1 : 0}:${item.isFocused ? 1 : 0}:${item.isDimmed ? 1 : 0}`,
+        )
+        .join("|"),
+    ].join("::");
+    if (signature === lastSubmeshSnapshotSignatureRef.current) {
+      return;
+    }
+    lastSubmeshSnapshotSignatureRef.current = signature;
+    onVisibleSubmeshSnapshotChange({
+      signature,
+      generatedAtUnixMs: Date.now(),
+      selectedEntityId,
+      focusedEntityId,
+      totalPartsCount: meshParts.length,
+      visiblePartsCount: visibleLayers.length,
+      items,
+    });
+  }, [
+    focusedEntityId,
+    hasMeshParts,
+    meshParts.length,
+    onVisibleSubmeshSnapshotChange,
+    partQualityById,
+    selectedEntityId,
+    visibleLayers,
+  ]);
   const missingMagneticMask =
     meshData.quantityDomain === "magnetic_only" &&
     (!meshData.activeMask || meshData.activeMask.length !== meshData.nNodes);
@@ -1338,20 +1333,6 @@ function FemMeshView3DInner({
       return;
     }
   }, [hasMeshParts, onMeshPartViewStatePatch, toolbarColorPartIds]);
-  const patchSinglePart = useCallback((partId: string, patch: Partial<MeshEntityViewState>) => {
-    onMeshPartViewStatePatch?.([partId], patch);
-  }, [onMeshPartViewStatePatch]);
-  const handlePartSelect = useCallback((partId: string) => {
-    onEntitySelect?.(partId);
-    onEntityFocus?.(partId);
-  }, [onEntityFocus, onEntitySelect]);
-  const handleRoleVisibility = useCallback((role: FemMeshPart["role"], visible: boolean) => {
-    if (!onMeshPartViewStatePatch) {
-      return;
-    }
-    const ids = meshParts.filter((part) => part.role === role).map((part) => part.id);
-    onMeshPartViewStatePatch(ids, { visible });
-  }, [meshParts, onMeshPartViewStatePatch]);
   const effectiveShowOrientationLegend =
     showOrientationLegend ||
     legendField === "orientation" ||
@@ -1521,7 +1502,13 @@ function FemMeshView3DInner({
             }}
             onLabeledModeChange={setLabeledMode}
             onToggleLegend={() => setLegendOpen((prev) => !prev)}
-            onTogglePartExplorer={() => setPartExplorerOpen((prev) => !prev)}
+            onTogglePartExplorer={() => {
+              if (onTogglePartExplorer) {
+                onTogglePartExplorer();
+              } else {
+                setInternalPartExplorerOpen((prev) => !prev);
+              }
+            }}
             onCameraPreset={setCameraPreset}
             onCapture={takeScreenshot}
             quantityId={quantityId}
@@ -1581,58 +1568,6 @@ function FemMeshView3DInner({
             />
           </div>
         ),
-      });
-    }
-    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showPartExplorer && hasMeshParts && partExplorerOpen) {
-      items.push({
-        id: "part-explorer",
-        anchor: "right",
-        priority: 2,
-        minWidth: 1280,
-        collapseTarget: "drawer",
-        render: ({ variant }) =>
-          variant === "drawer" ? (
-            <FemPartExplorerPanel
-              meshParts={meshParts}
-              meshEntityViewState={meshEntityViewState}
-              partQualityById={partQualityById}
-              partExplorerGroups={partExplorerGroups}
-              roleVisibilitySummary={roleVisibilitySummary}
-              inspectedMeshPart={inspectedMeshPart}
-              inspectedPartQuality={inspectedPartQuality}
-              selectedEntityId={selectedEntityId}
-              focusedEntityId={focusedEntityId}
-              visiblePartsCount={visibleLayers.length}
-              onClose={() => setPartExplorerOpen(false)}
-              onPartSelect={handlePartSelect}
-              onEntityFocus={onEntityFocus}
-              onPatchPart={patchSinglePart}
-              onRoleVisibility={handleRoleVisibility}
-            />
-          ) : (
-            <DraggableViewportBlock defaultOffset={{ x: 0, y: variant === "full" ? 10 : 6 }}>
-              {({ dragHandleProps }) => (
-                <FemPartExplorerPanel
-                  meshParts={meshParts}
-                  meshEntityViewState={meshEntityViewState}
-                  partQualityById={partQualityById}
-                  partExplorerGroups={partExplorerGroups}
-                  roleVisibilitySummary={roleVisibilitySummary}
-                  inspectedMeshPart={inspectedMeshPart}
-                  inspectedPartQuality={inspectedPartQuality}
-                  selectedEntityId={selectedEntityId}
-                  focusedEntityId={focusedEntityId}
-                  visiblePartsCount={visibleLayers.length}
-                  onClose={() => setPartExplorerOpen(false)}
-                  onPartSelect={handlePartSelect}
-                  onEntityFocus={onEntityFocus}
-                  onPatchPart={patchSinglePart}
-                  onRoleVisibility={handleRoleVisibility}
-                  dragHandleProps={dragHandleProps}
-                />
-              )}
-            </DraggableViewportBlock>
-          ),
       });
     }
     if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.showFieldLegend && legendOpen) {
@@ -1738,13 +1673,8 @@ function FemMeshView3DInner({
     fieldMagnitudeStats?.max,
     fieldMagnitudeStats?.mean,
     fieldMagnitudeStats?.min,
-    focusedEntityId,
-    handlePartSelect,
-    handleRoleVisibility,
     handleViewCubeRotate,
     hasMeshParts,
-    inspectedMeshPart,
-    inspectedPartQuality,
     interactionActive,
     labeledMode,
     legendField,
@@ -1753,7 +1683,6 @@ function FemMeshView3DInner({
     meshData.elements.length,
     meshData.nElements,
     meshData.nNodes,
-    meshEntityViewState,
     meshParts,
     missingExactScopeSegment,
     missingMagneticMask,
@@ -1767,22 +1696,17 @@ function FemMeshView3DInner({
     onArrowMonoColorChange,
     onArrowThicknessChange,
     onFerromagnetVisibilityModeChange,
-    onEntityFocus,
+    onTogglePartExplorer,
     onQuantityChange,
     onRefine,
     onShowArrowsChange,
     onShrinkFactorChange,
     onVectorDomainFilterChange,
     openPopover,
-    partExplorerGroups,
     partExplorerOpen,
-    partQualityById,
-    patchSinglePart,
     prominentQuantityOptions,
     qualityProfile,
     quantityId,
-    roleVisibilitySummary,
-    selectedEntityId,
     selectedFaces,
     selectedObjectId,
     setCameraPreset,

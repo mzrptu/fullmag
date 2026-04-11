@@ -82,6 +82,7 @@ import type {
 } from "./types";
 import type { MeshWorkspacePresetId } from "./meshWorkspace";
 import type { AnalyzeSelectionState, AnalyzeTab } from "./analyzeSelection";
+import type { VisibleSubmeshSnapshot } from "./submeshSnapshot";
 
 /* ── Transport: high-frequency telemetry ── */
 export interface TransportContextValue {
@@ -343,6 +344,7 @@ export interface ModelContextValue {
   meshParts: FemMeshPart[];
   visibleMeshPartIds: string[];
   visibleMagneticObjectIds: string[];
+  visibleSubmeshSnapshot: VisibleSubmeshSnapshot | null;
   selectedMeshPart: FemMeshPart | null;
   focusedMeshPart: FemMeshPart | null;
   magneticParts: FemMeshPart[];
@@ -404,6 +406,9 @@ export interface ModelContextValue {
   setAirMeshVisible: React.Dispatch<React.SetStateAction<boolean>>;
   setAirMeshOpacity: React.Dispatch<React.SetStateAction<number>>;
   setMeshEntityViewState: React.Dispatch<React.SetStateAction<MeshEntityViewStateMap>>;
+  setVisibleSubmeshSnapshot: React.Dispatch<
+    React.SetStateAction<VisibleSubmeshSnapshot | null>
+  >;
   setSelectedEntityId: (id: string | null) => void;
   setFocusedEntityId: (id: string | null) => void;
   setAnalyzeSelection: React.Dispatch<React.SetStateAction<AnalyzeSelectionState>>;

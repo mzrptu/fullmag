@@ -1,12 +1,13 @@
 "use client";
 
-import { memo, useMemo, useCallback } from "react";
+import { memo, useMemo, useCallback, useEffect } from "react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { MAGNETIC_PRESET_CATALOG } from "@/lib/magnetizationPresetCatalog";
 import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
 import { cn } from "@/lib/utils";
+import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
 import type { TextureTransform3D as PreviewTextureTransform3D } from "@/lib/textureTransform";
 import type { TextureGizmoMode } from "../../preview/TextureTransformGizmo";
 import MagnetizationSlice2D from "../../preview/MagnetizationSlice2D";
@@ -463,6 +464,15 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   const setSelectedSidebarNodeId = ctx.setSelectedSidebarNodeId;
   const meshParts = ctx.meshParts;
   const setMeshEntityViewState = ctx.setMeshEntityViewState;
+  const rightInspectorOpen = useWorkspaceStore((state) => state.rightInspectorOpen);
+  const setRightInspectorOpen = useWorkspaceStore((state) => state.setRightInspectorOpen);
+  const rightInspectorTab = useWorkspaceStore((state) => state.rightInspectorTab);
+  const setRightInspectorTab = useWorkspaceStore((state) => state.setRightInspectorTab);
+  const effectiveViewMode = ctx.effectiveViewMode;
+  const femMeshData = ctx.femMeshData;
+  const visibleSubmeshSnapshot = ctx.visibleSubmeshSnapshot;
+  const setVisibleSubmeshSnapshot = ctx.setVisibleSubmeshSnapshot;
+  const updatePreview = ctx.updatePreview;
   const spatialPreview = ctx.preview?.kind === "spatial" ? ctx.preview : null;
   const globalScalarPreview = ctx.preview?.kind === "global_scalar" ? ctx.preview : null;
   const hasVectorData = Boolean(ctx.selectedVectors && ctx.selectedVectors.length > 0);
@@ -636,6 +646,28 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
     },
     [meshParts, setMeshEntityViewState],
   );
+  const openSelectedSubmeshesToolbox = useCallback(() => {
+    setRightInspectorOpen(true);
+    setRightInspectorTab("selected-submeshes");
+  }, [setRightInspectorOpen, setRightInspectorTab]);
+  const selectedSubmeshesToolboxOpen =
+    rightInspectorOpen && rightInspectorTab === "selected-submeshes";
+  useEffect(() => {
+    const femSubmeshViewportActive =
+      Boolean(femMeshData) &&
+      (effectiveViewMode === "3D" || effectiveViewMode === "Mesh");
+    if (femSubmeshViewportActive) {
+      return;
+    }
+    if (visibleSubmeshSnapshot != null) {
+      setVisibleSubmeshSnapshot(null);
+    }
+  }, [
+    effectiveViewMode,
+    femMeshData,
+    setVisibleSubmeshSnapshot,
+    visibleSubmeshSnapshot,
+  ]);
   const femQuantityOptions = useMemo(
     () =>
       ctx.previewQuantityOptions.map((option) => ({
@@ -647,8 +679,8 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
     [ctx.previewQuantityOptions],
   );
   const handlePreviewMaxPointsChange = useCallback(
-    (nextMaxPoints: number) => void ctx.updatePreview("/maxPoints", { maxPoints: nextMaxPoints }),
-    [ctx],
+    (nextMaxPoints: number) => void updatePreview("/maxPoints", { maxPoints: nextMaxPoints }),
+    [updatePreview],
   );
   const hasExactScopeSegment = useMemo(
     () => {
@@ -713,6 +745,9 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
             showOrientationLegend={false}
             worldExtent={ctx.worldExtent}
             worldCenter={ctx.worldCenter}
+            partExplorerOpen={selectedSubmeshesToolboxOpen}
+            onTogglePartExplorer={openSelectedSubmeshesToolbox}
+            onVisibleSubmeshSnapshotChange={ctx.setVisibleSubmeshSnapshot}
           />
         </ViewportErrorBoundary>
       );
@@ -859,6 +894,9 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         activeTransformScope={ctx.activeTransformScope}
         onTextureTransformChange={applyTextureTransform}
         onTextureTransformCommit={applyTextureTransform}
+        partExplorerOpen={selectedSubmeshesToolboxOpen}
+        onTogglePartExplorer={openSelectedSubmeshesToolbox}
+        onVisibleSubmeshSnapshotChange={ctx.setVisibleSubmeshSnapshot}
       />
       </ViewportErrorBoundary>
     );
@@ -933,6 +971,9 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
         activeTransformScope={ctx.activeTransformScope}
         onTextureTransformChange={applyTextureTransform}
         onTextureTransformCommit={applyTextureTransform}
+        partExplorerOpen={selectedSubmeshesToolboxOpen}
+        onTogglePartExplorer={openSelectedSubmeshesToolbox}
+        onVisibleSubmeshSnapshotChange={ctx.setVisibleSubmeshSnapshot}
       />
       </ViewportErrorBoundary>
     );

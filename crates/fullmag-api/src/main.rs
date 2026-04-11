@@ -2352,6 +2352,27 @@ fn quat_changed(a: [f64; 4], b: [f64; 4]) -> bool {
         || (a[2] - b[2]).abs() > EPS
         || (a[3] - b[3]).abs() > EPS
 }
+rs
+
+fn fmt_preset_params(params: Option<&Value>) -> String {
+    let Some(params) = params else {
+        return "<none>".to_string();
+    };
+    let Some(map) = params.as_object() else {
+        return "<non-object>".to_string();
+    };
+    match serde_json::to_string(map) {
+        Ok(raw) => {
+            const MAX: usize = 220;
+            if raw.len() <= MAX {
+                raw
+            } else {
+                format!("{}…", &raw[..MAX])
+            }
+        }
+        Err(_) => "<invalid-json>".to_string(),
+    }
+}
 
 fn detect_preset_texture_changes(
     previous: Option<&SceneDocument>,
@@ -2434,7 +2455,11 @@ fn detect_preset_texture_changes(
                     ));
                 }
                 if prev_asset.preset_params != next_asset.preset_params {
-                    changes.push("preset_params=changed".to_string());
+                    changes.push(format!(
+                        "preset_params {} -> {}",
+                        fmt_preset_params(prev_asset.preset_params.as_ref()),
+                        fmt_preset_params(next_asset.preset_params.as_ref()),
+                    ));
                 }
                 if prev_asset.mapping != next_asset.mapping {
                     changes.push(format!(
