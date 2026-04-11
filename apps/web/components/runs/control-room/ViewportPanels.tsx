@@ -31,7 +31,6 @@ import { defaultMeshEntityViewState } from "../../../lib/session/types";
 import {
   toPreviewTextureTransform,
   toSceneTextureTransform,
-  offsetTextureTransform,
   textureTransformToWorld,
   textureTransformToLocal,
 } from "./viewportUtils";
@@ -148,21 +147,37 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
       if (!selectedObject) {
         return previousScene;
       }
+      const selectedMagnetization = previousScene.magnetization_assets.find(
+        (asset) => asset.id === selectedObject.magnetization_ref,
+      );
+      if (!selectedMagnetization) {
+        return previousScene;
+      }
+      const mappingSpace =
+        selectedMagnetization.mapping?.space === "world" ? "world" : "object";
       const nextLocalTransform =
-        selectedMagnetizationAsset?.mapping?.space === "world"
+        mappingSpace === "world"
           ? next
           : textureTransformToLocal(next, {
               translation: [...selectedObject.transform.translation] as Vec3,
               rotation_quat: [...selectedObject.transform.rotation_quat] as Quat,
               scale: [...selectedObject.transform.scale] as Vec3,
             });
+      const normalizedTransform =
+        selectedMagnetization.kind === "preset_texture" &&
+        selectedMagnetization.preset_kind === "vortex"
+          ? {
+              ...nextLocalTransform,
+              pivot: [0, 0, 0] as Vec3,
+            }
+          : nextLocalTransform;
       return {
         ...previousScene,
         magnetization_assets: previousScene.magnetization_assets.map((asset) =>
           asset.id === selectedObject.magnetization_ref
             ? {
                 ...asset,
-                texture_transform: toSceneTextureTransform(nextLocalTransform),
+                texture_transform: toSceneTextureTransform(normalizedTransform),
               }
             : asset,
         ),

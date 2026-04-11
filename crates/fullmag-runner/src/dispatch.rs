@@ -2844,6 +2844,8 @@ mod tests {
                 per_magnet: None,
                 demag: None,
                 boundary_correction: None,
+                boundary_phi_floor: None,
+                boundary_delta_min: None,
             }),
             fem: Some(FemHintsIR {
                 order: 1,

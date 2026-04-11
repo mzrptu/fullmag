@@ -140,7 +140,7 @@ class FDM:
     demag: FDMDemag | None = None
     boundary_correction: str | None = None  # "none" | "volume" (T0) | "full" (T1)
     boundary_phi_floor: float | None = None  # min volume fraction for stability (default 0.05)
-    boundary_delta_min: float | None = None  # min δ for T1 ECB stencil stability [cells]
+    boundary_delta_min: float | None = None  # min δ for T1 ECB stencil stability [m] (default 0.1*min(dx,dy,dz))
 
     # --- backward compatibility: FDM(cell=(...)) --------------------------
     def __init__(

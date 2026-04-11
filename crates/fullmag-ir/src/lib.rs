@@ -442,17 +442,42 @@ pub enum InitialMagnetizationIR {
 pub struct TextureMappingIR {
     #[serde(default = "default_texture_mapping_space")]
     pub space: String,
-    #[serde(default = "default_texture_mapping_projection")]
-    pub projection: String,
+    #[serde(default)]
+    pub projection: TextureProjectionMode,
     #[serde(default = "default_texture_mapping_clamp_mode")]
     pub clamp_mode: String,
+}
+
+/// Supported texture projection modes.
+///
+/// Kept in sync with the frontend `TextureProjectionMode` union
+/// and the planner `match mapping.projection { … }`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TextureProjectionMode {
+    #[default]
+    ObjectLocal,
+    PlanarXy,
+    PlanarXz,
+    PlanarYz,
+}
+
+impl std::fmt::Display for TextureProjectionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ObjectLocal => write!(f, "object_local"),
+            Self::PlanarXy => write!(f, "planar_xy"),
+            Self::PlanarXz => write!(f, "planar_xz"),
+            Self::PlanarYz => write!(f, "planar_yz"),
+        }
+    }
 }
 
 impl Default for TextureMappingIR {
     fn default() -> Self {
         Self {
             space: default_texture_mapping_space(),
-            projection: default_texture_mapping_projection(),
+            projection: TextureProjectionMode::default(),
             clamp_mode: default_texture_mapping_clamp_mode(),
         }
     }
@@ -483,10 +508,6 @@ impl Default for TextureTransform3DIR {
 
 fn default_texture_mapping_space() -> String {
     "object".to_string()
-}
-
-fn default_texture_mapping_projection() -> String {
-    "object_local".to_string()
 }
 
 fn default_texture_mapping_clamp_mode() -> String {
@@ -1047,6 +1068,13 @@ pub struct FdmHintsIR {
     /// Boundary correction: "none" | "volume" (T0) | "full" (T1)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_correction: Option<String>,
+    /// Minimum volume fraction φ for T0/T1 stability clamping (0 < φ < 1, default 0.05).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_phi_floor: Option<f64>,
+    /// Minimum intersection distance δ_min for T1 ECB stencil stability [physical length, m].
+    /// Backend default: 0.1 × min(dx, dy, dz).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_delta_min: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -2543,6 +2571,8 @@ impl ProblemIR {
                         per_magnet: None,
                         demag: None,
                         boundary_correction: None,
+                        boundary_phi_floor: None,
+                        boundary_delta_min: None,
                     }),
                     fem: Some(FemHintsIR {
                         order: 1,

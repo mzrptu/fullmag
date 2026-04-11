@@ -1,4 +1,4 @@
-use fullmag_ir::{TextureMappingIR, TextureTransform3DIR};
+use fullmag_ir::{TextureMappingIR, TextureProjectionMode, TextureTransform3DIR};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -222,11 +222,11 @@ fn map_point_into_texture_space(
     } else {
         point.position_world
     };
-    mapped = match mapping.projection.as_str() {
-        "planar_xy" => [mapped[0], mapped[1], 0.0],
-        "planar_xz" => [mapped[0], mapped[2], 0.0],
-        "planar_yz" => [mapped[1], mapped[2], 0.0],
-        _ => mapped,
+    mapped = match mapping.projection {
+        TextureProjectionMode::PlanarXy => [mapped[0], mapped[1], 0.0],
+        TextureProjectionMode::PlanarXz => [mapped[0], mapped[2], 0.0],
+        TextureProjectionMode::PlanarYz => [mapped[1], mapped[2], 0.0],
+        TextureProjectionMode::ObjectLocal => mapped,
     };
     let local = apply_inverse_transform(mapped, transform);
     apply_clamp_mode(local, &mapping.clamp_mode)

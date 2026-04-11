@@ -524,6 +524,21 @@ pub(crate) fn plan_fem(
     let (integrator, fixed_timestep, gyromagnetic_ratio, relaxation, adaptive_timestep) =
         planned_study_controls(problem, &mut errors);
 
+    // ── PBC capability gate (FEM static / time-domain) ───────────────────
+    // The static/time-domain FEM runner does not assemble periodic
+    // constraint rows; periodic_node_pairs are only wired in the eigen
+    // path.  Reject early so users get a clear diagnostic.
+    if let Some(ref pbc) = problem.pbc {
+        if pbc.has_any_periodic() {
+            errors.push(
+                "PBC not supported: FEM static/time-domain solver does not implement periodic \
+                 boundary conditions. Use the FEM eigen solver (spin_wave_bc='periodic') or \
+                 remove periodic axes."
+                    .to_string(),
+            );
+        }
+    }
+
     if !errors.is_empty() {
         return Err(PlanError { reasons: errors });
     }

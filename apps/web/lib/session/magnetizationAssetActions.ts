@@ -62,7 +62,9 @@ export function assignMagneticPreset(
     options?.fitToObjectOnFirstAssign !== false &&
     Boolean(options?.objectId) &&
     descriptor.kind !== "uniform" &&
-    existing?.kind !== "preset_texture";
+    (!existing ||
+      existing.kind !== "preset_texture" ||
+      existing.preset_kind !== descriptor.kind);
   if (shouldFit) {
     next = fitTextureToObject(next, options!.objectId!, assetId);
   }

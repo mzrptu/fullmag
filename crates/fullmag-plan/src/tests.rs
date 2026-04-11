@@ -545,6 +545,8 @@ fn fem_backend_with_mesh_asset_plans_successfully() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -622,6 +624,8 @@ fn fem_backend_interfacial_dmi_requires_explicit_interface_normal_in_strict_mode
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -679,6 +683,8 @@ fn fem_plan_serializes_mesh_parts() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -752,6 +758,8 @@ fn fem_backend_with_air_elements_lowers_study_universe_to_air_box_config() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -842,6 +850,8 @@ fn fem_backend_with_air_elements_accepts_marker_99_in_strict_mode() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -924,6 +934,8 @@ fn fem_backend_with_air_elements_rejects_unknown_boundary_marker_in_strict_mode(
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -995,6 +1007,8 @@ fn fem_backend_without_air_elements_keeps_universe_as_provenance_note() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -1077,6 +1091,8 @@ fn fem_backend_rejects_requested_shared_domain_without_air_elements() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -1144,6 +1160,8 @@ fn fem_backend_populates_domain_frame_and_domain_mesh_mode() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -1235,6 +1253,8 @@ fn fem_backend_prefers_domain_frame_declared_universe_over_legacy_study_universe
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -1315,6 +1335,8 @@ fn fem_backend_with_mesh_source_json_plans_successfully() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -1357,6 +1379,8 @@ fn fem_backend_multibody_merges_disjoint_mesh_assets() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -2130,6 +2154,8 @@ fn multilayer_single_precision_is_rejected_without_cuda_device_request() {
                 common_cells_xy: None,
             }),
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: None,
         hybrid: None,
@@ -2215,6 +2241,8 @@ fn multilayer_single_precision_is_accepted_when_cuda_device_requested() {
                 common_cells_xy: None,
             }),
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: None,
         hybrid: None,
@@ -2301,6 +2329,8 @@ fn stacked_two_body_problem_lowers_to_multilayer_plan() {
                 common_cells_xy: None,
             }),
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: None,
         hybrid: None,
@@ -2401,6 +2431,8 @@ fn fem_eigen_backend_with_mesh_asset_plans_successfully() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -2505,6 +2537,8 @@ fn fem_eigen_backend_interfacial_dmi_requires_explicit_interface_normal_in_stric
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -2584,6 +2618,8 @@ fn fem_eigen_auto_demag_resolves_to_poisson_robin_on_shared_domain_mesh_with_air
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -3031,6 +3067,8 @@ fn fem_plan_fails_when_shared_domain_requested_but_no_domain_mesh_asset() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -3114,6 +3152,8 @@ fn fem_plan_succeeds_when_shared_domain_has_domain_mesh_asset() {
             per_magnet: None,
             demag: None,
             boundary_correction: None,
+            boundary_phi_floor: None,
+            boundary_delta_min: None,
         }),
         fem: Some(fullmag_ir::FemHintsIR {
             order: 1,
@@ -3483,4 +3523,132 @@ fn fem_domain_mesh_asset_accepts_optional_build_report() {
     };
     assert!(asset_no_report.validate().is_ok());
     assert!(asset_no_report.build_report.is_none());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Boundary parameter passthrough regression tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn fdm_boundary_params_passthrough_phi_floor_and_delta_min() {
+    let mut ir = ProblemIR::bootstrap_example();
+    // Use a Cylinder geometry so boundary_correction SDF is available.
+    ir.geometry.entries = vec![GeometryEntryIR::Cylinder {
+        name: "disk".to_string(),
+        radius: 50e-9,
+        height: 6e-9,
+    }];
+    ir.regions[0].geometry = "disk".to_string();
+    ir.backend_policy.discretization_hints = Some(DiscretizationHintsIR {
+        fdm: Some(fullmag_ir::FdmHintsIR {
+            cell: [2e-9, 2e-9, 2e-9],
+            default_cell: None,
+            per_magnet: None,
+            demag: None,
+            boundary_correction: Some("full".to_string()),
+            boundary_phi_floor: Some(0.1),
+            boundary_delta_min: Some(0.5e-9),
+        }),
+        fem: None,
+        hybrid: None,
+    });
+    let plan = plan(&ir).expect("cylinder with boundary params should plan successfully");
+    match &plan.backend_plan {
+        BackendPlanIR::Fdm(fdm) => {
+            assert_eq!(
+                fdm.boundary_correction.as_deref(),
+                Some("full"),
+                "boundary_correction should pass through"
+            );
+            assert_eq!(
+                fdm.boundary_phi_floor,
+                Some(0.1),
+                "boundary_phi_floor must not be dropped by the planner"
+            );
+            assert_eq!(
+                fdm.boundary_delta_min,
+                Some(0.5e-9),
+                "boundary_delta_min must not be dropped by the planner"
+            );
+            assert!(
+                fdm.boundary_geometry.is_some(),
+                "boundary_geometry should be computed for Cylinder"
+            );
+        }
+        _ => panic!("expected FDM plan"),
+    }
+}
+
+#[test]
+fn fdm_boundary_params_none_when_not_set() {
+    let ir = ProblemIR::bootstrap_example();
+    let plan = plan(&ir).expect("bootstrap example should plan successfully");
+    match &plan.backend_plan {
+        BackendPlanIR::Fdm(fdm) => {
+            assert!(fdm.boundary_phi_floor.is_none());
+            assert!(fdm.boundary_delta_min.is_none());
+            assert!(fdm.boundary_correction.is_none());
+        }
+        _ => panic!("expected FDM plan"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PBC capability gate regression tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn fdm_pbc_with_exchange_is_rejected() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.pbc = Some(FdmPeriodicityIR {
+        axes: [AxisBoundary::Periodic, AxisBoundary::Open, AxisBoundary::Open],
+        demag: FdmDemagPeriodicityIR::Open,
+        image_counts: None,
+    });
+    let err = plan(&ir).expect_err("FDM + PBC + exchange should be rejected");
+    assert!(
+        err.reasons
+            .iter()
+            .any(|r| r.contains("PBC not supported") && r.contains("exchange")),
+        "error should mention PBC exchange not supported, got: {:?}",
+        err.reasons
+    );
+}
+
+#[test]
+fn fdm_pbc_truncated_images_demag_is_rejected() {
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.energy_terms = vec![EnergyTermIR::Demag {
+        method: "auto".to_string(),
+    }];
+    ir.pbc = Some(FdmPeriodicityIR {
+        axes: [
+            AxisBoundary::Periodic,
+            AxisBoundary::Periodic,
+            AxisBoundary::Open,
+        ],
+        demag: FdmDemagPeriodicityIR::TruncatedImages,
+        image_counts: Some([4, 4, 0]),
+    });
+    let err = plan(&ir).expect_err("FDM + PBC TruncatedImages demag should be rejected");
+    assert!(
+        err.reasons
+            .iter()
+            .any(|r| r.contains("PBC not supported") && r.contains("TruncatedImages")),
+        "error should mention TruncatedImages not supported, got: {:?}",
+        err.reasons
+    );
+}
+
+#[test]
+fn fdm_open_boundary_demag_with_periodic_axes_still_rejects_exchange() {
+    // Even with open-boundary demag, periodic exchange is unsupported.
+    let mut ir = ProblemIR::bootstrap_example();
+    ir.pbc = Some(FdmPeriodicityIR {
+        axes: [AxisBoundary::Periodic, AxisBoundary::Open, AxisBoundary::Open],
+        demag: FdmDemagPeriodicityIR::Open,
+        image_counts: None,
+    });
+    let err = plan(&ir).expect_err("FDM + PBC + exchange should be rejected");
+    assert!(err.reasons.iter().any(|r| r.contains("exchange")));
 }

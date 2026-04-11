@@ -33,6 +33,7 @@ import {
   fitTextureToObject,
   resetTextureTransform,
 } from "../../../lib/session/magnetizationAssetActions";
+import { textureScaleSemantics } from "../../../lib/textureTransform";
 import { findSceneObjectByNodeId } from "./objectSelection";
 import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
 
@@ -182,6 +183,12 @@ export default function MaterialPanel({
   const materialAsset = material ?? (sceneObject ? fallbackMaterial(sceneObject.name) : null);
   const magnetizationAsset =
     magnetization ?? (sceneObject ? fallbackMagnetization(sceneObject.name) : null);
+  const pivotLockedToVortexCore =
+    magnetizationAsset?.kind === "preset_texture" &&
+    magnetizationAsset?.preset_kind === "vortex";
+  const metricScalePreset =
+    magnetizationAsset?.kind === "preset_texture" &&
+    textureScaleSemantics(magnetizationAsset?.preset_kind ?? "") === "identity_metric";
   const physicsStack = useMemo<ScriptBuilderMagneticInteractionEntry[]>(
     () => ensureObjectPhysicsStack(sceneObject?.physics_stack, materialAsset?.properties.Dind ?? null),
     [materialAsset?.properties.Dind, sceneObject?.physics_stack],
@@ -321,6 +328,9 @@ export default function MaterialPanel({
       axis: number,
       valueRaw: string,
     ) => {
+      if (pivotLockedToVortexCore && key === "pivot") {
+        return;
+      }
       const parsed = Number.parseFloat(valueRaw);
       if (!Number.isFinite(parsed)) return;
       updateMagnetization((asset) => {
@@ -332,11 +342,14 @@ export default function MaterialPanel({
           texture_transform: {
             ...asset.texture_transform,
             [key]: next,
+            ...(pivotLockedToVortexCore && key === "translation"
+              ? { pivot: [0, 0, 0] as [number, number, number] }
+              : {}),
           },
         };
       });
     },
-    [updateMagnetization],
+    [pivotLockedToVortexCore, updateMagnetization],
   );
 
   const handleTextureRotationQuatBlur = useCallback(
@@ -380,6 +393,27 @@ export default function MaterialPanel({
     );
     model.setActiveTransformScope("texture");
   }, [model, sceneObject]);
+
+  useEffect(() => {
+    if (!pivotLockedToVortexCore) {
+      return;
+    }
+    const pivot = magnetizationAsset?.texture_transform?.pivot ?? [0, 0, 0];
+    if (pivot.every((component) => Math.abs(component) <= 1e-18)) {
+      return;
+    }
+    updateMagnetization((asset) => ({
+      ...asset,
+      texture_transform: {
+        ...(asset.texture_transform ?? DEFAULT_TEXTURE_TRANSFORM),
+        pivot: [0, 0, 0],
+      },
+    }));
+  }, [
+    magnetizationAsset?.texture_transform?.pivot,
+    pivotLockedToVortexCore,
+    updateMagnetization,
+  ]);
 
   const handleMatNum = (
     key: keyof SceneMaterialAsset["properties"],
@@ -492,7 +526,6 @@ export default function MaterialPanel({
   const presetTextureSyncGenerationRef = useRef(0);
   const lastSyncedPresetHashRef = useRef<string | null>(null);
   const autoApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const applyPresetTextureChangesRef = useRef<() => void>(() => {});
   const [numericTransformOpen, setNumericTransformOpen] = useState(false);
   const [numericMode, setNumericMode] = useState<NumericTransformMode>("translate");
   const [numericAbsolute, setNumericAbsolute] = useState<[number, number, number]>([0, 0, 0]);
@@ -543,7 +576,7 @@ export default function MaterialPanel({
     }
     return 55;
   }, [presetTextureSync]);
-  const applyPresetTextureChanges = () => {
+  const applyPresetTextureChanges = useCallback(() => {
     if (!sceneObject || !presetTextureHash || !model.sceneDocument) {
       return;
     }
@@ -630,8 +663,15 @@ export default function MaterialPanel({
         });
         setPresetTextureModalOpen(true);
       });
-  };
-  applyPresetTextureChangesRef.current = applyPresetTextureChanges;
+  }, [
+    liveApi,
+    model.sceneDocument,
+    presetTextureHash,
+    sceneObject,
+    setPresetTextureModalOpen,
+    setPresetTextureSync,
+    targetSpinCount,
+  ]);
 
   useEffect(() => {
     if (model.activeTransformScope != null) return;
@@ -668,7 +708,7 @@ export default function MaterialPanel({
     autoApplyTimerRef.current = setTimeout(() => {
       autoApplyTimerRef.current = null;
       lastSyncedPresetHashRef.current = presetTextureHash;
-      applyPresetTextureChangesRef.current();
+      applyPresetTextureChanges();
     }, 350);
 
     return () => {
@@ -677,7 +717,7 @@ export default function MaterialPanel({
         autoApplyTimerRef.current = null;
       }
     };
-  }, [presetTextureHash, presetTextureSync.status]);
+  }, [applyPresetTextureChanges, presetTextureHash, presetTextureSync.status]);
 
   if (!sceneObject || !materialAsset || !magnetizationAsset) {
     if (!model.material) {
@@ -706,10 +746,14 @@ export default function MaterialPanel({
   const textureTransform = mag.texture_transform ?? {
     ...DEFAULT_TEXTURE_TRANSFORM,
   };
+  const displayedPivot = pivotLockedToVortexCore
+    ? textureTransform.translation
+    : textureTransform.pivot;
   const textureMapping = mag.mapping ?? {
     ...DEFAULT_TEXTURE_MAPPING,
   };
   const activeTextureMode = model.sceneDocument?.editor.gizmo_mode ?? "translate";
+  const scaleInputUnit = metricScalePreset ? "×" : "m";
 
   const openNumericTransform = (mode: NumericTransformMode) => {
     setNumericMode(mode);
@@ -744,6 +788,9 @@ export default function MaterialPanel({
           clampFinite(numericAbsolute[2], currentTransform.translation[2]) +
             clampFinite(numericOffset[2], 0),
         ];
+        if (pivotLockedToVortexCore) {
+          next.pivot = [0, 0, 0];
+        }
       } else if (numericMode === "scale") {
         next.scale = [
           Math.max(
@@ -1280,6 +1327,12 @@ export default function MaterialPanel({
                     <div className="mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
                       Scale
                     </div>
+                    {metricScalePreset ? (
+                      <div className="mb-2 text-[0.68rem] text-muted-foreground">
+                        Dla tej tekstury skala jest bezwymiarowa i powinna pozostać równa 1.
+                        Rozmiar kontrolujesz przez parametry presetu (np. radius/core_radius).
+                      </div>
+                    ) : null}
                     <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
@@ -1289,6 +1342,8 @@ export default function MaterialPanel({
                         onBlur={(event) =>
                           handleTextureTransformVectorBlur("scale", axis, event.target.value)
                         }
+                        disabled={metricScalePreset}
+                        unit={scaleInputUnit}
                         mono
                       />
                     ))}
@@ -1302,12 +1357,13 @@ export default function MaterialPanel({
                     <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
-                        key={`tx-pivot-${axis}-${textureTransform.pivot[axis]}`}
+                        key={`tx-pivot-${axis}-${displayedPivot[axis]}`}
                         label={`Pivot ${["X", "Y", "Z"][axis]}`}
-                        defaultValue={textureTransform.pivot[axis]}
+                        defaultValue={displayedPivot[axis]}
                         onBlur={(event) =>
                           handleTextureTransformVectorBlur("pivot", axis, event.target.value)
                         }
+                        disabled={pivotLockedToVortexCore}
                         unit="m"
                         mono
                       />

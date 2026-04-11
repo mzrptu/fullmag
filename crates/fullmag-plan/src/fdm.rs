@@ -296,6 +296,31 @@ pub(crate) fn plan_fdm(
         );
     }
 
+    // ── PBC capability gate ──────────────────────────────────────────────
+    // FDM exchange kernel uses clamped-neighbour Neumann; periodic wrap is
+    // not yet implemented.  FDM FFT demag is open-boundary only (no
+    // TruncatedImages kernel).  Reject early with an explicit message so
+    // the user does not get a silent open-boundary fallback.
+    if let Some(ref pbc) = problem.pbc {
+        if pbc.has_any_periodic() {
+            if enable_exchange {
+                errors.push(
+                    "PBC not supported: FDM exchange kernel uses clamped-neighbour Neumann BC; \
+                     periodic wrap for exchange is not yet implemented. \
+                     Remove periodic axes or switch to FEM eigen solver."
+                        .to_string(),
+                );
+            }
+            if enable_demag && pbc.demag == fullmag_ir::FdmDemagPeriodicityIR::TruncatedImages {
+                errors.push(
+                    "PBC not supported: FDM demag only supports open-boundary FFT; \
+                     TruncatedImages periodic demag kernel is not yet implemented."
+                        .to_string(),
+                );
+            }
+        }
+    }
+
     if !errors.is_empty() {
         return Err(PlanError { reasons: errors });
     }
@@ -469,8 +494,18 @@ pub(crate) fn plan_fdm(
             .as_ref()
             .and_then(|h| h.fdm.as_ref())
             .and_then(|fdm| fdm.boundary_correction.clone()),
-        boundary_phi_floor: None,
-        boundary_delta_min: None,
+        boundary_phi_floor: problem
+            .backend_policy
+            .discretization_hints
+            .as_ref()
+            .and_then(|h| h.fdm.as_ref())
+            .and_then(|fdm| fdm.boundary_phi_floor),
+        boundary_delta_min: problem
+            .backend_policy
+            .discretization_hints
+            .as_ref()
+            .and_then(|h| h.fdm.as_ref())
+            .and_then(|fdm| fdm.boundary_delta_min),
         boundary_geometry: None,
         current_density: problem.current_density,
         stt_degree: problem.stt_degree,
@@ -564,6 +599,13 @@ pub(crate) fn plan_fdm(
         && fdm_plan.boundary_correction.as_deref() != Some("none")
     {
         let compute_delta = fdm_plan.boundary_correction.as_deref() == Some("full");
+        // NOTE: Boundary-correction SDF is currently implemented only for:
+        //   • Cylinder  (single disk/pillar)
+        //   • Difference(Cylinder, Cylinder)  (ring / annulus)
+        // For all other geometries the SDF cannot be built and
+        // boundary_geometry remains `None`; the backend will run the
+        // chosen correction level but without per-cell φ/δ data, which
+        // means the correction has no geometric effect.
         let sdf_opt: Option<Box<dyn Fn(f64, f64, f64) -> f64>> = match &shape {
             GeometryShape::Cylinder { radius, .. } => {
                 let cx = grid_cells[0] as f64 * cell_size[0] * 0.5;
@@ -609,6 +651,14 @@ pub(crate) fn plan_fdm(
                 cell_size[2],
                 compute_delta,
             ));
+        } else {
+            eprintln!(
+                "[fullmag-plan] WARNING: boundary_correction='{}' requested but SDF is not \
+                 available for geometry shape {:?}; boundary_geometry will be None. \
+                 Supported shapes: Cylinder, Difference(Cylinder, Cylinder).",
+                fdm_plan.boundary_correction.as_deref().unwrap_or("?"),
+                shape,
+            );
         }
     }
 
@@ -1079,6 +1129,26 @@ pub(crate) fn plan_fdm_multilayer(
             "the public multilayer FDM runner currently supports only 'llg_overdamped' relaxation"
                 .to_string(),
         );
+    }
+
+    // ── PBC capability gate (multilayer) ─────────────────────────────────
+    if let Some(ref pbc) = problem.pbc {
+        if pbc.has_any_periodic() {
+            if enable_exchange {
+                errors.push(
+                    "PBC not supported: FDM multilayer exchange kernel uses clamped-neighbour \
+                     Neumann BC; periodic wrap is not yet implemented."
+                        .to_string(),
+                );
+            }
+            if enable_demag && pbc.demag == fullmag_ir::FdmDemagPeriodicityIR::TruncatedImages {
+                errors.push(
+                    "PBC not supported: FDM multilayer demag only supports open-boundary FFT; \
+                     TruncatedImages periodic demag kernel is not yet implemented."
+                        .to_string(),
+                );
+            }
+        }
     }
 
     if !errors.is_empty() {
