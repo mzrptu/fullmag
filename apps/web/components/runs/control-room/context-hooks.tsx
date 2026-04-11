@@ -12,10 +12,9 @@
  * CommandContext  — runtime/command state (changes on events)
  * ModelContext    — structural model data (changes rarely)
  *
- * The legacy useControlRoom() is preserved as a facade composing all 4.
  * ═══════════════════════════════════════════════════════════════════ */
 
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useContext } from "react";
 import type { GpuTelemetryDevice } from "../../../lib/liveApiClient";
 import type {
   ArtifactEntry,
@@ -457,9 +456,6 @@ export interface ModelContextValue {
   applyGeometryTranslation: (geometryName: string, dx: number, dy: number, dz: number) => void;
 }
 
-/* ── Legacy combined type (for facade) ── */
-export type ControlRoomContextValue = TransportContextValue & ViewportContextValue & CommandContextValue & ModelContextValue;
-
 /* ── React contexts ── */
 export const TransportCtx = createContext<TransportContextValue | null>(null);
 export const ViewportCtx = createContext<ViewportContextValue | null>(null);
@@ -489,16 +485,4 @@ export function useModel(): ModelContextValue {
   const ctx = useContext(ModelCtx);
   if (!ctx) throw new Error("useModel must be used within <ControlRoomProvider>");
   return ctx;
-}
-
-/* ── Legacy facade hook (backward-compatible) ── */
-export function useControlRoom(): ControlRoomContextValue {
-  const transport = useTransport();
-  const viewport = useViewport();
-  const command = useCommand();
-  const model = useModel();
-  return useMemo(
-    () => ({ ...transport, ...viewport, ...command, ...model }),
-    [transport, viewport, command, model],
-  );
 }

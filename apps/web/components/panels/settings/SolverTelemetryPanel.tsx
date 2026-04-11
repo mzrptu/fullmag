@@ -1,13 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useTransport, useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { fmtExpOrDash, fmtSIOrDash, fmtStepValue } from "@/lib/format";
 import { MetricField, buildSparkSeries, SidebarSection } from "./primitives";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../SolverSettingsPanel";
 
 export default function SolverTelemetryPanel() {
-  const ctx = useControlRoom();
+  const transport = useTransport();
+  const cmd = useCommand();
+  const model = useModel();
+  const ctx = { ...transport, solverNotStartedMessage: cmd.solverNotStartedMessage, solverSettings: model.solverSettings };
   const sparkSeries = useMemo(() => ({
     step: buildSparkSeries(
       ctx.scalarRows,

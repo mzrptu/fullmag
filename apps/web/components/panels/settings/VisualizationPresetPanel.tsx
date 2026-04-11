@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useModel } from "../../runs/control-room/context-hooks";
 import {
   buildVisualizationPresetNodeId,
   parseVisualizationPresetNodeId,
@@ -46,7 +46,7 @@ function PresetSourceBadge({ source }: { source: VisualizationPresetSource }) {
 }
 
 export default function VisualizationPresetPanel({ nodeId }: VisualizationPresetPanelProps) {
-  const ctx = useControlRoom();
+  const ctx = useModel();
   const parsedNode = useMemo(() => parseVisualizationPresetNodeId(nodeId), [nodeId]);
 
   const createPreset = useCallback(

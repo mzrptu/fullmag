@@ -10,42 +10,55 @@ import {
 } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import {
-  ApiHttpError,
   currentLiveApiClient,
-  type GpuTelemetryDevice,
   type GpuTelemetryResponse,
 } from "../../../lib/liveApiClient";
 import { useCurrentLiveStream } from "../../../lib/useSessionStream";
 import { useWorkspaceStore } from "../../../lib/workspace/workspace-store";
-import { recordFrontendDebugEvent } from "../../../lib/workspace/navigation-debug";
-import { FRONTEND_DIAGNOSTIC_FLAGS } from "../../../lib/debug/frontendDiagnosticFlags";
+import { useBuilderAutoSync } from "./hooks/useBuilderAutoSync";
+import { useDomainLayout } from "./hooks/useDomainLayout";
+import { useFemMeshDerived } from "./hooks/useFemMeshDerived";
+import { useMeshCommandPipeline } from "./hooks/useMeshCommandPipeline";
+import { useVisualizationPresets } from "./hooks/useVisualizationPresets";
+import { useWorkspaceActions } from "./hooks/useWorkspaceActions";
+import {
+  DEFAULT_AIR_MESH_OPACITY,
+  DEFAULT_FDM_VISUALIZATION_SETTINGS,
+  EMPTY_ARTIFACTS,
+  EMPTY_ENGINE_LOG,
+  EMPTY_QUANTITIES,
+  EMPTY_SCALAR_ROWS,
+  GPU_TELEMETRY_POLL_MS,
+  loadLocalActiveVisualizationRef,
+  loadLocalVisualizationPresets,
+  normalizePersistedMeshEntityViewState,
+  normalizePersistedObjectViewMode,
+  normalizeVisualizationPresetRef,
+  resultWorkspaceIcon,
+  samePersistedMeshEntityViewState,
+  sameVisualizationPresetRef,
+  sameVisualizationPresets,
+  serializeMeshEntityViewStateForScene,
+} from "./controlRoomUtils";
 import type {
-  ArtifactEntry,
   DisplaySelection,
   EngineLogEntry,
   MeshWorkspaceState,
-  QuantityDescriptor,
-  ScalarRow,
   ScriptBuilderStageState,
 } from "../../../lib/useSessionStream";
 import type {
-  DomainFrameState,
-  FemMeshPart,
-  MeshCommandTarget,
   MeshEntityViewStateMap,
   ModelBuilderGraphV2,
   SceneDocument,
   VisualizationPreset,
   VisualizationPresetFdmState,
   VisualizationPresetRef,
-  VisualizationPresetSource,
   ScriptBuilderCurrentModuleEntry,
   ScriptBuilderExcitationAnalysisEntry,
   ScriptBuilderGeometryEntry,
   ScriptBuilderUniverseState,
   StudyPipelineDocumentState,
 } from "../../../lib/session/types";
-import { defaultMeshEntityViewState } from "../../../lib/session/types";
 import {
   buildModelBuilderGraphV2,
   selectModelBuilderCurrentModules,
@@ -76,14 +89,11 @@ import { DEFAULT_MESH_OPTIONS } from "../../panels/MeshSettingsPanel";
 import type { MeshOptionsState, MeshQualityData } from "../../panels/MeshSettingsPanel";
 import type {
   ClipAxis,
-  FemColorField,
   FemMeshData,
   MeshSelectionSnapshot,
   RenderMode,
 } from "../../preview/FemMeshView3D";
 import {
-  type AntennaOverlay,
-  type BuilderObjectOverlay,
   type FemDockTab,
   type FocusObjectRequest,
   type ObjectViewMode,
@@ -91,49 +101,27 @@ import {
   type VectorComponent,
   type ViewportScope,
   type ViewportMode,
-  FEM_SLICE_COUNT,
   PREVIEW_EVERY_N_DEFAULT,
   PREVIEW_EVERY_N_PRESETS,
   PREVIEW_MAX_POINTS_DEFAULT,
   PREVIEW_MAX_POINTS_PRESETS,
-  asVec3,
-  boundsCenter,
-  boundsExtent,
-  buildObjectOverlays,
-  combineBounds,
-  computeMeshFaceDetail,
-  fmtSI,
-  materializationProgressFromMessage,
-  parseOptionalNumber,
-  parseStageExecutionMessage,
   resolveViewportScope,
 } from "./shared";
 import {
   buildScriptBuilderSignature,
   buildScriptBuilderUpdatePayload,
-  commandKindLabel,
-  downloadBase64File,
   extractSolverPlan,
-  fileToBase64,
-  latestBackendErrorFromLog,
   meshOptionsFromBuilder,
   meshOptionsToBuilder,
-  sameDisplaySelection,
   solverSettingsFromBuilder,
   solverSettingsToBuilder,
 } from "./helpers";
 import {
-  MESH_WORKSPACE_PRESETS,
   buildMeshConfigurationSignature,
-  deriveMeshWorkspacePreset,
-  type MeshWorkspacePresetId,
 } from "./meshWorkspace";
 import {
   LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY,
   LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY,
-  cloneVisualizationPreset,
-  createDefaultVisualizationPreset,
-  nextVisualizationPresetName,
 } from "./visualizationPresets";
 import {
   DEFAULT_ANALYZE_SELECTION,
@@ -141,234 +129,6 @@ import {
   type AnalyzeSelectionState,
   type AnalyzeTab,
 } from "./analyzeSelection";
-import type {
-  ActivityInfo,
-  BackendErrorInfo,
-  FieldStats,
-  MaterialSummary,
-  MeshQualitySummary,
-  SessionFooterData,
-} from "./types";
-
-/* ── Stable empty arrays ── */
-const EMPTY_SCALAR_ROWS: ScalarRow[] = [];
-const EMPTY_ENGINE_LOG: EngineLogEntry[] = [];
-const EMPTY_QUANTITIES: QuantityDescriptor[] = [];
-const EMPTY_ARTIFACTS: ArtifactEntry[] = [];
-const DEFAULT_AIR_MESH_OPACITY = 28;
-const GPU_TELEMETRY_POLL_MS = 1000;
-
-function fmtGpuMemoryGb(valueMb: number): string {
-  return `${(valueMb / 1024).toFixed(1)} GB`;
-}
-
-function runtimeEngineGpuLabelForDevice(device: GpuTelemetryDevice | null): string | null {
-  if (!device) {
-    return null;
-  }
-  return `${Math.round(device.utilization_gpu_percent)}% GPU · ${fmtGpuMemoryGb(device.memory_used_mb)}/${fmtGpuMemoryGb(device.memory_total_mb)}`;
-}
-
-function parseOptionalFiniteNumberText(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function resultWorkspaceIcon(kind: ResultWorkspaceKind): string {
-  switch (kind) {
-    case "spectrum":
-      return "📊";
-    case "dispersion":
-      return "≈";
-    case "modes":
-      return "〜";
-    case "time-traces":
-      return "〰";
-    case "vortex-frequency":
-      return "🌀";
-    case "vortex-trajectory":
-      return "◎";
-    case "vortex-orbit":
-      return "◉";
-    case "table":
-      return "📋";
-    case "quantity":
-    default:
-      return "𝑓";
-  }
-}
-
-function normalizePersistedObjectViewMode(
-  value: SceneDocument["editor"]["object_view_mode"],
-): ObjectViewMode {
-  return value === "isolate" ? "isolate" : "context";
-}
-
-function normalizePersistedMeshEntityViewState(
-  value: SceneDocument["editor"]["mesh_entity_view_state"],
-): MeshEntityViewStateMap {
-  const next: MeshEntityViewStateMap = {};
-  for (const [entityId, state] of Object.entries(value ?? {})) {
-    next[entityId] = {
-      visible: state.visible,
-      renderMode: state.render_mode,
-      opacity: state.opacity,
-      colorField: state.color_field,
-    };
-  }
-  return next;
-}
-
-function serializeMeshEntityViewStateForScene(
-  value: MeshEntityViewStateMap,
-): SceneDocument["editor"]["mesh_entity_view_state"] {
-  const next: SceneDocument["editor"]["mesh_entity_view_state"] = {};
-  for (const [entityId, state] of Object.entries(value)) {
-    next[entityId] = {
-      visible: state.visible,
-      render_mode: state.renderMode,
-      opacity: state.opacity,
-      color_field: state.colorField,
-    };
-  }
-  return next;
-}
-
-function samePersistedMeshEntityViewState(
-  left: SceneDocument["editor"]["mesh_entity_view_state"],
-  right: SceneDocument["editor"]["mesh_entity_view_state"],
-): boolean {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  if (leftKeys.length !== rightKeys.length) {
-    return false;
-  }
-  for (const key of leftKeys) {
-    const lhs = left[key];
-    const rhs = right[key];
-    if (!rhs) {
-      return false;
-    }
-    if (
-      lhs.visible !== rhs.visible ||
-      lhs.render_mode !== rhs.render_mode ||
-      lhs.opacity !== rhs.opacity ||
-      lhs.color_field !== rhs.color_field
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-const DEFAULT_FDM_VISUALIZATION_SETTINGS: VisualizationPresetFdmState = {
-  quality: "high",
-  render_mode: "glyph",
-  voxel_color_mode: "orientation",
-  sampling: 1,
-  brightness: 1.5,
-  voxel_opacity: 0.5,
-  voxel_gap: 0.14,
-  voxel_threshold: 0.08,
-  topo_enabled: false,
-  topo_component: "z",
-  topo_multiplier: 5,
-};
-
-function normalizeVisualizationPresetRef(
-  value: VisualizationPresetRef | null | undefined,
-): VisualizationPresetRef | null {
-  if (!value || !value.preset_id || (value.source !== "project" && value.source !== "local")) {
-    return null;
-  }
-  return {
-    source: value.source,
-    preset_id: value.preset_id,
-  };
-}
-
-function sameVisualizationPresetRef(
-  left: VisualizationPresetRef | null | undefined,
-  right: VisualizationPresetRef | null | undefined,
-): boolean {
-  if (!left || !right) {
-    return false;
-  }
-  return left.source === right.source && left.preset_id === right.preset_id;
-}
-
-function sameVisualizationPresets(
-  left: VisualizationPreset[],
-  right: VisualizationPreset[],
-): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let index = 0; index < left.length; index += 1) {
-    if (JSON.stringify(left[index]) !== JSON.stringify(right[index])) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function loadLocalVisualizationPresets(): VisualizationPreset[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-  try {
-    const raw = window.localStorage.getItem(LOCAL_VISUALIZATION_PRESETS_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    const normalized: VisualizationPreset[] = [];
-    for (const entry of parsed) {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-        continue;
-      }
-      const value = entry as VisualizationPreset;
-      normalized.push(
-        createDefaultVisualizationPreset({
-          id: value.id,
-          name: value.name || "Visualization",
-          quantity: value.quantity || "m",
-          domain: value.domain === "fdm" ? "fdm" : "fem",
-          mode: value.mode === "2D" ? "2D" : "3D",
-          nowUnixMs: Number(value.updated_at_unix_ms ?? Date.now()),
-        }),
-      );
-      const last = normalized[normalized.length - 1];
-      normalized[normalized.length - 1] = cloneVisualizationPreset(last, value);
-    }
-    return normalized;
-  } catch {
-    return [];
-  }
-}
-
-function loadLocalActiveVisualizationRef(): VisualizationPresetRef | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(LOCAL_ACTIVE_VISUALIZATION_PRESET_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as VisualizationPresetRef;
-    return normalizeVisualizationPresetRef(parsed);
-  } catch {
-    return null;
-  }
-}
 
 /* Context interfaces, hooks, and React context objects are in context-hooks.tsx */
 export {
@@ -376,7 +136,6 @@ export {
   useViewport,
   useCommand,
   useModel,
-  useControlRoom,
   TransportCtx,
   ViewportCtx,
   CommandCtx,
@@ -387,7 +146,6 @@ export type {
   ViewportContextValue,
   CommandContextValue,
   ModelContextValue,
-  ControlRoomContextValue,
   WorkspaceMode,
   ResultWorkspaceEntry,
   ResultWorkspaceKind,
@@ -413,13 +171,13 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   const { state, connection, error } = useCurrentLiveStream();
 
   /* ── Local UI state ── */
-  const workspaceMode = useWorkspaceStore((s) => s.mode);
-  const _setMode = useWorkspaceStore((s) => s.setMode);
+  const workspaceMode = useWorkspaceStore((s) => s.currentPerspective);
+  const _setPerspective = useWorkspaceStore((s) => s.setCurrentPerspective);
   const setWorkspaceMode = useCallback(
     (v: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
-      _setMode(typeof v === "function" ? v(workspaceMode) : v);
+      _setPerspective(typeof v === "function" ? v(workspaceMode) : v);
     },
-    [_setMode, workspaceMode],
+    [_setPerspective, workspaceMode],
   );
   const [viewMode, setViewMode] = useState<ViewportMode>("3D");
   const [component, setComponent] = useState<VectorComponent>("magnitude");
@@ -502,13 +260,6 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
   );
   const [activeVisualizationPresetRef, setActiveVisualizationPresetRef] =
     useState<VisualizationPresetRef | null>(() => loadLocalActiveVisualizationRef());
-  const builderHydratedSessionRef = useRef<string | null>(null);
-  const builderPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const builderAutoPushGateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const builderAutoPushGateUntilRef = useRef(0);
-  const lastBuilderPushSignatureRef = useRef<string | null>(null);
-  const nonRetryableBuilderPushSignatureRef = useRef<string | null>(null);
-  const [builderAutoPushGateVersion, setBuilderAutoPushGateVersion] = useState(0);
   const [meshSelection, setMeshSelection] = useState<MeshSelectionSnapshot>({
     selectedFaceIndices: [],
     primaryFaceIndex: null,
@@ -1137,26 +888,26 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  /* ── Builder auto-sync (extracted hook) ── */
+  const builderAutoSync = useBuilderAutoSync({
+    liveApi,
+    localBuilderDraft,
+    localBuilderSignature,
+    remoteBuilderSignature,
+    scriptBuilder,
+    workspaceStatus,
+    workspaceHydrationKey,
+  });
+
   /* Hydrate solver-settings panel from the actual backend plan on first load. */
   const [solverSettingsHydrated, setSolverSettingsHydrated] = useState(false);
   useEffect(() => {
-    builderHydratedSessionRef.current = null;
-    lastBuilderPushSignatureRef.current = null;
-    nonRetryableBuilderPushSignatureRef.current = null;
+    builderAutoSync.resetAutoSync();
     pendingMeshConfigSignatureRef.current = null;
     setLastBuiltMeshConfigSignature(null);
     setSolverSettingsHydrated(false);
     setModelBuilderGraph(null);
     setSceneDocumentDraft(null);
-    if (builderPushTimerRef.current) {
-      clearTimeout(builderPushTimerRef.current);
-      builderPushTimerRef.current = null;
-    }
-    if (builderAutoPushGateTimerRef.current) {
-      clearTimeout(builderAutoPushGateTimerRef.current);
-      builderAutoPushGateTimerRef.current = null;
-    }
-    builderAutoPushGateUntilRef.current = 0;
   }, [workspaceHydrationKey]);
 
   useEffect(() => {
@@ -1189,7 +940,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (!workspaceHydrationKey || !incomingGraph) {
       return;
     }
-    if (builderHydratedSessionRef.current === workspaceHydrationKey) {
+    if (builderAutoSync.isHydrated(workspaceHydrationKey)) {
       return;
     }
     setSolverSettingsState((prev) => ({
@@ -1246,16 +997,10 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     if (firstRunStage) {
       setRunUntilInput(firstRunStage.until_seconds);
     }
-    builderHydratedSessionRef.current = workspaceHydrationKey;
-    builderAutoPushGateUntilRef.current = Date.now() + 2500;
-    if (builderAutoPushGateTimerRef.current) {
-      clearTimeout(builderAutoPushGateTimerRef.current);
-    }
-    builderAutoPushGateTimerRef.current = setTimeout(() => {
-      builderAutoPushGateTimerRef.current = null;
-      setBuilderAutoPushGateVersion((version) => version + 1);
-    }, 2550);
-    lastBuilderPushSignatureRef.current = buildScriptBuilderSignature(incomingGraph, {
+    builderAutoSync.markHydrated(workspaceHydrationKey);
+    builderAutoSync.gateAutoSync(2500);
+    builderAutoSync.bumpGateVersion();
+    builderAutoSync.recordPushSignature(buildScriptBuilderSignature(incomingGraph, {
       solverSettings,
       meshOptions,
       universe: incomingGraph.universe.value,
@@ -1264,7 +1009,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       geometries: incomingGraph.objects.items.map((objectNode) => objectNode.geometry),
       currentModules: incomingGraph.current_modules.modules,
       excitationAnalysis: incomingGraph.current_modules.excitation_analysis,
-    });
+    }));
     setSolverSettingsHydrated(true);
   }, [
     meshOptions,
@@ -1432,102 +1177,7 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     });
   }, [modelBuilderGraph, workspaceHydrationKey]);
 
-  useEffect(() => {
-    if (!FRONTEND_DIAGNOSTIC_FLAGS.session.enableSceneDraftAutoPush) {
-      recordFrontendDebugEvent("scene-sync", "auto_push_disabled_by_diagnostic_flag", {
-        workspaceStatus,
-      });
-      return;
-    }
-    if (!workspaceHydrationKey || !scriptBuilder) {
-      return;
-    }
-    if (builderHydratedSessionRef.current !== workspaceHydrationKey) {
-      return;
-    }
-    if (remoteBuilderSignature === localBuilderSignature) {
-      lastBuilderPushSignatureRef.current = localBuilderSignature;
-      return;
-    }
-    if (lastBuilderPushSignatureRef.current === localBuilderSignature) {
-      return;
-    }
-    if (nonRetryableBuilderPushSignatureRef.current === localBuilderSignature) {
-      return;
-    }
-    const startupGateActive =
-      Date.now() < builderAutoPushGateUntilRef.current ||
-      workspaceStatus === "bootstrapping" ||
-      workspaceStatus === "materializing_script";
-    if (startupGateActive) {
-      recordFrontendDebugEvent("scene-sync", "auto_push_deferred_during_startup", {
-        workspaceStatus,
-        gateUntil: builderAutoPushGateUntilRef.current,
-      });
-      return;
-    }
-    if (builderPushTimerRef.current) {
-      clearTimeout(builderPushTimerRef.current);
-    }
-    builderPushTimerRef.current = setTimeout(() => {
-      recordFrontendDebugEvent("scene-sync", "auto_push_start", {
-        workspaceStatus,
-      });
-      void liveApi
-        .updateSceneDocument(localBuilderDraft)
-        .then(() => {
-          recordFrontendDebugEvent("scene-sync", "auto_push_success", {
-            workspaceStatus,
-          });
-          lastBuilderPushSignatureRef.current = localBuilderSignature;
-        })
-        .catch((builderError) => {
-          console.warn("Failed to persist scene document draft", builderError);
-          const nonRetryable =
-            builderError instanceof ApiHttpError &&
-            builderError.status >= 400 &&
-            builderError.status < 500;
-          recordFrontendDebugEvent("scene-sync", "auto_push_failed", {
-            workspaceStatus,
-            message: builderError instanceof Error ? builderError.message : String(builderError),
-            nonRetryable,
-          });
-          if (nonRetryable) {
-            // Avoid retry storms for invalid local scene payloads (e.g. unsupported asset kinds).
-            nonRetryableBuilderPushSignatureRef.current = localBuilderSignature;
-            lastBuilderPushSignatureRef.current = localBuilderSignature;
-            return;
-          }
-          lastBuilderPushSignatureRef.current = null;
-        });
-    }, 250);
-    return () => {
-      if (builderPushTimerRef.current) {
-        clearTimeout(builderPushTimerRef.current);
-        builderPushTimerRef.current = null;
-      }
-    };
-  }, [
-    liveApi,
-    localBuilderDraft,
-    localBuilderSignature,
-    remoteBuilderSignature,
-    scriptBuilder,
-    workspaceStatus,
-    workspaceHydrationKey,
-    builderAutoPushGateVersion,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      if (builderPushTimerRef.current) {
-        clearTimeout(builderPushTimerRef.current);
-      }
-      if (builderAutoPushGateTimerRef.current) {
-        clearTimeout(builderAutoPushGateTimerRef.current);
-      }
-    };
-  }, []);
+  /* Auto-push is now handled by useBuilderAutoSync hook. */
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1561,349 +1211,66 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     }
   }, [activeVisualizationPresetRef]);
 
-  const currentStage = useMemo(() => parseStageExecutionMessage(latestEngineMessage), [latestEngineMessage]);
-
-  const activity = useMemo<ActivityInfo>(() => {
-    if (workspaceStatus === "materializing_script") {
-      const pv = materializationProgressFromMessage(latestEngineMessage);
-      const lowerMessage = (latestEngineMessage ?? "").toLowerCase();
-      const hasGmshPercent = /\[\s*\d{1,3}%\]/.test(latestEngineMessage ?? "");
-      const isLong = lowerMessage.includes("generating 3d tetrahedral mesh") && !hasGmshPercent;
-      return { label: isFemBackend ? "Materializing FEM workspace" : "Materializing workspace",
-               detail: latestEngineMessage ?? "Preparing geometry import and execution plan",
-               progressMode: isLong ? "indeterminate" : "determinate", progressValue: pv };
-    }
-    if (workspaceStatus === "bootstrapping")
-      return { label: "Bootstrapping workspace", detail: latestEngineMessage ?? "Starting local API and control room",
-               progressMode: "indeterminate", progressValue: undefined };
-    if (workspaceStatus === "running") {
-      const sl = currentStage ? `Solving ${currentStage.kind} — stage ${currentStage.current}/${currentStage.total}` : "Running solver";
-      return { label: sl, detail: effectiveStep > 0
-        ? `Step ${effectiveStep.toLocaleString()} · t=${fmtSI(effectiveTime, "s")} · ${runtimeEngineLabel ?? session?.requested_backend?.toUpperCase() ?? "runtime"}`
-        : latestEngineMessage ?? "Solver startup in progress", progressMode: "indeterminate", progressValue: undefined };
-    }
-    if (workspaceStatus === "paused")
-      return { label: "Solver paused", detail: latestEngineMessage ?? "Interactive stage is paused and can be resumed",
-               progressMode: "determinate", progressValue: 100 };
-    if (workspaceStatus === "awaiting_command")
-      return { label: "Interactive workspace ready", detail: latestEngineMessage ?? "Waiting for the next run or relax command",
-               progressMode: "determinate", progressValue: 100 };
-    if (workspaceStatus === "completed")
-      return { label: "Run completed", detail: latestEngineMessage ?? "Solver finished successfully",
-               progressMode: "determinate", progressValue: 100 };
-    if (workspaceStatus === "failed")
-      return { label: "Run failed", detail: latestEngineMessage ?? "Execution stopped with an error",
-               progressMode: "determinate", progressValue: 100 };
-    return { label: "Workspace idle", detail: latestEngineMessage ?? "No active task",
-             progressMode: "idle", progressValue: undefined };
-  }, [effectiveStep, effectiveTime, currentStage, isFemBackend, latestEngineMessage, runtimeEngineLabel, session?.requested_backend, workspaceStatus]);
-
-  const runtimeEngineGpuDevice = useMemo<GpuTelemetryDevice | null>(() => {
-    const devices = gpuTelemetry?.devices ?? [];
-    if (devices.length === 0) {
-      return null;
-    }
-    if (runtimeEngineDeviceName) {
-      const exact = devices.find((device) => device.name === runtimeEngineDeviceName);
-      if (exact) {
-        return exact;
-      }
-      const partial = devices.find((device) => runtimeEngineDeviceName.includes(device.name) || device.name.includes(runtimeEngineDeviceName));
-      if (partial) {
-        return partial;
-      }
-    }
-    return [...devices].sort((left, right) => right.utilization_gpu_percent - left.utilization_gpu_percent)[0] ?? null;
-  }, [gpuTelemetry, runtimeEngineDeviceName]);
-
-  const runtimeEngineGpuLabel = useMemo(
-    () => runtimeEngineGpuLabelForDevice(runtimeEngineGpuDevice),
-    [runtimeEngineGpuDevice],
-  );
-
-  /* Artifact / execution plan metadata */
-  const artifactLayout = (metadata?.artifact_layout as Record<string, unknown> | undefined) ?? undefined;
-  const femArtifactLayout = artifactLayout?.backend === "fem" ? artifactLayout : undefined;
-  const meshBoundsMin = asVec3(femArtifactLayout?.bounds_min) ?? asVec3(artifactLayout?.bounds_min);
-  const meshBoundsMax = asVec3(femArtifactLayout?.bounds_max) ?? asVec3(artifactLayout?.bounds_max);
-  const meshExtent =
-    asVec3(femArtifactLayout?.mesh_extent)
-    ?? asVec3(artifactLayout?.mesh_extent)
-    ?? asVec3(femArtifactLayout?.world_extent)
-    ?? asVec3(artifactLayout?.world_extent);
-  const layoutWorldExtent =
-    asVec3(femArtifactLayout?.world_extent) ?? asVec3(artifactLayout?.world_extent);
-  const layoutWorldCenter =
-    asVec3(femArtifactLayout?.world_center) ?? asVec3(artifactLayout?.world_center);
-  const layoutWorldExtentSource =
-    typeof femArtifactLayout?.world_extent_source === "string"
-      ? femArtifactLayout.world_extent_source
-      : (typeof artifactLayout?.world_extent_source === "string"
-          ? artifactLayout.world_extent_source
-          : null);
-  const meshName = typeof femArtifactLayout?.mesh_name === "string" ? femArtifactLayout.mesh_name : null;
-  const meshSource = typeof femArtifactLayout?.mesh_source === "string" ? femArtifactLayout.mesh_source : null;
-  const meshFeOrder = typeof femArtifactLayout?.fe_order === "number" ? femArtifactLayout.fe_order : null;
-  const meshHmax = typeof femArtifactLayout?.hmax === "number" ? femArtifactLayout.hmax : null;
-  const meshSummary = meshWorkspace?.mesh_summary ?? null;
-  const liveMeshName = typeof femMesh?.mesh_name === "string" ? femMesh.mesh_name : null;
-  const liveMeshDomainFrame = femMesh?.domain_frame ?? null;
-  const builderObjectOverlays = useMemo<BuilderObjectOverlay[]>(
-    () => buildObjectOverlays(scriptBuilderGeometries, femMesh),
-    [femMesh, scriptBuilderGeometries],
-  );
-  const builderObjectBounds = useMemo(
-    () => combineBounds(builderObjectOverlays),
-    [builderObjectOverlays],
-  );
-  const builderObjectExtent = useMemo<[number, number, number] | null>(
-    () =>
-      builderObjectBounds
-        ? boundsExtent(builderObjectBounds.boundsMin, builderObjectBounds.boundsMax)
-        : null,
-    [builderObjectBounds],
-  );
-  const builderObjectCenter = useMemo<[number, number, number] | null>(
-    () =>
-      builderObjectBounds
-        ? boundsCenter(builderObjectBounds.boundsMin, builderObjectBounds.boundsMax)
-        : null,
-    [builderObjectBounds],
-  );
-  const domainFrame = useMemo<DomainFrameState | null>(() => {
-    if (!isFemBackend) {
-      return null;
-    }
-    if (liveMeshDomainFrame) {
-      return liveMeshDomainFrame;
-    }
-    const builderDomainFrame = scriptBuilder?.domain_frame ?? null;
-    const meshDomainFrame = meshSummary?.domain_frame ?? null;
-    if (meshDomainFrame) {
-      return meshDomainFrame;
-    }
-    if (builderDomainFrame) {
-      return builderDomainFrame;
-    }
-    if (
-      !scriptBuilderUniverse
-      && !builderObjectBounds
-      && !layoutWorldExtent
-      && !meshBoundsMin
-      && !meshBoundsMax
-    ) {
-      return null;
-    }
-    return {
-      declared_universe: scriptBuilderUniverse
-        ? {
-            mode: scriptBuilderUniverse.mode,
-            size: scriptBuilderUniverse.size,
-            center: scriptBuilderUniverse.center,
-            padding: scriptBuilderUniverse.padding,
-            airbox_hmax: scriptBuilderUniverse.airbox_hmax,
-            airbox_hmin: scriptBuilderUniverse.airbox_hmin,
-            airbox_growth_rate: scriptBuilderUniverse.airbox_growth_rate,
-          }
-        : null,
-      object_bounds_min: builderObjectBounds?.boundsMin ?? null,
-      object_bounds_max: builderObjectBounds?.boundsMax ?? null,
-      mesh_bounds_min: meshBoundsMin ?? null,
-      mesh_bounds_max: meshBoundsMax ?? null,
-      effective_extent:
-        scriptBuilderUniverse?.mode === "manual" && scriptBuilderUniverse.size
-          ? scriptBuilderUniverse.size
-          : scriptBuilderUniverse?.mode === "auto" && builderObjectExtent
-            ? builderObjectExtent.map((component, index) =>
-                component + 2 * (scriptBuilderUniverse.padding?.[index] ?? 0)
-              ) as [number, number, number]
-            : layoutWorldExtent ?? builderObjectExtent ?? null,
-      effective_center:
-        scriptBuilderUniverse?.center
-        ?? builderObjectCenter
-        ?? layoutWorldCenter
-        ?? (meshBoundsMin && meshBoundsMax ? boundsCenter(meshBoundsMin, meshBoundsMax) : null),
-      effective_source:
-        scriptBuilderUniverse?.mode === "manual" && scriptBuilderUniverse.size
-          ? "declared_universe_manual"
-          : scriptBuilderUniverse?.mode === "auto" && builderObjectExtent
-            ? (
-                (scriptBuilderUniverse.padding ?? [0, 0, 0]).some(
-                  (component) => Math.abs(component) > 0,
-                )
-                  ? "declared_universe_auto_padding"
-                  : "object_union_bounds"
-              )
-            : layoutWorldExtentSource ?? (builderObjectExtent ? "object_union_bounds" : null),
-    };
-  }, [
-    builderObjectBounds,
-    builderObjectCenter,
-    builderObjectExtent,
-    isFemBackend,
-    layoutWorldCenter,
-    layoutWorldExtent,
-    layoutWorldExtentSource,
-    liveMeshDomainFrame,
-    meshBoundsMax,
+  const {
+    currentStage,
+    activity,
+    runtimeEngineGpuDevice,
+    runtimeEngineGpuLabel,
+    artifactLayout,
     meshBoundsMin,
-    meshSummary?.domain_frame,
-    scriptBuilder?.domain_frame,
+    meshBoundsMax,
+    meshExtent,
+    meshName,
+    meshSource,
+    meshFeOrder,
+    meshHmax,
+    meshSummary,
+    liveMeshName,
+    builderObjectOverlays,
+    builderObjectBounds,
+    domainFrame,
+    worldExtent,
+    worldCenter,
+    worldExtentSource,
+    antennaOverlays,
+    meshingCapabilities,
+    mesherBackend,
+    mesherSourceKind,
+    mesherCurrentSettings,
+    solverGrid,
+    previewGrid,
+    totalCells,
+    activeCells,
+    inactiveCells,
+    activeMaskPresent,
+    activeMask,
+    interactiveEnabled,
+    awaitingCommand,
+    runtimeCanAcceptCommands,
+    interactiveControlsEnabled,
+  } = useDomainLayout({
+    latestEngineMessage,
+    workspaceStatus,
+    isFemBackend,
+    effectiveStep,
+    effectiveTime,
+    runtimeEngineLabel,
+    runtimeEngineDeviceName,
+    session,
+    gpuTelemetry,
+    metadata,
+    femMesh,
+    scriptBuilderGeometries,
     scriptBuilderUniverse,
-  ]);
-
-  /* Unified world extent (metres) for both FDM and FEM */
-  const worldExtent = useMemo<[number, number, number] | null>(() => {
-    if (isFemBackend) {
-      return domainFrame?.effective_extent ?? null;
-    }
-    // FDM: compute from grid_cells × cell_size
-    const gridCells = asVec3(artifactLayout?.grid_cells);
-    const cellSize = asVec3(artifactLayout?.cell_size);
-    if (gridCells && cellSize) {
-      return [
-        gridCells[0] * cellSize[0],
-        gridCells[1] * cellSize[1],
-        gridCells[2] * cellSize[2],
-      ];
-    }
-    return null;
-  }, [artifactLayout, domainFrame, isFemBackend]);
-  const worldCenter = useMemo<[number, number, number] | null>(() => {
-    if (isFemBackend) {
-      return domainFrame?.effective_center ?? null;
-    }
-    return scriptBuilderUniverse?.center ?? null;
-  }, [domainFrame, isFemBackend, scriptBuilderUniverse]);
-  const worldExtentSource = useMemo<string | null>(() => {
-    if (!isFemBackend) {
-      return "fdm_grid";
-    }
-    return domainFrame?.effective_source ?? null;
-  }, [domainFrame, isFemBackend]);
-  const antennaOverlays = useMemo<AntennaOverlay[]>(() => {
-    if (!meshBoundsMin || !meshBoundsMax || scriptBuilderCurrentModules.length === 0) {
-      return [];
-    }
-    const centerX0 = 0.5 * (meshBoundsMin[0] + meshBoundsMax[0]);
-    const centerY0 = 0.5 * (meshBoundsMin[1] + meshBoundsMax[1]);
-    const topZ = meshBoundsMax[2];
-    const num = (record: Record<string, unknown>, key: string, fallback: number) =>
-      typeof record[key] === "number" ? Number(record[key]) : fallback;
-
-    return scriptBuilderCurrentModules.flatMap((module) => {
-      const params = module.antenna_params ?? {};
-      const centerX = centerX0 + num(params, "center_x", 0);
-      const centerY = centerY0 + num(params, "center_y", 0);
-      const thickness = num(params, "thickness", 100e-9);
-      const previewLength = num(params, "preview_length", 5e-6);
-      const heightAboveMagnet = num(params, "height_above_magnet", 0);
-      const zBottom = topZ + heightAboveMagnet;
-      const zTop = zBottom + thickness;
-      const yMin = centerY - previewLength * 0.5;
-      const yMax = centerY + previewLength * 0.5;
-      const conductors: AntennaOverlay["conductors"] = [];
-
-      if (module.antenna_kind === "MicrostripAntenna") {
-        const width = num(params, "width", 1e-6);
-        conductors.push({
-          id: `${module.name}:strip`,
-          label: module.name,
-          role: "strip",
-          boundsMin: [centerX - width * 0.5, yMin, zBottom],
-          boundsMax: [centerX + width * 0.5, yMax, zTop],
-          currentA: module.drive.current_a,
-        });
-      } else if (module.antenna_kind === "CPWAntenna") {
-        const signalWidth = num(params, "signal_width", 1e-6);
-        const gap = num(params, "gap", 0.25e-6);
-        const groundWidth = num(params, "ground_width", 1e-6);
-        const groundOffset = 0.5 * signalWidth + gap + 0.5 * groundWidth;
-        conductors.push({
-          id: `${module.name}:signal`,
-          label: `${module.name} signal`,
-          role: "signal",
-          boundsMin: [centerX - signalWidth * 0.5, yMin, zBottom],
-          boundsMax: [centerX + signalWidth * 0.5, yMax, zTop],
-          currentA: module.drive.current_a,
-        });
-        conductors.push({
-          id: `${module.name}:ground_l`,
-          label: `${module.name} ground`,
-          role: "ground",
-          boundsMin: [centerX - groundOffset - groundWidth * 0.5, yMin, zBottom],
-          boundsMax: [centerX - groundOffset + groundWidth * 0.5, yMax, zTop],
-          currentA: -0.5 * module.drive.current_a,
-        });
-        conductors.push({
-          id: `${module.name}:ground_r`,
-          label: `${module.name} ground`,
-          role: "ground",
-          boundsMin: [centerX + groundOffset - groundWidth * 0.5, yMin, zBottom],
-          boundsMax: [centerX + groundOffset + groundWidth * 0.5, yMax, zTop],
-          currentA: -0.5 * module.drive.current_a,
-        });
-      }
-
-      if (conductors.length === 0) {
-        return [];
-      }
-      return [{
-        id: module.name,
-        name: module.name,
-        antennaKind: module.antenna_kind,
-        solver: module.solver,
-        conductors,
-      }];
-    });
-  }, [meshBoundsMax, meshBoundsMin, scriptBuilderCurrentModules]);
-  const meshingCapabilities = (metadata?.meshing_capabilities as Record<string, unknown> | undefined) ?? undefined;
-  const mesherBackend = typeof meshingCapabilities?.backend === "string" ? meshingCapabilities.backend : null;
-  const mesherSourceKind = typeof meshingCapabilities?.source_kind === "string" ? meshingCapabilities.source_kind : null;
-  const mesherCurrentSettings = (meshingCapabilities?.current_settings as Record<string, unknown> | undefined) ?? null;
-
-  /* Grid */
-  const _rawSolverGrid = liveState?.grid ?? state?.latest_fields.grid;
-  const solverGrid = useMemo<[number, number, number]>(
-    () => [_rawSolverGrid?.[0] ?? 0, _rawSolverGrid?.[1] ?? 0, _rawSolverGrid?.[2] ?? 0],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [_rawSolverGrid?.[0], _rawSolverGrid?.[1], _rawSolverGrid?.[2]],
-  );
-  const _rawPreviewGrid =
-    spatialPreview?.preview_grid ?? liveState?.preview_grid ?? state?.latest_fields.grid ?? solverGrid;
-  const previewGrid = useMemo<[number, number, number]>(
-    () => [_rawPreviewGrid?.[0] ?? 0, _rawPreviewGrid?.[1] ?? 0, _rawPreviewGrid?.[2] ?? 0],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [_rawPreviewGrid?.[0], _rawPreviewGrid?.[1], _rawPreviewGrid?.[2]],
-  );
-  const totalCells = !isFemBackend ? solverGrid[0] * solverGrid[1] * solverGrid[2] : null;
-  const activeCells = useMemo(() => {
-    if (typeof artifactLayout?.active_cell_count === "number") return artifactLayout.active_cell_count;
-    return totalCells;
-  }, [artifactLayout, totalCells]);
-  const inactiveCells = useMemo(() => {
-    if (typeof artifactLayout?.inactive_cell_count === "number") return artifactLayout.inactive_cell_count;
-    if (activeCells != null && totalCells != null) return Math.max(totalCells - activeCells, 0);
-    return null;
-  }, [activeCells, artifactLayout, totalCells]);
-  const activeMaskPresent =
-    artifactLayout?.active_mask_present === true || spatialPreview?.active_mask != null;
-  const activeMask = useMemo<boolean[] | null>(() => {
-    // Prefer live preview mask (resampled to preview grid) over static artifact layout mask.
-    if (spatialPreview?.active_mask != null) return spatialPreview.active_mask;
-    const raw = artifactLayout?.active_mask;
-    if (!Array.isArray(raw)) return null;
-    return raw.map((v: unknown) => Boolean(v));
-  }, [spatialPreview?.active_mask, artifactLayout]);
-
-  /* Interactive */
-  const interactiveEnabled = session?.interactive_session_requested === true;
-  const awaitingCommand = workspaceStatus === "awaiting_command";
-  const runtimeCanAcceptCommands =
-    runtimeStatus?.can_accept_commands ?? interactiveEnabled;
-  const interactiveControlsEnabled =
-    interactiveEnabled &&
-    (awaitingCommand || isWaitingForCompute || workspaceStatus === "running" || workspaceStatus === "paused");
+    scriptBuilderCurrentModules,
+    meshWorkspace,
+    liveState,
+    state,
+    spatialPreview,
+    scriptBuilder,
+    runtimeStatus,
+    isWaitingForCompute,
+  });
 
   /* Preview derived — keep the user's explicit viewport mode stable.
    * A transient preview payload should not silently downgrade 3D to 2D. */
@@ -2002,1211 +1369,199 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
       : "magnitude";
   const effectiveVectorComponent = isMeshPreview ? previewVectorComponent : component;
 
-  const appendFrontendTrace = useCallback((level: string, message: string) => {
-    if (level === "error") {
-      console.error(`[control-room] ${message}`);
-    } else if (level === "warn") {
-      console.warn(`[control-room] ${message}`);
-    } else {
-      console.info(`[control-room] ${message}`);
-    }
-    setFrontendTraceLog((prev) => {
-      const next = [
-        ...prev,
-        {
-          timestamp_unix_ms: Date.now(),
-          level,
-          message,
-        },
-      ];
-      return next.length > 120 ? next.slice(next.length - 120) : next;
-    });
-  }, []);
-
-  /* Callbacks */
-  const enqueueCommand = useCallback(async (payload: Record<string, unknown>) => {
-    setCommandPostInFlight(true);
-    setCommandErrorMessage(null);
-    const commandKind =
-      typeof payload.kind === "string" ? payload.kind.toUpperCase() : "COMMAND";
-    appendFrontendTrace("info", `TX: ${commandKind} ${JSON.stringify(payload)}`);
-    try {
-      await liveApi.queueCommand(payload);
-      appendFrontendTrace("system", `RX: HTTP accepted ${commandKind}`);
-    } catch (e) {
-      appendFrontendTrace(
-        "error",
-        `RX: HTTP rejected ${commandKind} — ${e instanceof Error ? e.message : "Failed to queue command"}`,
-      );
-      setCommandErrorMessage(e instanceof Error ? e.message : "Failed to queue command");
-    } finally {
-      setCommandPostInFlight(false);
-    }
-  }, [appendFrontendTrace, liveApi]);
-
-  const buildMeshOptionsPayload = useCallback(
-    (
-      options: MeshOptionsState,
-      refinementZonesOverride?: MeshOptionsState["refinementZones"],
-    ) => ({
-      algorithm_2d: options.algorithm2d,
-      algorithm_3d: options.algorithm3d,
-      hmax: parseOptionalFiniteNumberText(options.hmax),
-      hmin: parseOptionalFiniteNumberText(options.hmin),
-      size_factor: options.sizeFactor,
-      size_from_curvature: options.sizeFromCurvature,
-      growth_rate: parseOptionalFiniteNumberText(options.growthRate),
-      narrow_regions: options.narrowRegions,
-      smoothing_steps: options.smoothingSteps,
-      optimize: options.optimize || null,
-      optimize_iterations: options.optimizeIters,
-      compute_quality: options.computeQuality,
-      per_element_quality: options.perElementQuality,
-      size_fields:
-        (refinementZonesOverride ?? options.refinementZones).length > 0
-          ? (refinementZonesOverride ?? options.refinementZones)
-          : undefined,
-      per_geometry: meshPerGeometryPayload,
-    }),
-    [meshPerGeometryPayload],
-  );
-
-  const enqueueStudyDomainRemesh = useCallback(
-    async (
-      meshReason: string,
-      meshOptionsPayload: Record<string, unknown>,
-      meshTarget: MeshCommandTarget = { kind: "study_domain" },
-    ) => {
-      setCommandPostInFlight(true);
-      setCommandErrorMessage(null);
-      const targetKindLabel =
-        meshTarget.kind === "object_mesh"
-          ? `object_mesh:${meshTarget.object_id}`
-          : meshTarget.kind;
-      const payload = {
-        kind: "remesh",
-        mesh_target: meshTarget,
-        mesh_reason: meshReason,
-        mesh_options: meshOptionsPayload,
-      };
-      appendFrontendTrace("info", `TX: REMESH ${JSON.stringify(payload)}`);
-      try {
-        await liveApi.queueRemesh({
-          mesh_options: meshOptionsPayload,
-          mesh_target: meshTarget,
-          mesh_reason: meshReason,
-        });
-        appendFrontendTrace(
-          "system",
-          `RX: HTTP accepted REMESH target=${targetKindLabel} reason=${meshReason}`,
-        );
-      } catch (e) {
-        appendFrontendTrace(
-          "error",
-          `RX: HTTP rejected REMESH target=${targetKindLabel} — ${e instanceof Error ? e.message : "Failed to queue command"}`,
-        );
-        setCommandErrorMessage(
-          e instanceof Error ? e.message : "Failed to queue remesh command",
-        );
-        throw e;
-      } finally {
-        setCommandPostInFlight(false);
-      }
-    },
-    [appendFrontendTrace, liveApi],
-  );
-
-  const updatePreview = useCallback(async (path: string, payload: Record<string, unknown> = {}) => {
-    const nextSelection: DisplaySelection = { ...requestedDisplaySelection };
-    switch (path) {
-      case "/quantity":
-        nextSelection.quantity = typeof payload.quantity === "string" ? payload.quantity : nextSelection.quantity;
-        nextSelection.kind = kindForQuantity(nextSelection.quantity);
-        break;
-      case "/component":
-        nextSelection.component = typeof payload.component === "string" ? payload.component : nextSelection.component;
-        break;
-      case "/layer":
-        nextSelection.layer = Number(payload.layer ?? nextSelection.layer);
-        break;
-      case "/allLayers":
-        nextSelection.all_layers = Boolean(payload.allLayers ?? nextSelection.all_layers);
-        break;
-      case "/everyN":
-        nextSelection.every_n = Number(payload.everyN ?? nextSelection.every_n);
-        break;
-      case "/XChosenSize":
-        nextSelection.x_chosen_size = Number(payload.xChosenSize ?? nextSelection.x_chosen_size);
-        break;
-      case "/YChosenSize":
-        nextSelection.y_chosen_size = Number(payload.yChosenSize ?? nextSelection.y_chosen_size);
-        break;
-      case "/autoScaleEnabled":
-        nextSelection.auto_scale_enabled = Boolean(payload.autoScaleEnabled ?? nextSelection.auto_scale_enabled);
-        break;
-      case "/maxPoints":
-        nextSelection.max_points = Number(payload.maxPoints ?? nextSelection.max_points);
-        break;
-      default:
-        setPreviewPostInFlight(true);
-        setPreviewMessage(null);
-        try { await liveApi.updatePreview(path, payload); }
-        catch (e) { setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview"); }
-        finally { setPreviewPostInFlight(false); }
-        return;
-    }
-    setOptimisticDisplaySelection(nextSelection);
-    setPreviewPostInFlight(true);
-    setPreviewMessage(`Switching to ${nextSelection.quantity}`);
-    try {
-      await liveApi.updateDisplaySelection(nextSelection as unknown as Record<string, unknown>);
-    }
-    catch (e) {
-      setOptimisticDisplaySelection(null);
-      setPreviewMessage(e instanceof Error ? e.message : "Failed to update preview");
-    }
-    finally { setPreviewPostInFlight(false); }
-  }, [kindForQuantity, liveApi, requestedDisplaySelection]);
-
-  const meshGenTopologyRef = useRef<string | null>(null);
-  const meshGenGenerationRef = useRef<string | null>(null);
-  const femGenerationIdRef = useRef<string | null>(null);
-
-  const handleStudyDomainMeshGenerate = useCallback(async (meshReason = "manual_ui_rebuild_selected") => {
-    setMeshGenerating(true);
-    meshGenTopologyRef.current = femTopologyKeyRef.current;
-    meshGenGenerationRef.current = femGenerationIdRef.current;
-    pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
-    try {
-      await enqueueStudyDomainRemesh(
-        meshReason,
-        buildMeshOptionsPayload(meshOptions),
-      );
-    } catch (err) {
-      setCommandErrorMessage(err instanceof Error ? err.message : "Mesh generation failed");
-      setMeshGenerating(false);
-      meshGenTopologyRef.current = null;
-      meshGenGenerationRef.current = null;
-      pendingMeshConfigSignatureRef.current = null;
-    }
-  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshOptions]);
-
-  const handleAirboxMeshGenerate = useCallback(async () => {
-    setMeshGenerating(true);
-    meshGenTopologyRef.current = femTopologyKeyRef.current;
-    meshGenGenerationRef.current = femGenerationIdRef.current;
-    pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
-    try {
-      await enqueueStudyDomainRemesh(
-        "airbox_parameter_changed",
-        buildMeshOptionsPayload(meshOptions),
-        { kind: "airbox" },
-      );
-    } catch (err) {
-      setCommandErrorMessage(
-        err instanceof Error ? err.message : "Airbox mesh rebuild failed",
-      );
-      setMeshGenerating(false);
-      meshGenTopologyRef.current = null;
-      meshGenGenerationRef.current = null;
-      pendingMeshConfigSignatureRef.current = null;
-    }
-  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshOptions]);
-
-  const handleObjectMeshOverrideRebuild = useCallback(
-    async (objectId?: string | null) => {
-      setMeshGenerating(true);
-      meshGenTopologyRef.current = femTopologyKeyRef.current;
-      meshGenGenerationRef.current = femGenerationIdRef.current;
-      pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
-      try {
-        const scriptPath = session?.script_path ?? null;
-        if (!scriptPath) {
-          throw new Error("No script path is available for the active workspace");
-        }
-        setScriptSyncBusy(true);
-        setScriptSyncMessage(null);
-        appendFrontendTrace("info", `TX: SCRIPT_SYNC ${scriptPath}`);
-        if (builderPushTimerRef.current) {
-          clearTimeout(builderPushTimerRef.current);
-          builderPushTimerRef.current = null;
-        }
-        await liveApi.updateSceneDocument(localBuilderDraft);
-        lastBuilderPushSignatureRef.current = localBuilderSignature;
-        const response = await liveApi.syncScript();
-        const syncedPath =
-          typeof response.script_path === "string" && response.script_path.trim().length > 0
-            ? response.script_path
-            : scriptPath;
-        setScriptSyncMessage(
-          `Synced ${syncedPath.split("/").pop() ?? "script"} to canonical Python`,
-        );
-        appendFrontendTrace(
-          "success",
-          `RX: SCRIPT_SYNC ok — ${syncedPath.split("/").pop() ?? "script"}`,
-        );
-        await enqueueStudyDomainRemesh(
-          objectId ? `object_mesh_override_changed:${objectId}` : "object_mesh_override_changed",
-          buildMeshOptionsPayload(meshOptions),
-          objectId ? { kind: "object_mesh", object_id: objectId } : { kind: "study_domain" },
-        );
-      } catch (err) {
-        setCommandErrorMessage(
-          err instanceof Error ? err.message : "Object mesh override rebuild failed",
-        );
-        setMeshGenerating(false);
-        meshGenTopologyRef.current = null;
-        meshGenGenerationRef.current = null;
-        pendingMeshConfigSignatureRef.current = null;
-      } finally {
-        setScriptSyncBusy(false);
-      }
-    },
-    [
-      appendFrontendTrace,
-      buildMeshOptionsPayload,
-      enqueueStudyDomainRemesh,
-      liveApi,
-      localBuilderDraft,
-      localBuilderSignature,
-      meshOptions,
-      session?.script_path,
-    ],
-  );
-
-  const handleLassoRefine = useCallback(async (faceIndices: number[], factor: number) => {
-    const currentFemMeshData = femMeshDataRef.current;
-    if (!currentFemMeshData || faceIndices.length === 0) return;
-    const nodes = currentFemMeshData.nodes;
-    const faces = currentFemMeshData.boundaryFaces;
-    let xmin = Infinity, ymin = Infinity, zmin = Infinity;
-    let xmax = -Infinity, ymax = -Infinity, zmax = -Infinity;
-    for (const fi of faceIndices) {
-      for (let v = 0; v < 3; v++) {
-        const ni = faces[fi * 3 + v];
-        const x = nodes[ni * 3], y = nodes[ni * 3 + 1], z = nodes[ni * 3 + 2];
-        if (x < xmin) xmin = x; if (x > xmax) xmax = x;
-        if (y < ymin) ymin = y; if (y > ymax) ymax = y;
-        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
-      }
-    }
-    const currentHmax = parseOptionalFiniteNumberText(meshOptions.hmax) ?? (meshHmax ?? 20e-9);
-    const targetH = currentHmax * factor;
-    const pad = currentHmax * 2;
-    const zone: import("../../panels/MeshSettingsPanel").SizeFieldSpec = {
-      kind: "Box",
-      params: {
-        VIn: targetH, VOut: currentHmax,
-        XMin: xmin - pad, XMax: xmax + pad,
-        YMin: ymin - pad, YMax: ymax + pad,
-        ZMin: zmin - pad, ZMax: zmax + pad,
-      },
-    };
-    const updatedZones = [...meshOptions.refinementZones, zone];
-    setMeshOptions((prev) => ({ ...prev, refinementZones: updatedZones }));
-
-    setMeshGenerating(true);
-    meshGenTopologyRef.current = femTopologyKeyRef.current;
-    meshGenGenerationRef.current = femGenerationIdRef.current;
-    pendingMeshConfigSignatureRef.current = meshConfigSignatureRef.current;
-    try {
-      await enqueueStudyDomainRemesh(
-        "lasso_refine",
-        buildMeshOptionsPayload(meshOptions, updatedZones),
-      );
-    } catch (err) {
-      setCommandErrorMessage(err instanceof Error ? err.message : "Lasso refine failed");
-      setMeshGenerating(false);
-      meshGenTopologyRef.current = null;
-      meshGenGenerationRef.current = null;
-      pendingMeshConfigSignatureRef.current = null;
-    }
-  }, [buildMeshOptionsPayload, enqueueStudyDomainRemesh, meshHmax, meshOptions, setMeshOptions]);
-
-  const buildVisualizationPresetFromCurrent = useCallback(
-    (name: string, id?: string): VisualizationPreset => {
-      const mode: VisualizationPreset["mode"] = effectiveViewMode === "2D" ? "2D" : "3D";
-      const domain: VisualizationPreset["domain"] = isFemBackend ? "fem" : "fdm";
-      const now = Date.now();
-      const basePreset = createDefaultVisualizationPreset({
-        id,
-        name,
-        quantity: requestedPreviewQuantity,
-        domain,
-        mode,
-        nowUnixMs: now,
-      });
-      return cloneVisualizationPreset(basePreset, {
-        quantity: requestedPreviewQuantity,
-        mode,
-        domain,
-        fem: {
-          render_mode: meshRenderMode,
-          opacity: meshOpacity,
-          clip_enabled: meshClipEnabled,
-          clip_axis: meshClipAxis,
-          clip_pos: meshClipPos,
-          show_arrows: meshShowArrows,
-          max_points: requestedPreviewMaxPoints,
-          arrow_color_mode: femArrowColorMode,
-          arrow_mono_color: femArrowMonoColor,
-          arrow_alpha: femArrowAlpha,
-          arrow_length_scale: femArrowLengthScale,
-          arrow_thickness: femArrowThickness,
-          object_view_mode: objectViewMode,
-          vector_domain_filter: femVectorDomainFilter,
-          ferromagnet_visibility_mode: femFerromagnetVisibilityMode,
-          air_mesh_visible: airMeshVisible,
-          air_mesh_opacity: airMeshOpacity,
-          mesh_entity_view_state: serializeMeshEntityViewStateForScene(meshEntityViewState),
-        },
-        fdm: {
-          ...fdmVisualizationSettings,
-        },
-        two_d: {
-          component,
-          plane,
-          slice_index: sliceIndex,
-        },
-        camera: {
-          projection: null,
-          navigation: null,
-          preset: null,
-        },
-        created_at_unix_ms: now,
-        updated_at_unix_ms: now,
-      });
-    },
-    [
-      airMeshOpacity,
-      airMeshVisible,
-      component,
-      effectiveViewMode,
-      femArrowAlpha,
-      femArrowColorMode,
-      femArrowLengthScale,
-      femArrowMonoColor,
-      femArrowThickness,
-      femFerromagnetVisibilityMode,
-      femVectorDomainFilter,
-      fdmVisualizationSettings,
-      isFemBackend,
-      meshClipAxis,
-      meshClipEnabled,
-      meshClipPos,
-      meshEntityViewState,
-      meshOpacity,
-      meshRenderMode,
-      meshShowArrows,
-      objectViewMode,
-      plane,
-      requestedPreviewMaxPoints,
-      requestedPreviewQuantity,
-      sliceIndex,
-    ],
-  );
-
-  const createVisualizationPreset = useCallback(
-    (source: VisualizationPresetSource = "project"): VisualizationPresetRef => {
-      const existing =
-        source === "project" ? projectVisualizationPresets : localVisualizationPresets;
-      const preset = buildVisualizationPresetFromCurrent(nextVisualizationPresetName(existing));
-      const ref: VisualizationPresetRef = { source, preset_id: preset.id };
-      if (source === "project") {
-        setSceneDocumentDraft((previousScene) => {
-          if (!previousScene) {
-            return previousScene;
-          }
-          return {
-            ...previousScene,
-            editor: {
-              ...previousScene.editor,
-              visualization_presets: [...previousScene.editor.visualization_presets, preset],
-            },
-          };
-        });
-      } else {
-        setLocalVisualizationPresets((previous) => [...previous, preset]);
-      }
-      setActiveVisualizationPresetRef(ref);
-      return ref;
-    },
-    [
-      buildVisualizationPresetFromCurrent,
-      localVisualizationPresets,
-      projectVisualizationPresets,
-    ],
-  );
-
-  const updateVisualizationPreset = useCallback(
-    (
-      ref: VisualizationPresetRef,
-      update: (preset: VisualizationPreset) => VisualizationPreset,
-    ) => {
-      const applyUpdate = (preset: VisualizationPreset): VisualizationPreset =>
-        cloneVisualizationPreset(update(preset), {
-          updated_at_unix_ms: Date.now(),
-        });
-      if (ref.source === "project") {
-        setSceneDocumentDraft((previousScene) => {
-          if (!previousScene) {
-            return previousScene;
-          }
-          const nextPresets = previousScene.editor.visualization_presets.map((preset) =>
-            preset.id === ref.preset_id ? applyUpdate(preset) : preset,
-          );
-          if (
-            sameVisualizationPresets(
-              previousScene.editor.visualization_presets,
-              nextPresets,
-            )
-          ) {
-            return previousScene;
-          }
-          return {
-            ...previousScene,
-            editor: {
-              ...previousScene.editor,
-              visualization_presets: nextPresets,
-            },
-          };
-        });
-      } else {
-        setLocalVisualizationPresets((previous) =>
-          previous.map((preset) =>
-            preset.id === ref.preset_id ? applyUpdate(preset) : preset,
-          ),
-        );
-      }
-    },
-    [],
-  );
-
-  const renameVisualizationPreset = useCallback(
-    (ref: VisualizationPresetRef, name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        return;
-      }
-      updateVisualizationPreset(ref, (preset) => ({
-        ...preset,
-        name: trimmed,
-      }));
-    },
-    [updateVisualizationPreset],
-  );
-
-  const duplicateVisualizationPreset = useCallback(
-    (
-      ref: VisualizationPresetRef,
-      targetSource: VisualizationPresetSource = ref.source,
-    ): VisualizationPresetRef | null => {
-      const sourceList =
-        ref.source === "project" ? projectVisualizationPresets : localVisualizationPresets;
-      const sourcePreset = sourceList.find((preset) => preset.id === ref.preset_id);
-      if (!sourcePreset) {
-        return null;
-      }
-      const targetList =
-        targetSource === "project" ? projectVisualizationPresets : localVisualizationPresets;
-      const duplicatedName = `${sourcePreset.name} Copy`;
-      let duplicatedId = createDefaultVisualizationPreset({
-        name: duplicatedName,
-        quantity: sourcePreset.quantity,
-        domain: sourcePreset.domain,
-        mode: sourcePreset.mode,
-      }).id;
-      while (targetList.some((preset) => preset.id === duplicatedId)) {
-        duplicatedId = createDefaultVisualizationPreset({
-          name: duplicatedName,
-          quantity: sourcePreset.quantity,
-          domain: sourcePreset.domain,
-          mode: sourcePreset.mode,
-        }).id;
-      }
-      const duplicated = cloneVisualizationPreset(sourcePreset, {
-        id: duplicatedId,
-        name: duplicatedName,
-      });
-      if (targetSource === "project") {
-        setSceneDocumentDraft((previousScene) => {
-          if (!previousScene) {
-            return previousScene;
-          }
-          return {
-            ...previousScene,
-            editor: {
-              ...previousScene.editor,
-              visualization_presets: [
-                ...previousScene.editor.visualization_presets,
-                duplicated,
-              ],
-            },
-          };
-        });
-      } else {
-        setLocalVisualizationPresets((previous) => [...previous, duplicated]);
-      }
-      const nextRef = { source: targetSource, preset_id: duplicated.id } as const;
-      setActiveVisualizationPresetRef(nextRef);
-      return nextRef;
-    },
-    [localVisualizationPresets, projectVisualizationPresets],
-  );
-
-  const copyVisualizationPresetToSource = useCallback(
-    (
-      ref: VisualizationPresetRef,
-      targetSource: VisualizationPresetSource,
-    ): VisualizationPresetRef | null => duplicateVisualizationPreset(ref, targetSource),
-    [duplicateVisualizationPreset],
-  );
-
-  const deleteVisualizationPreset = useCallback((ref: VisualizationPresetRef) => {
-    if (ref.source === "project") {
-      setSceneDocumentDraft((previousScene) => {
-        if (!previousScene) {
-          return previousScene;
-        }
-        return {
-          ...previousScene,
-          editor: {
-            ...previousScene.editor,
-            visualization_presets: previousScene.editor.visualization_presets.filter(
-              (preset) => preset.id !== ref.preset_id,
-            ),
-          },
-        };
-      });
-    } else {
-      setLocalVisualizationPresets((previous) =>
-        previous.filter((preset) => preset.id !== ref.preset_id),
-      );
-    }
-    setActiveVisualizationPresetRef((previous) =>
-      sameVisualizationPresetRef(previous, ref) ? null : previous,
-    );
-  }, []);
-
-  const applyVisualizationPreset = useCallback(
-    (ref: VisualizationPresetRef) => {
-      const sourceList =
-        ref.source === "project" ? projectVisualizationPresets : localVisualizationPresets;
-      const preset = sourceList.find((entry) => entry.id === ref.preset_id);
-      if (!preset) {
-        return;
-      }
-      setActiveVisualizationPresetRef(ref);
-      if (preset.quantity && preset.quantity !== selectedQuantity) {
-        startTransition(() => {
-          setSelectedQuantity(preset.quantity);
-        });
-        if (previewControlsActive) {
-          void updatePreview("/quantity", { quantity: preset.quantity });
-        }
-      }
-      if (preset.mode === "2D") {
-        setViewMode("2D");
-        setComponent(preset.two_d.component);
-        setPlane(preset.two_d.plane);
-        setSliceIndex(Math.max(0, Math.trunc(preset.two_d.slice_index)));
-      } else {
-        setViewMode("3D");
-      }
-
-      if (isFemBackend && preset.domain === "fem") {
-        setMeshRenderMode(preset.fem.render_mode);
-        setMeshOpacity(preset.fem.opacity);
-        setMeshClipEnabled(preset.fem.clip_enabled);
-        setMeshClipAxis(preset.fem.clip_axis);
-        setMeshClipPos(preset.fem.clip_pos);
-        setMeshShowArrows(preset.fem.show_arrows);
-        setFemArrowColorMode(preset.fem.arrow_color_mode);
-        setFemArrowMonoColor(preset.fem.arrow_mono_color);
-        setFemArrowAlpha(preset.fem.arrow_alpha);
-        setFemArrowLengthScale(preset.fem.arrow_length_scale);
-        setFemArrowThickness(preset.fem.arrow_thickness);
-        setObjectViewMode(preset.fem.object_view_mode);
-        setFemVectorDomainFilter(preset.fem.vector_domain_filter);
-        setFemFerromagnetVisibilityMode(preset.fem.ferromagnet_visibility_mode);
-        setAirMeshVisible(preset.fem.air_mesh_visible);
-        setAirMeshOpacity(preset.fem.air_mesh_opacity);
-        setMeshEntityViewState(
-          normalizePersistedMeshEntityViewState(preset.fem.mesh_entity_view_state),
-        );
-        if (requestedPreviewMaxPoints !== preset.fem.max_points) {
-          void updatePreview("/maxPoints", { maxPoints: preset.fem.max_points });
-        }
-      } else if (!isFemBackend && preset.domain === "fdm") {
-        setFdmVisualizationSettings({ ...preset.fdm });
-      }
-    },
-    [
-      isFemBackend,
-      localVisualizationPresets,
-      previewControlsActive,
-      projectVisualizationPresets,
-      requestedPreviewMaxPoints,
-      selectedQuantity,
-      updatePreview,
-    ],
-  );
-
-  useEffect(() => {
-    if (!activeVisualizationPresetRef) {
-      lastAppliedVisualizationPresetRef.current = null;
-      return;
-    }
-    const key = `${activeVisualizationPresetRef.source}:${activeVisualizationPresetRef.preset_id}`;
-    if (lastAppliedVisualizationPresetRef.current === key) {
-      return;
-    }
-    lastAppliedVisualizationPresetRef.current = key;
-    applyVisualizationPreset(activeVisualizationPresetRef);
-  }, [activeVisualizationPresetRef, applyVisualizationPreset]);
-
-  const handleCompute = useCallback(() => {
-    void enqueueCommand({ kind: "solve" });
-  }, [enqueueCommand]);
-
-  const openFemMeshWorkspace = useCallback((tab: FemDockTab = "mesh") => {
-    startTransition(() => {
-      setViewMode("Mesh");
-      setFemDockTab(tab);
-    });
-    setMeshRenderMode((c) => (c === "surface" ? "surface+edges" : c));
-  }, []);
-
-  const requestFocusObject = useCallback((objectId: string) => {
-    if (!objectId) {
-      return;
-    }
-    setFocusObjectRequest((previous) => ({
-      objectId,
-      revision: previous && previous.objectId === objectId ? previous.revision + 1 : 1,
-    }));
-  }, []);
-
-  const applyAntennaTranslation = useCallback((moduleName: string, dx: number, dy: number, dz: number) => {
-    setScriptBuilderCurrentModules((prev) =>
-      prev.map((mod) => {
-        if (mod.name !== moduleName) return mod;
-        const p = mod.antenna_params ?? {};
-        return {
-          ...mod,
-          antenna_params: {
-            ...p,
-            center_x: (Number(p.center_x) || 0) + dx,
-            center_y: (Number(p.center_y) || 0) + dy,
-            height_above_magnet: (Number(p.height_above_magnet) || 0) + dz,
-          },
-        };
-      })
-    );
-  }, [setScriptBuilderCurrentModules]);
-
-  const applyGeometryTranslation = useCallback((geometryName: string, dx: number, dy: number, dz: number) => {
-    setSceneDocument((previousScene) => {
-      const baseScene = previousScene ?? localBuilderDraft;
-      const nextScene: SceneDocument = {
-        ...baseScene,
-        objects: baseScene.objects.map((object) => {
-          if (object.id !== geometryName && object.name !== geometryName) {
-            return object;
-          }
-          const translation = object.transform.translation ?? [0, 0, 0];
-          return {
-            ...object,
-            transform: {
-              ...object.transform,
-              translation: [
-                Number(translation[0] ?? 0) + dx,
-                Number(translation[1] ?? 0) + dy,
-                Number(translation[2] ?? 0) + dz,
-              ],
-            },
-          };
-        }),
-      };
-      return nextScene;
-    });
-  }, [localBuilderDraft, setSceneDocument]);
-
-  const applyMeshWorkspacePreset = useCallback((presetId: MeshWorkspacePresetId) => {
-    const preset = MESH_WORKSPACE_PRESETS.find((entry) => entry.id === presetId);
-    if (!preset) return;
-
-    startTransition(() => {
-      if (preset.viewMode === "2D") {
-        setComponent((prev) => (prev === "magnitude" ? "x" : prev));
-      }
-      setViewMode(preset.viewMode);
-      setFemDockTab(preset.dockTab);
-      setSelectedSidebarNodeId(
-        preset.dockTab === "quality"
-          ? "universe-mesh-quality"
-          : preset.dockTab === "mesher"
-            ? "universe-mesh-size"
-            : preset.dockTab === "pipeline"
-              ? "universe-mesh-pipeline"
-              : "universe-mesh-view",
-      );
-    });
-
-    setMeshRenderMode(preset.renderMode);
-    if (preset.clipEnabled !== undefined) setMeshClipEnabled(preset.clipEnabled);
-    if (preset.opacity != null) setMeshOpacity(preset.opacity);
-  }, []);
-
-  const handleViewModeChange = useCallback((mode: string) => {
-    if (mode === "Mesh") { if (isFemBackend) openFemMeshWorkspace("mesh"); startTransition(() => setViewMode("Mesh")); return; }
-    if (mode === "2D") {
-      startTransition(() => {
-        setComponent((prev) => prev === "magnitude" ? "x" : prev);
-      });
-    }
-    startTransition(() => {
-      setViewMode(mode as ViewportMode);
-    });
-  }, [isFemBackend, openFemMeshWorkspace]);
-
-  const handleSimulationAction = useCallback((action: string) => {
-    if (action === "compute" || action === "solve") {
-      handleCompute();
-      return;
-    }
-
-    if (action === "run") {
-      if (workspaceStatus === "paused") {
-        void enqueueCommand({ kind: "resume" });
-        return;
-      }
-      const untilSeconds = parseOptionalNumber(runUntilInput);
-      if (untilSeconds == null || untilSeconds <= 0) {
-        setCommandErrorMessage("Run requires a positive stop time");
-        return;
-      }
-      void enqueueCommand({
-        kind: "run",
-        until_seconds: untilSeconds,
-        integrator: solverSettings.integrator,
-        fixed_timestep: parseOptionalNumber(solverSettings.fixedTimestep),
-      });
-      return;
-    }
-
-    if (action === "relax") {
-      const maxSteps = parseOptionalNumber(solverSettings.maxRelaxSteps);
-      if (maxSteps == null || maxSteps <= 0) {
-        setCommandErrorMessage("Relax requires a positive max step count");
-        return;
-      }
-      void enqueueCommand({
-        kind: "relax",
-        max_steps: maxSteps,
-        torque_tolerance: parseOptionalNumber(solverSettings.torqueTolerance),
-        energy_tolerance: parseOptionalNumber(solverSettings.energyTolerance),
-        relax_algorithm: solverSettings.relaxAlgorithm,
-        relax_alpha: parseOptionalNumber(solverSettings.relaxAlpha),
-      });
-      return;
-    }
-
-    if (action === "pause") {
-      void enqueueCommand({ kind: "pause" });
-      return;
-    }
-
-    if (action === "resume") {
-      void enqueueCommand({ kind: "resume" });
-      return;
-    }
-
-    if (action === "stop") {
-      void enqueueCommand({ kind: "stop" });
-    }
-  }, [
+  const {
+    appendFrontendTrace,
     enqueueCommand,
+    buildMeshOptionsPayload,
+    enqueueStudyDomainRemesh,
+    updatePreview,
+    meshGenTopologyRef,
+    meshGenGenerationRef,
+    femGenerationIdRef,
+    handleStudyDomainMeshGenerate,
+    handleAirboxMeshGenerate,
+    handleObjectMeshOverrideRebuild,
+    handleLassoRefine,
+  } = useMeshCommandPipeline({
+    liveApi,
+    meshPerGeometryPayload,
+    requestedDisplaySelection,
+    kindForQuantity,
+    meshOptions,
+    setMeshOptions,
+    meshHmax,
+    session,
+    localBuilderDraft,
+    localBuilderSignature,
+    builderAutoSync,
+    femMeshDataRef,
+    femTopologyKeyRef,
+    pendingMeshConfigSignatureRef,
+    meshConfigSignatureRef,
+    setCommandPostInFlight,
+    setCommandErrorMessage,
+    setFrontendTraceLog,
+    setPreviewPostInFlight,
+    setPreviewMessage,
+    setOptimisticDisplaySelection,
+    setMeshGenerating,
+    setScriptSyncBusy,
+    setScriptSyncMessage,
+  });
+
+  /* Visualization presets — extracted to useVisualizationPresets hook */
+  const {
+    buildVisualizationPresetFromCurrent,
+    createVisualizationPreset,
+    updateVisualizationPreset,
+    renameVisualizationPreset,
+    duplicateVisualizationPreset,
+    copyVisualizationPresetToSource,
+    deleteVisualizationPreset,
+    applyVisualizationPreset,
+  } = useVisualizationPresets({
+    effectiveViewMode,
+    isFemBackend,
+    requestedPreviewQuantity,
+    meshRenderMode,
+    meshOpacity,
+    meshClipEnabled,
+    meshClipAxis,
+    meshClipPos,
+    meshShowArrows,
+    requestedPreviewMaxPoints,
+    femArrowColorMode,
+    femArrowMonoColor,
+    femArrowAlpha,
+    femArrowLengthScale,
+    femArrowThickness,
+    objectViewMode,
+    femVectorDomainFilter,
+    femFerromagnetVisibilityMode,
+    airMeshVisible,
+    airMeshOpacity,
+    meshEntityViewState,
+    fdmVisualizationSettings,
+    component,
+    plane,
+    sliceIndex,
+    selectedQuantity,
+    projectVisualizationPresets,
+    localVisualizationPresets,
+    activeVisualizationPresetRef,
+    previewControlsActive,
+    lastAppliedVisualizationPresetRef,
+    setSceneDocumentDraft,
+    setLocalVisualizationPresets,
+    setActiveVisualizationPresetRef,
+    setSelectedQuantity,
+    setViewMode,
+    setComponent,
+    setPlane,
+    setSliceIndex,
+    setMeshRenderMode,
+    setMeshOpacity,
+    setMeshClipEnabled,
+    setMeshClipAxis,
+    setMeshClipPos,
+    setMeshShowArrows,
+    setFemArrowColorMode,
+    setFemArrowMonoColor,
+    setFemArrowAlpha,
+    setFemArrowLengthScale,
+    setFemArrowThickness,
+    setObjectViewMode,
+    setFemVectorDomainFilter,
+    setFemFerromagnetVisibilityMode,
+    setAirMeshVisible,
+    setAirMeshOpacity,
+    setMeshEntityViewState,
+    setFdmVisualizationSettings,
+    updatePreview,
+  });
+
+  const {
     handleCompute,
-    runUntilInput,
-    solverSettings.fixedTimestep,
-    solverSettings.integrator,
-    solverSettings.energyTolerance,
-    solverSettings.maxRelaxSteps,
-    solverSettings.relaxAlgorithm,
-    solverSettings.relaxAlpha,
-    solverSettings.torqueTolerance,
+    openFemMeshWorkspace,
+    requestFocusObject,
+    applyAntennaTranslation,
+    applyGeometryTranslation,
+    applyMeshWorkspacePreset,
+    handleViewModeChange,
+    handleSimulationAction,
+    handleCapture,
+    handleExport,
+    handleStateExport,
+    handleStateImport,
+    syncScriptBuilder,
+    activeCommandKind,
+    activeCommandState,
+    commandMessage,
+    commandBusy,
+    canRunCommand,
+    canRelaxCommand,
+    canPauseCommand,
+    canStopCommand,
+    primaryRunAction,
+    primaryRunLabel,
+    requestPreviewQuantity,
+    openResultWorkspaceEntry,
+    renameResultWorkspaceEntry,
+    removeResultWorkspaceEntry,
+    duplicateResultWorkspaceEntry,
+    setResultWorkspacePinned,
+  } = useWorkspaceActions({
+    enqueueCommand,
+    updatePreview,
+    appendFrontendTrace,
+    liveApi,
+    builderAutoSync,
+    localBuilderDraft,
+    localBuilderSignature,
+    session,
+    isFemBackend,
     workspaceStatus,
-  ]);
-
-  const handleCapture = useCallback(() => {
-    // Try viewport-scoped WebGL canvas first (R3F 3D view)
-    const canvas =
-      document.querySelector<HTMLCanvasElement>("#workspace-viewport canvas") ??
-      document.querySelector<HTMLCanvasElement>("[class*='viewport'] canvas");
-    if (canvas) {
-      const link = document.createElement("a");
-      link.download = `fullmag_snapshot_${Date.now()}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-      return;
-    }
-    // Fallback: try any echarts instance on the page
-    const echartsContainer = document.querySelector<HTMLDivElement>("[_echarts_instance_]");
-    if (echartsContainer) {
-      const echartsCanvas = echartsContainer.querySelector<HTMLCanvasElement>("canvas");
-      if (echartsCanvas) {
-        const link = document.createElement("a");
-        link.download = `fullmag_snapshot_${Date.now()}.png`;
-        link.href = echartsCanvas.toDataURL("image/png");
-        link.click();
-        return;
-      }
-    }
-    // Last resort: any canvas
-    const anyCanvas = document.querySelector<HTMLCanvasElement>("canvas");
-    if (anyCanvas) {
-      const link = document.createElement("a");
-      link.download = `fullmag_snapshot_${Date.now()}.png`;
-      link.href = anyCanvas.toDataURL("image/png");
-      link.click();
-    }
-  }, []);
-
-  const handleExport = useCallback(() => { void enqueueCommand({ kind: "save_vtk" }); }, [enqueueCommand]);
-
-  const handleStateExport = useCallback(async (format: string) => {
-    setStateIoBusy(true);
-    setStateIoMessage(null);
-    try {
-      const response = await liveApi.exportState({ format }) as {
-        file_name?: unknown;
-        content_base64?: unknown;
-        stored_path?: unknown;
-      };
-      const fileName =
-        typeof response.file_name === "string" && response.file_name.trim().length > 0
-          ? response.file_name
-          : `m_state.${format}`;
-      const contentBase64 =
-        typeof response.content_base64 === "string" ? response.content_base64 : "";
-      if (!contentBase64) {
-        throw new Error("Export response did not contain file content");
-      }
-      downloadBase64File(fileName, contentBase64);
-      setStateIoMessage(
-        typeof response.stored_path === "string" && response.stored_path.trim().length > 0
-          ? `Exported ${fileName} to ${response.stored_path}`
-          : `Exported ${fileName}`,
-      );
-    } catch (error) {
-      setStateIoMessage(error instanceof Error ? error.message : "Failed to export state");
-    } finally {
-      setStateIoBusy(false);
-    }
-  }, [liveApi]);
-
-  const handleStateImport = useCallback(async (
-    file: File,
-    options?: {
-      format?: string;
-      applyToWorkspace?: boolean;
-      attachToScriptBuilder?: boolean;
-    },
-  ) => {
-    setStateIoBusy(true);
-    setStateIoMessage(null);
-    try {
-      const contentBase64 = await fileToBase64(file);
-      const response = await liveApi.importState({
-        file_name: file.name,
-        content_base64: contentBase64,
-        format: options?.format ?? undefined,
-        apply_to_workspace: options?.applyToWorkspace ?? true,
-        attach_to_script_builder: options?.attachToScriptBuilder ?? true,
-      }) as { stored_path?: unknown; applied_to_workspace?: unknown };
-      const importedPath =
-        typeof response.stored_path === "string" && response.stored_path.trim().length > 0
-          ? response.stored_path
-          : file.name;
-      const applied =
-        typeof response.applied_to_workspace === "boolean"
-          ? response.applied_to_workspace
-          : (options?.applyToWorkspace ?? true);
-      setStateIoMessage(
-        applied
-          ? `Imported ${file.name} and applied it to the workspace`
-          : `Imported ${file.name} to ${importedPath}`,
-      );
-    } catch (error) {
-      setStateIoMessage(error instanceof Error ? error.message : "Failed to import state");
-    } finally {
-      setStateIoBusy(false);
-    }
-  }, [liveApi]);
-
-  const syncScriptBuilder = useCallback(async () => {
-    const scriptPath = session?.script_path ?? null;
-    if (!scriptPath) {
-      setScriptSyncMessage("No script path is available for the active workspace");
-      appendFrontendTrace("warn", "TX: SCRIPT_SYNC skipped — no script path available");
-      return;
-    }
-
-    setScriptSyncBusy(true);
-    setScriptSyncMessage(null);
-    appendFrontendTrace("info", `TX: SCRIPT_SYNC ${scriptPath}`);
-    try {
-      if (builderPushTimerRef.current) {
-        clearTimeout(builderPushTimerRef.current);
-        builderPushTimerRef.current = null;
-      }
-      await liveApi.updateSceneDocument(localBuilderDraft);
-      lastBuilderPushSignatureRef.current = localBuilderSignature;
-      const response = await liveApi.syncScript();
-      const syncedPath =
-        typeof response.script_path === "string" && response.script_path.trim().length > 0
-          ? response.script_path
-          : scriptPath;
-      setScriptSyncMessage(`Synced ${syncedPath.split("/").pop() ?? "script"} to canonical Python`);
-      appendFrontendTrace(
-        "success",
-        `RX: SCRIPT_SYNC ok — ${syncedPath.split("/").pop() ?? "script"}`,
-      );
-    } catch (error) {
-      setScriptSyncMessage(error instanceof Error ? error.message : "Failed to sync script");
-      appendFrontendTrace(
-        "error",
-        `RX: SCRIPT_SYNC failed — ${error instanceof Error ? error.message : "Failed to sync script"}`,
-      );
-    } finally {
-      setScriptSyncBusy(false);
-    }
-  }, [appendFrontendTrace, liveApi, localBuilderDraft, localBuilderSignature, session?.script_path]);
-
-  useEffect(() => {
-    if (!commandStatus) return;
-    const key = [
-      commandStatus.command_id,
-      commandStatus.state,
-      commandStatus.completion_state ?? "",
-      commandStatus.reason ?? "",
-    ].join("|");
-    if (lastLoggedCommandStatusRef.current === key) return;
-    lastLoggedCommandStatusRef.current = key;
-
-    const commandKind = commandStatus.command_kind.toUpperCase();
-    if (commandStatus.state === "acknowledged") {
-      appendFrontendTrace(
-        "system",
-        `RX: ${commandKind} ACK seq=${commandStatus.seq ?? "?"} id=${commandStatus.command_id}`,
-      );
-      return;
-    }
-    if (commandStatus.state === "rejected") {
-      appendFrontendTrace(
-        "error",
-        `RX: ${commandKind} REJECTED — ${commandStatus.reason ?? "unknown reason"}`,
-      );
-      return;
-    }
-    appendFrontendTrace(
-      commandStatus.completion_state && commandStatus.completion_state !== "ok" ? "warn" : "success",
-      `RX: ${commandKind} COMPLETED${commandStatus.completion_state ? ` (${commandStatus.completion_state})` : ""}`,
-    );
-  }, [appendFrontendTrace, commandStatus]);
-
-  useEffect(() => {
-    if (!optimisticDisplaySelection) {
-      return;
-    }
-    const committedSelection = displaySelection?.selection ?? null;
-    if (sameDisplaySelection(optimisticDisplaySelection, committedSelection)) {
-      setOptimisticDisplaySelection(null);
-      setPreviewMessage(null);
-    }
-  }, [displaySelection, optimisticDisplaySelection]);
-
-  useEffect(() => {
-    if (commandStatus?.state === "rejected" && optimisticDisplaySelection) {
-      setOptimisticDisplaySelection(null);
-    }
-  }, [commandStatus?.state, optimisticDisplaySelection]);
-
-  const activeCommandKind = commandStatus?.command_kind ?? null;
-  const activeCommandState = commandStatus?.state ?? null;
-  const commandMessage = useMemo(() => {
-    if (commandErrorMessage) {
-      return commandErrorMessage;
-    }
-    if (commandPostInFlight) {
-      return "Sending command to runtime…";
-    }
-    if (!commandStatus) {
-      return null;
-    }
-    const label = commandKindLabel(commandStatus.command_kind);
-    if (commandStatus.state === "rejected") {
-      return commandStatus.reason ? `${label} rejected: ${commandStatus.reason}` : `${label} rejected`;
-    }
-    if (commandStatus.state === "acknowledged") {
-      return `${label} acknowledged`;
-    }
-    if (commandStatus.completion_state && commandStatus.completion_state !== "ok") {
-      return `${label} ${commandStatus.completion_state}`;
-    }
-    return `${label} completed`;
-  }, [commandErrorMessage, commandPostInFlight, commandStatus]);
-
-  const commandBusy = commandPostInFlight;
-  const canRunCommand =
-    interactiveEnabled &&
-    (awaitingCommand || isWaitingForCompute || workspaceStatus === "paused") &&
-    runtimeCanAcceptCommands &&
-    !commandBusy;
-  const canRelaxCommand =
-    interactiveEnabled &&
-    awaitingCommand &&
-    runtimeCanAcceptCommands &&
-    !commandBusy;
-  const canPauseCommand =
-    interactiveEnabled &&
-    workspaceStatus === "running" &&
-    runtimeCanAcceptCommands &&
-    !commandBusy;
-  const canStopCommand =
-    interactiveEnabled &&
-    (isWaitingForCompute || workspaceStatus === "running" || workspaceStatus === "paused") &&
-    runtimeCanAcceptCommands &&
-    !commandBusy;
-  const primaryRunAction =
-    isWaitingForCompute ? "compute" : workspaceStatus === "paused" ? "resume" : "run";
-  const primaryRunLabel =
-    isWaitingForCompute ? "Compute" : workspaceStatus === "paused" ? "Resume" : "Run";
-
-  const requestPreviewQuantity = useCallback((nextQuantity: string) => {
-    startTransition(() => {
-      if (isFemBackend && effectiveViewMode === "Mesh") setViewMode("3D");
-      setSelectedQuantity(nextQuantity);
-    });
-    if (previewControlsActive) {
-      void updatePreview("/quantity", { quantity: nextQuantity });
-    }
-  }, [effectiveViewMode, isFemBackend, previewControlsActive, updatePreview]);
-  const openResultWorkspaceEntry = useCallback(
-    (id: string) => {
-      setActiveResultWorkspaceId(id);
-      setSelectedSidebarNodeId(`res-analysis-${id}`);
-      const entry = resultWorkspaceEntries.find((candidate) => candidate.id === id);
-      if (!entry) {
-        return;
-      }
-      if (entry.kind === "spectrum") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ tab: "spectrum", selectedModeIndex: null });
-        return;
-      }
-      if (entry.kind === "dispersion") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ tab: "dispersion", selectedModeIndex: null });
-        return;
-      }
-      if (entry.kind === "modes") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ tab: "modes" });
-        return;
-      }
-      if (entry.kind === "time-traces") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ domain: "vortex", tab: "time-traces" });
-        return;
-      }
-      if (entry.kind === "vortex-frequency") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ domain: "vortex", tab: "vortex-frequency" });
-        return;
-      }
-      if (entry.kind === "vortex-trajectory") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ domain: "vortex", tab: "vortex-trajectory" });
-        return;
-      }
-      if (entry.kind === "vortex-orbit") {
-        setWorkspaceMode("analyze");
-        openAnalyze({ domain: "vortex", tab: "vortex-orbit" });
-        return;
-      }
-      if (entry.kind === "table") {
-        setWorkspaceMode("analyze");
-        startTransition(() => {
-          setViewMode("Analyze");
-        });
-        return;
-      }
-      if (entry.quantityId) {
-        requestPreviewQuantity(entry.quantityId);
-      }
-      if (isFemBackend && effectiveViewMode === "Mesh") {
-        setViewMode("3D");
-      }
-    },
-    [
-      effectiveViewMode,
-      isFemBackend,
-      openAnalyze,
-      requestPreviewQuantity,
-      resultWorkspaceEntries,
-      setWorkspaceMode,
-    ],
-  );
-  const renameResultWorkspaceEntry = useCallback((id: string, label: string) => {
-    const next = label.trim();
-    if (!next) {
-      return;
-    }
-    setResultWorkspaceEntries((prev) =>
-      prev.map((entry) => (entry.id === id ? { ...entry, label: next } : entry)),
-    );
-  }, []);
-  const removeResultWorkspaceEntry = useCallback((id: string) => {
-    setResultWorkspaceEntries((prev) => prev.filter((entry) => entry.id !== id));
-    setActiveResultWorkspaceId((prev) => (prev === id ? null : prev));
-    setSelectedSidebarNodeId((prev) => (prev === `res-analysis-${id}` ? "res-analyses" : prev));
-  }, []);
-  const duplicateResultWorkspaceEntry = useCallback((id: string) => {
-    const source = resultWorkspaceEntries.find((entry) => entry.id === id);
-    if (!source) {
-      return null;
-    }
-    return addResultWorkspaceEntry({
-      key: `user:duplicate:${source.kind}:${Date.now()}:${Math.floor(Math.random() * 10000)}`,
-      kind: source.kind,
-      label: `${source.label} (copy)`,
-      quantityId: source.quantityId,
-      icon: source.icon,
-      badge: source.badge,
-      pinned: true,
-      openAfterCreate: true,
-    });
-  }, [addResultWorkspaceEntry, resultWorkspaceEntries]);
-  const setResultWorkspacePinned = useCallback((id: string, pinned: boolean) => {
-    setResultWorkspaceEntries((prev) =>
-      prev.map((entry) => (entry.id === id ? { ...entry, pinned } : entry)),
-    );
-  }, []);
-
-  /* Keyboard shortcuts */
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === "1") setViewMode("3D");
-      else if (e.key === "2") setViewMode("2D");
-      else if (e.key === "3") handleViewModeChange("Mesh");
-      else if (e.key === "`" && e.ctrlKey) { e.preventDefault(); setConsoleCollapsed((v) => !v); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [handleViewModeChange]);
+    effectiveViewMode,
+    previewControlsActive,
+    selectedQuantity,
+    runUntilInput,
+    solverSettings,
+    commandPostInFlight,
+    commandErrorMessage,
+    commandStatus,
+    isWaitingForCompute,
+    interactiveEnabled,
+    awaitingCommand,
+    runtimeCanAcceptCommands,
+    resultWorkspaceEntries,
+    optimisticDisplaySelection,
+    displaySelection,
+    setViewMode,
+    setFemDockTab,
+    setMeshRenderMode,
+    setMeshClipEnabled,
+    setMeshOpacity,
+    setComponent,
+    setSelectedSidebarNodeId,
+    setSelectedQuantity,
+    setFocusObjectRequest,
+    setScriptBuilderCurrentModules,
+    setSceneDocument,
+    setWorkspaceMode,
+    setActiveResultWorkspaceId,
+    setResultWorkspaceEntries,
+    setCommandErrorMessage,
+    setStateIoBusy,
+    setStateIoMessage,
+    setScriptSyncBusy,
+    setScriptSyncMessage,
+    setConsoleCollapsed,
+    setOptimisticDisplaySelection,
+    setPreviewMessage,
+    openAnalyze,
+    addResultWorkspaceEntry,
+    lastLoggedCommandStatusRef,
+  });
 
   /* Sparklines */
   const eTotalSpark = useMemo(() => scalarRows.slice(-40).map((r) => r.e_total ?? 0), [scalarRows]);
@@ -3379,417 +1734,68 @@ export function ControlRoomProvider({ children }: { children: ReactNode }) {
     viewMode,
   ]);
 
-  /* FEM mesh data */
-  const effectiveFemMesh = useMemo(
-    () => (isMeshPreview && renderPreview?.fem_mesh ? renderPreview.fem_mesh : femMesh),
-    [femMesh, isMeshPreview, renderPreview?.fem_mesh],
-  );
-  const meshParts = useMemo<FemMeshPart[]>(
-    () => effectiveFemMesh?.mesh_parts ?? [],
-    [effectiveFemMesh],
-  );
-  const magneticParts = useMemo(
-    () => meshParts.filter((part) => part.role === "magnetic_object"),
-    [meshParts],
-  );
-  const airPart = useMemo(
-    () => meshParts.find((part) => part.role === "air") ?? null,
-    [meshParts],
-  );
-  const airRelatedParts = useMemo(
-    () => meshParts.filter((part) => part.role === "air" || part.role === "outer_boundary"),
-    [meshParts],
-  );
-  const interfaceParts = useMemo(
-    () => meshParts.filter((part) => part.role === "interface"),
-    [meshParts],
-  );
-  const visibleMeshPartIds = useMemo(
-    () =>
-      meshParts
-        .filter(
-          (part) =>
-            meshEntityViewState[part.id]?.visible ?? (part.role !== "air" && part.role !== "outer_boundary"),
-        )
-        .map((part) => part.id),
-    [meshEntityViewState, meshParts],
-  );
-  const visibleMagneticObjectIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          meshParts
-            .filter(
-              (part) =>
-                part.role === "magnetic_object" &&
-                (meshEntityViewState[part.id]?.visible ?? true) &&
-                typeof part.object_id === "string" &&
-                part.object_id.length > 0,
-            )
-            .map((part) => part.object_id as string),
-        ),
-      ),
-    [meshEntityViewState, meshParts],
-  );
-  const selectedMeshPart = useMemo(
-    () => meshParts.find((part) => part.id === selectedEntityId) ?? null,
-    [meshParts, selectedEntityId],
-  );
-  const focusedMeshPart = useMemo(
-    () => meshParts.find((part) => part.id === focusedEntityId) ?? null,
-    [focusedEntityId, meshParts],
-  );
-  const objectOverlays = useMemo<BuilderObjectOverlay[]>(
-    () => buildObjectOverlays(scriptBuilderGeometries, effectiveFemMesh),
-    [effectiveFemMesh, scriptBuilderGeometries],
-  );
-  const [flatNodes, flatFaces, flatElements] = useMemo(() => {
-    if (!effectiveFemMesh) return [null, null, null];
-    return [
-      effectiveFemMesh.nodes.flatMap((n) => n),
-      effectiveFemMesh.boundary_faces.flatMap((f) => f),
-      effectiveFemMesh.elements.flatMap((element) => element),
-    ];
-  }, [effectiveFemMesh]);
-
-  // Topology base: stable reference that only changes when mesh structure changes.
-  // This prevents full geometry rebuild (and camera reset) on every field data update.
-  const femMeshBase = useMemo<Omit<FemMeshData, "fieldData" | "activeMask" | "quantityDomain"> | null>(() => {
-    if (!effectiveFemMesh || !flatNodes || !flatFaces || !flatElements) return null;
-    const nNodes = effectiveFemMesh.nodes.length;
-    const nElements = effectiveFemMesh.elements.length;
-    return { nodes: flatNodes, elements: flatElements, boundaryFaces: flatFaces, nNodes, nElements };
-  }, [effectiveFemMesh, flatNodes, flatFaces, flatElements]);
-
-  // Field data: updated on every solver tick when selectedVectors changes.
-  const femFieldData = useMemo<FemMeshData["fieldData"] | undefined>(() => {
-    if (!femMeshBase || !selectedVectors || selectedVectors.length < femMeshBase.nNodes * 3) return undefined;
-    const nNodes = femMeshBase.nNodes;
-    let buffers = femFieldBuffersRef.current;
-    if (!buffers || buffers.nNodes !== nNodes) {
-      buffers = {
-        nNodes,
-        x: new Float64Array(nNodes),
-        y: new Float64Array(nNodes),
-        z: new Float64Array(nNodes),
-      };
-      femFieldBuffersRef.current = buffers;
-    }
-    const { x, y, z } = buffers;
-    for (let i = 0; i < nNodes; i++) {
-      x[i] = selectedVectors[i * 3] ?? 0;
-      y[i] = selectedVectors[i * 3 + 1] ?? 0;
-      z[i] = selectedVectors[i * 3 + 2] ?? 0;
-    }
-    return { x, y, z };
-  }, [femMeshBase, selectedVectors]);
-
-  // Combined: new object only when topology OR field data changes
-  const femMeshData = useMemo<FemMeshData | null>(() => {
-    if (!femMeshBase) return null;
-    return {
-      ...femMeshBase,
-      fieldData: femFieldData,
-      activeMask:
-        activeMask && activeMask.length === femMeshBase.nNodes
-          ? activeMask
-          : null,
-      quantityDomain: spatialPreview?.quantity_domain ?? "full_domain",
-    };
-  }, [activeMask, femFieldData, femMeshBase, spatialPreview?.quantity_domain]);
-  femMeshDataRef.current = femMeshData;
-
-  const femHasFieldData = Boolean(femMeshData?.fieldData);
-  const femMagnetization3DActive = isFemBackend && effectiveViewMode === "3D" && activeQuantityId === "m" && femHasFieldData;
-  const femShouldShowArrows =
-    isFemBackend && effectiveViewMode === "3D" && femHasFieldData
-      ? meshShowArrows
-      : false;
-
-  const femTopologyKey = useMemo(() => {
-    if (!effectiveFemMesh) return null;
-    const firstNode = effectiveFemMesh.nodes[0]?.join(",") ?? "";
-    const middleNode = effectiveFemMesh.nodes[Math.floor(effectiveFemMesh.nodes.length / 2)]?.join(",") ?? "";
-    const lastNode = effectiveFemMesh.nodes[effectiveFemMesh.nodes.length - 1]?.join(",") ?? "";
-    const firstElement = effectiveFemMesh.elements[0]?.join(",") ?? "";
-    return [
-      effectiveFemMesh.nodes.length,
-      femMesh?.elements.length ?? effectiveFemMesh.elements.length,
-      effectiveFemMesh.boundary_faces.length,
-      firstNode,
-      middleNode,
-      lastNode,
-      firstElement,
-    ].join(":");
-  }, [effectiveFemMesh, femMesh?.elements.length]);
-
-  useEffect(() => {
-    if (!meshParts.length) {
-      setMeshEntityViewState({});
-      setSelectedEntityId(null);
-      setFocusedEntityId(null);
-      return;
-    }
-    setMeshEntityViewState((prev) => {
-      const next: MeshEntityViewStateMap = {};
-      for (const part of meshParts) {
-        next[part.id] = prev[part.id] ?? defaultMeshEntityViewState(part);
-      }
-      return next;
-    });
-  }, [effectiveFemMesh?.generation_id, meshParts]);
-
-  useEffect(() => {
-    if (selectedEntityId && !meshParts.some((part) => part.id === selectedEntityId)) {
-      setSelectedEntityId(null);
-    }
-    if (focusedEntityId && !meshParts.some((part) => part.id === focusedEntityId)) {
-      setFocusedEntityId(null);
-    }
-  }, [focusedEntityId, meshParts, selectedEntityId]);
-
-  useEffect(() => {
-    if (!meshParts.length) {
-      return;
-    }
-    let nextEntityId: string | null = null;
-    if (
-      selectedSidebarNodeId === "universe-airbox" ||
-      selectedSidebarNodeId === "universe-airbox-mesh"
-    ) {
-      nextEntityId = airPart?.id ?? null;
-    } else if (selectedObjectId) {
-      nextEntityId =
-        meshParts.find(
-          (part) =>
-            part.role === "magnetic_object" && part.object_id === selectedObjectId,
-        )?.id ?? null;
-    }
-    if (nextEntityId !== selectedEntityId) {
-      setSelectedEntityId(nextEntityId);
-    }
-    if (nextEntityId !== focusedEntityId) {
-      setFocusedEntityId(nextEntityId);
-    }
-  }, [
-    airPart?.id,
-    focusedEntityId,
-    meshParts,
+  /* FEM mesh data — extracted to useFemMeshDerived hook */
+  const {
+    effectiveFemMesh, meshParts, magneticParts, airPart, airRelatedParts, interfaceParts,
+    visibleMeshPartIds, visibleMagneticObjectIds, selectedMeshPart, focusedMeshPart,
+    objectOverlays, femMeshData, femHasFieldData, femMagnetization3DActive, femShouldShowArrows,
+    femTopologyKey, femColorField, isMeshWorkspaceView, meshWorkspacePreset,
+    meshConfigDirty, meshFaceDetail, meshQualitySummary, maxSliceCount,
+    fieldStats, material, emptyStateMessage, sessionFooter, latestBackendError, mergedEngineLog,
+  } = useFemMeshDerived({
+    isMeshPreview,
+    renderPreview,
+    femMesh,
+    meshEntityViewState,
     selectedEntityId,
-    selectedObjectId,
+    focusedEntityId,
+    scriptBuilderGeometries,
+    selectedVectors,
+    activeMask,
+    spatialPreview,
+    meshShowArrows,
+    effectiveViewMode,
+    activeQuantityId,
+    isFemBackend,
+    meshGenerating,
+    commandStatus,
+    meshSummary,
     selectedSidebarNodeId,
-  ]);
-
-  useEffect(() => {
-    if (airRelatedParts.length === 0) {
-      return;
-    }
-    setMeshEntityViewState((prev) => {
-      let changed = false;
-      const next: MeshEntityViewStateMap = { ...prev };
-      for (const part of airRelatedParts) {
-        const current = next[part.id] ?? defaultMeshEntityViewState(part);
-        const nextVisible = airMeshVisible;
-        const nextOpacity = part.role === "air" ? airMeshOpacity : current.opacity;
-        if (current.visible === nextVisible && current.opacity === nextOpacity) {
-          if (!next[part.id]) {
-            next[part.id] = current;
-            changed = true;
-          }
-          continue;
-        }
-        next[part.id] = {
-          ...current,
-          visible: nextVisible,
-          opacity: nextOpacity,
-        };
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [airMeshOpacity, airMeshVisible, airRelatedParts]);
-
-  // Keep femTopologyKeyRef in sync so study-domain remesh actions can snapshot the current key
-  femTopologyKeyRef.current = femTopologyKey;
-  femGenerationIdRef.current =
-    effectiveFemMesh?.generation_id ?? meshSummary?.generation_id ?? null;
-
-  // Clear meshGenerating once a new mesh generation arrives. Topology deltas are
-  // kept as a fallback for payloads that may not carry generation ids.
-  useEffect(() => {
-    if (!meshGenerating) return;
-    const currentGenerationId =
-      effectiveFemMesh?.generation_id ?? meshSummary?.generation_id ?? null;
-    const generationChanged =
-      currentGenerationId != null &&
-      meshGenGenerationRef.current != null &&
-      currentGenerationId !== meshGenGenerationRef.current;
-    const topologyChanged =
-      meshGenTopologyRef.current !== null &&
-      femTopologyKey !== null &&
-      femTopologyKey !== meshGenTopologyRef.current;
-    if (generationChanged || topologyChanged) {
-      const nodeCount =
-        meshSummary?.node_count
-        ?? (effectiveFemMesh ? effectiveFemMesh.nodes.length : 0);
-      const elementCount =
-        meshSummary?.element_count
-        ?? (effectiveFemMesh ? effectiveFemMesh.elements.length : 0);
-      appendFrontendTrace(
-        "success",
-        `RX: REMESH mesh ready — ${nodeCount.toLocaleString()} nodes · ${elementCount.toLocaleString()} tetrahedra`,
-      );
-      setLastBuiltMeshConfigSignature(
-        pendingMeshConfigSignatureRef.current ?? meshConfigSignatureRef.current,
-      );
-      meshGenTopologyRef.current = null;
-      meshGenGenerationRef.current = null;
-      pendingMeshConfigSignatureRef.current = null;
-      setMeshGenerating(false);
-    }
-  }, [appendFrontendTrace, effectiveFemMesh, femTopologyKey, meshGenerating, meshSummary]);
-
-  useEffect(() => {
-    if (!meshGenerating) return;
-    // Backend rejected or completed the remesh with an error → stop spinner
-    if (
-      commandStatus?.command_kind === "remesh" &&
-      (commandStatus.state === "rejected" ||
-        (commandStatus.completion_state != null && commandStatus.completion_state !== "ok"))
-    ) {
-      meshGenTopologyRef.current = null;
-      meshGenGenerationRef.current = null;
-      pendingMeshConfigSignatureRef.current = null;
-      setMeshGenerating(false);
-    }
-  }, [meshGenerating, commandStatus]);
-
-  const femColorField = useMemo<FemColorField>(() => {
-    const qId = activeQuantityId;
-    if (qId === "m" && effectiveViewMode === "3D" && femHasFieldData) return "orientation";
-    if (effectiveVectorComponent === "x") return "x";
-    if (effectiveVectorComponent === "y") return "y";
-    if (effectiveVectorComponent === "z") return "z";
-    return "magnitude";
-  }, [activeQuantityId, effectiveVectorComponent, effectiveViewMode, femHasFieldData]);
-
-  useEffect(() => {
-    setMeshSelection({ selectedFaceIndices: [], primaryFaceIndex: null });
-  }, [femTopologyKey]);
-
-  const isMeshWorkspaceView = effectiveViewMode === "Mesh";
-  const meshWorkspacePreset = useMemo(
-    () => deriveMeshWorkspacePreset({ viewMode: effectiveViewMode, femDockTab, meshRenderMode }),
-    [effectiveViewMode, femDockTab, meshRenderMode],
-  );
-  const meshConfigDirty = useMemo(
-    () =>
-      meshConfigSignature != null &&
-      lastBuiltMeshConfigSignature != null &&
-      meshConfigSignature !== lastBuiltMeshConfigSignature,
-    [lastBuiltMeshConfigSignature, meshConfigSignature],
-  );
-  const meshFaceDetail = useMemo(
-    () => computeMeshFaceDetail(effectiveFemMesh, meshSelection.primaryFaceIndex),
-    [effectiveFemMesh, meshSelection.primaryFaceIndex],
-  );
-
-  const meshQualitySummary = useMemo<MeshQualitySummary | null>(() => {
-    if (!effectiveFemMesh) return null;
-    const nodes = effectiveFemMesh.nodes;
-    const faces = effectiveFemMesh.boundary_faces;
-    if (!nodes.length || !faces.length) return null;
-    let min = Infinity, max = -Infinity, sum = 0, good = 0, fair = 0, poor = 0;
-    for (const [ia, ib, ic] of faces) {
-      const a = nodes[ia], b = nodes[ib], c = nodes[ic];
-      if (!a || !b || !c) continue;
-      const ab = Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
-      const bc = Math.hypot(c[0]-b[0], c[1]-b[1], c[2]-b[2]);
-      const ca = Math.hypot(a[0]-c[0], a[1]-c[1], a[2]-c[2]);
-      const maxE = Math.max(ab, bc, ca);
-      const s2 = (ab+bc+ca)/2;
-      const area = Math.sqrt(Math.max(0, s2*(s2-ab)*(s2-bc)*(s2-ca)));
-      const inr = s2 > 0 ? area/s2 : 0;
-      const ar = inr > 1e-18 ? maxE/(2*inr) : 1;
-      min = Math.min(min, ar); max = Math.max(max, ar); sum += ar;
-      if (ar < 3) good++; else if (ar < 6) fair++; else poor++;
-    }
-    return { min, max, mean: faces.length > 0 ? sum/faces.length : 0, good, fair, poor, count: faces.length };
-  }, [effectiveFemMesh]);
-
-  /* Slice count */
-  const maxSliceCount = useMemo(() => {
-    if (spatialPreview?.spatial_kind === "grid") return 1;
-    if (isFemBackend && femMeshData) return FEM_SLICE_COUNT;
-    if (plane === "xy") return Math.max(1, previewGrid[2]);
-    if (plane === "xz") return Math.max(1, previewGrid[1]);
-    return Math.max(1, previewGrid[0]);
-  }, [femMeshData, isFemBackend, plane, spatialPreview?.spatial_kind, previewGrid]);
-
-  useEffect(() => {
-    if (sliceIndex >= maxSliceCount) setSliceIndex(Math.max(0, maxSliceCount - 1));
-  }, [maxSliceCount, sliceIndex]);
-
-  /* Field stats */
-  const fieldStats = useMemo<FieldStats | null>(() => {
-    if (!selectedVectors) return null;
-    const n = isFemBackend ? (effectiveFemMesh?.nodes.length ?? 0) : Math.floor(selectedVectors.length / 3);
-    if (n <= 0 || selectedVectors.length < n * 3) return null;
-    let sumX = 0, sumY = 0, sumZ = 0;
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const vx = selectedVectors[i*3], vy = selectedVectors[i*3+1], vz = selectedVectors[i*3+2];
-      sumX += vx; sumY += vy; sumZ += vz;
-      if (vx < minX) minX = vx; if (vx > maxX) maxX = vx;
-      if (vy < minY) minY = vy; if (vy > maxY) maxY = vy;
-      if (vz < minZ) minZ = vz; if (vz > maxZ) maxZ = vz;
-    }
-    const inv = 1/n;
-    return { meanX: sumX*inv, meanY: sumY*inv, meanZ: sumZ*inv, minX, minY, minZ, maxX, maxY, maxZ };
-  }, [selectedVectors, isFemBackend, effectiveFemMesh]);
-
-  /* Material */
-  const material = useMemo<MaterialSummary | null>(() => {
-    if (!solverPlan) return null;
-    return {
-      msat: solverPlan.materialMsat,
-      aex: solverPlan.materialAex,
-      alpha: solverPlan.materialAlpha,
-      exchangeEnabled: solverPlan.exchangeEnabled,
-      demagEnabled: solverPlan.demagEnabled,
-      zeemanField: solverPlan.externalField ? [...solverPlan.externalField] : null,
-      name: solverPlan.materialName,
-    };
-  }, [solverPlan]);
-
-  /* Empty state */
-  const emptyStateMessage = useMemo(() => {
-    if (isFemBackend && !femMeshData) {
-      if (workspaceStatus === "materializing_script")
-        return { title: "Materializing FEM mesh", description: latestEngineMessage ?? "Importing geometry and preparing the FEM mesh." };
-      if (workspaceStatus === "bootstrapping")
-        return { title: "Bootstrapping live workspace", description: latestEngineMessage ?? "Starting the local workspace." };
-      return { title: "Waiting for FEM preview data", description: latestEngineMessage ?? "The mesh topology is not available yet." };
-    }
-    if (workspaceStatus === "materializing_script")
-      return { title: "Materializing workspace", description: latestEngineMessage ?? "Preparing problem description and first preview." };
-    return { title: "No preview data yet", description: latestEngineMessage ?? "Waiting for the first live field snapshot." };
-  }, [femMeshData, isFemBackend, latestEngineMessage, workspaceStatus]);
-
-  const sessionFooter = useMemo<SessionFooterData>(() => ({
-    requestedBackend: session?.requested_backend ?? null,
-    scriptPath: session?.script_path ?? null,
-    artifactDir: session?.artifact_dir ?? null,
-  }), [session?.requested_backend, session?.script_path, session?.artifact_dir]);
-  const latestBackendError = useMemo<BackendErrorInfo | null>(
-    () => latestBackendErrorFromLog(engineLog ?? []),
-    [engineLog],
-  );
-  const mergedEngineLog = useMemo<EngineLogEntry[]>(
-    () => [...(engineLog ?? []), ...frontendTraceLog],
-    [engineLog, frontendTraceLog],
-  );
+    selectedObjectId,
+    airMeshVisible,
+    airMeshOpacity,
+    effectiveVectorComponent,
+    sliceIndex,
+    plane,
+    previewGrid,
+    solverPlan,
+    workspaceStatus,
+    latestEngineMessage,
+    session,
+    engineLog,
+    frontendTraceLog,
+    meshRenderMode,
+    femDockTab,
+    meshConfigSignature,
+    lastBuiltMeshConfigSignature,
+    meshSelection,
+    femFieldBuffersRef,
+    femMeshDataRef,
+    femTopologyKeyRef,
+    femGenerationIdRef,
+    meshGenTopologyRef,
+    meshGenGenerationRef,
+    pendingMeshConfigSignatureRef,
+    meshConfigSignatureRef,
+    setMeshEntityViewState,
+    setSelectedEntityId,
+    setFocusedEntityId,
+    setMeshGenerating,
+    setLastBuiltMeshConfigSignature,
+    setSliceIndex,
+    setMeshSelection,
+    appendFrontendTrace,
+  });
 
   /* ═══════════════════════════════════════════════════════════════
    * SPLIT useMemo — each context domain has its own memo so that

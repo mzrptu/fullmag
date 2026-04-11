@@ -29,8 +29,13 @@ import {
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../panels/SolverSettingsPanel";
 import {
   ControlRoomProvider,
-  useControlRoom,
 } from "./control-room/ControlRoomContext";
+import {
+  useTransport,
+  useViewport,
+  useCommand,
+  useModel,
+} from "./control-room/context-hooks";
 import {
   PANEL_SIZES,
   fmtDuration,
@@ -146,7 +151,7 @@ function makeRibbonAntenna(
 }
 
 function syncStudyCompatibilityState(
-  ctx: ReturnType<typeof useControlRoom>,
+  ctx: { setRunUntilInput: (v: string) => void; setSolverSettings: React.Dispatch<React.SetStateAction<any>> },
   stages: ReturnType<typeof materializeStudyPipeline>["stages"],
 ): void {
   const firstRun = stages.find((stage) => stage.kind === "run");
@@ -155,7 +160,7 @@ function syncStudyCompatibilityState(
     ctx.setRunUntilInput(firstRun.until_seconds);
   }
   if (firstRelax) {
-    ctx.setSolverSettings((current) => ({
+    ctx.setSolverSettings((current: any) => ({
       ...current,
       integrator: firstRelax.integrator || current.integrator,
       fixedTimestep: firstRelax.fixed_timestep || current.fixedTimestep,
@@ -190,7 +195,12 @@ export function ControlRoomShell({ initialWorkspaceMode }: { initialWorkspaceMod
       initialWorkspaceMode: initialWorkspaceMode ?? "study",
     });
   }
-  const ctx = useControlRoom();
+  /* Granular hooks replacing useControlRoom */
+  const _transport = useTransport();
+  const _viewport = useViewport();
+  const _cmd = useCommand();
+  const _model = useModel();
+  const ctx = { ..._transport, ..._viewport, ..._cmd, ..._model };
   const sidebarCollapsed = ctx.sidebarCollapsed;
   const setSidebarCollapsed = ctx.setSidebarCollapsed;
   const workspaceMode = ctx.workspaceMode;

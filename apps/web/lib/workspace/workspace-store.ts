@@ -39,9 +39,6 @@ interface WorkspaceStoreState {
   setRightInspectorOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setPhysicsDocsOpen: (open: boolean, topic?: string | null) => void;
-  // compatibility aliases for legacy calls
-  mode: WorkspaceMode;
-  setMode: (mode: WorkspaceMode) => void;
 }
 
 function updateStageLayout(
@@ -89,9 +86,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
   physicsDocsOpen: false,
   physicsDocsTopic: null,
   setCurrentPerspective: (currentPerspective) =>
-    set({ currentPerspective, currentStage: currentPerspective, mode: currentPerspective }),
+    set({ currentPerspective, currentStage: currentPerspective }),
   setCurrentStage: (currentStage) =>
-    set({ currentStage, currentPerspective: currentStage, mode: currentStage }),
+    set({ currentStage, currentPerspective: currentStage }),
   setActiveCoreTab: (activeCoreTab) => set({ activeCoreTab }),
   setActiveContextualTab: (activeContextualTab) => set({ activeContextualTab }),
   setLeftDock: (mode, leftDock) =>
@@ -113,8 +110,6 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set) => ({
       physicsDocsOpen,
       physicsDocsTopic: topic !== undefined ? topic : state.physicsDocsTopic,
     })),
-  mode: "analyze",
-  setMode: (mode) => set({ currentPerspective: mode, currentStage: mode, mode }),
 }));
 
 export function useActiveStageLayout(): StageLayoutState {

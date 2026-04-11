@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useCommand } from "../../runs/control-room/context-hooks";
 import { Button } from "../../ui/button";
 import { SidebarSection } from "./primitives";
 import SelectField from "../../ui/SelectField";
 
 export default function StateIoPanel() {
-  const ctx = useControlRoom();
+  const ctx = useCommand();
   const [format, setFormat] = useState<"json" | "zarr" | "h5">("json");
   const [applyToWorkspace, setApplyToWorkspace] = useState(true);
   const [attachToScriptBuilder, setAttachToScriptBuilder] = useState(true);

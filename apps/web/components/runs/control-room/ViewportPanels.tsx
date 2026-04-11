@@ -27,7 +27,7 @@ import {
   fmtSI,
   resolveAntennaNodeName,
 } from "./shared";
-import { useControlRoom, useTransport } from "./ControlRoomContext";
+import { useTransport, useViewport, useCommand, useModel } from "./context-hooks";
 import { DEFAULT_CONVERGENCE_THRESHOLD } from "../../panels/SolverSettingsPanel";
 import type {
   TextureTransform3D as SceneTextureTransform3D,
@@ -131,7 +131,12 @@ function ViewportChip({
 }
 
 export const ViewportBar = memo(function ViewportBar() {
-  const ctx = useControlRoom();
+  /* Granular hooks replacing useControlRoom */
+  const _transport = useTransport();
+  const _viewport = useViewport();
+  const _cmd = useCommand();
+  const _model = useModel();
+  const ctx = { ..._transport, ..._viewport, ..._cmd, ..._model };
   if (!FRONTEND_DIAGNOSTIC_FLAGS.shell.showViewportBar) {
     return null;
   }
@@ -447,7 +452,12 @@ const TelemetryHUD = memo(function TelemetryHUD({ solverSettings }: { solverSett
 });
 
 export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
-  const ctx = useControlRoom();
+  /* Granular hooks replacing useControlRoom */
+  const _transport = useTransport();
+  const _viewport = useViewport();
+  const _cmd = useCommand();
+  const _model = useModel();
+  const ctx = { ..._transport, ..._viewport, ..._cmd, ..._model };
   const minimalViewportSelectionPath = FRONTEND_DIAGNOSTIC_FLAGS.viewportRouting.useMinimalViewportSelectionPath;
   const setSelectedObjectId = ctx.setSelectedObjectId;
   const setSelectedSidebarNodeId = ctx.setSelectedSidebarNodeId;
@@ -1104,9 +1114,7 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
           <div className="pointer-events-auto rounded-full border border-border/40 bg-background/75 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-md backdrop-blur-md">
             {selectedObjectOverlay?.source === "mesh_parts"
               ? "Mesh Part"
-              : selectedObjectOverlay?.source === "object_segments"
-                ? "Legacy Segment"
-                : "Bounds Fallback"}
+              : "Object Segment"}
           </div>
         </div>
       ) : null}

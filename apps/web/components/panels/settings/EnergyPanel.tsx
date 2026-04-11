@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useTransport } from "../../runs/control-room/context-hooks";
 import { fmtExpOrDash } from "../../runs/control-room/shared";
 import { MetricField, buildSparkSeries, SidebarSection } from "./primitives";
 
 export default function EnergyPanel() {
-  const ctx = useControlRoom();
+  const ctx = useTransport();
   const sparkSeries = useMemo(() => ({
     eEx: buildSparkSeries(
       ctx.scalarRows,

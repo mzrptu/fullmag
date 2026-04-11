@@ -1,13 +1,13 @@
 "use client";
 
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useViewport } from "../../runs/control-room/context-hooks";
 import { fmtPreviewEveryN, fmtPreviewMaxPoints, type PreviewComponent } from "../../runs/control-room/shared";
 import { Button } from "../../ui/button";
 import { SidebarSection, InfoRow, ToggleRow } from "./primitives";
 import SelectField from "../../ui/SelectField";
 
 export default function ResultsPanel() {
-  const ctx = useControlRoom();
+  const ctx = useViewport();
   return (
     <div className="flex flex-col pt-4 px-2">
       <SidebarSection title="Active Preview State" defaultOpen={true}>

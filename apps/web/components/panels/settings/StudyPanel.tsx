@@ -24,7 +24,7 @@ import type { ScriptBuilderStageState } from "@/lib/session/types";
 import StageInspector from "@/components/workspace/study-builder/StageInspector";
 import StudyBuilderWorkspace from "@/components/workspace/study-builder/StudyBuilderWorkspace";
 import { IntegratorSettingsPanel, RelaxationSettingsPanel } from "../SolverSettingsPanel";
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useTransport, useViewport, useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { Button } from "../../ui/button";
 import SelectField from "../../ui/SelectField";
 import TextField from "../../ui/TextField";
@@ -120,7 +120,7 @@ function formatExternalField(field: [number, number, number] | null): string {
 }
 
 function syncCompatibilityState(
-  ctx: ReturnType<typeof useControlRoom>,
+  ctx: { setRunUntilInput: (v: string) => void; setSolverSettings: React.Dispatch<React.SetStateAction<any>> },
   stages: ScriptBuilderStageState[],
 ): void {
   const firstRun = stages.find((stage) => stage.kind === "run");
@@ -129,7 +129,7 @@ function syncCompatibilityState(
     ctx.setRunUntilInput(firstRun.until_seconds);
   }
   if (firstRelax) {
-    ctx.setSolverSettings((current) => ({
+    ctx.setSolverSettings((current: any) => ({
       ...current,
       integrator: firstRelax.integrator || current.integrator,
       fixedTimestep: firstRelax.fixed_timestep || current.fixedTimestep,
@@ -189,7 +189,29 @@ function StageMaterializedPreview({ stages }: { stages: ScriptBuilderStageState[
 }
 
 export default function StudyPanel({ nodeId }: StudyPanelProps) {
-  const ctx = useControlRoom();
+  const transport = useTransport();
+  const viewport = useViewport();
+  const cmd = useCommand();
+  const model = useModel();
+  /* Backward-compatible ctx composed from granular hooks */
+  const ctx = {
+    ...model,
+    totalCells: viewport.totalCells,
+    workspaceMode: viewport.workspaceMode,
+    setWorkspaceMode: viewport.setWorkspaceMode,
+    isFemBackend: cmd.isFemBackend,
+    activity: cmd.activity,
+    workspaceStatus: cmd.workspaceStatus,
+    sessionFooter: cmd.sessionFooter,
+    runtimeEngineLabel: cmd.runtimeEngineLabel,
+    session: cmd.session,
+    setRunUntilInput: cmd.setRunUntilInput,
+    quantities: cmd.quantities,
+    artifacts: cmd.artifacts,
+    stateIoBusy: cmd.stateIoBusy,
+    effectiveDt: transport.effectiveDt,
+    hasSolverTelemetry: transport.hasSolverTelemetry,
+  };
   const studyNode = useMemo(
     () => parseStudyNodeContext(nodeId) ?? STUDY_ROOT_NODE,
     [nodeId],

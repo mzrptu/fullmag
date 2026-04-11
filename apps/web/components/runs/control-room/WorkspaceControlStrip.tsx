@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fmtExp, fmtSI } from "./shared";
-import { useControlRoom } from "./ControlRoomContext";
+import { useTransport, useViewport, useCommand, useModel } from "./context-hooks";
 import { MESH_WORKSPACE_PRESETS } from "./meshWorkspace";
 
 function quantityIcon(quantityId: string, label: string) {
@@ -62,7 +62,12 @@ function solverAcceleratorLabel(
 }
 
 const WorkspaceControlStrip = memo(function WorkspaceControlStrip() {
-  const ctx = useControlRoom();
+  const transport = useTransport();
+  const viewport = useViewport();
+  const cmd = useCommand();
+  const model = useModel();
+  /* Backward-compatible ctx alias */
+  const ctx = { ...transport, ...viewport, ...cmd, ...model };
   const solverAccelerator = solverAcceleratorLabel(
     ctx.runtimeEngineLabel,
     ctx.runtimeEngineGpuLabel,

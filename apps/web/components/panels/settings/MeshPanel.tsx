@@ -19,7 +19,7 @@ import {
 
 import { cn } from "@/lib/utils";
 
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useViewport, useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { type ViewportMode } from "../../runs/control-room/shared";
 import { fmtExp, fmtSI } from "@/lib/format";
 import {
@@ -51,14 +51,24 @@ function getPhaseStyle(status: "idle" | "active" | "done" | "warning" | "queued"
 }
 
 export default function MeshPanel() {
-  const ctx = useControlRoom();
+  const viewport = useViewport();
+  const cmd = useCommand();
+  const model = useModel();
+
+  const {
+    effectiveViewMode,
+    handleViewModeChange,
+  } = viewport;
+
+  const {
+    workspaceStatus,
+    engineLog,
+  } = cmd;
 
   const {
     effectiveFemMesh,
     meshFeOrder,
     meshHmax,
-    effectiveViewMode,
-    handleViewModeChange,
     meshRenderMode,
     setMeshRenderMode,
     meshFaceDetail,
@@ -87,9 +97,9 @@ export default function MeshPanel() {
     meshSource,
     mesherBackend,
     mesherSourceKind,
-    workspaceStatus,
-    engineLog,
-  } = ctx;
+    meshOptions,
+    applyMeshWorkspacePreset,
+  } = model;
 
   const pipelinePhases =
     meshWorkspace?.mesh_pipeline_status?.length
@@ -99,7 +109,7 @@ export default function MeshPanel() {
           meshSource,
           nodeCount: effectiveFemMesh?.nodes.length ?? 0,
           elementCount: effectiveFemMesh?.elements.length ?? 0,
-          meshOptions: ctx.meshOptions,
+          meshOptions: meshOptions,
           meshQualityData,
           workspaceStatus,
         });
@@ -190,7 +200,7 @@ export default function MeshPanel() {
                   disabled && "cursor-not-allowed opacity-40 grayscale-[0.8]",
                 )}
                 disabled={disabled}
-                onClick={() => ctx.applyMeshWorkspacePreset(preset.id)}
+                onClick={() => applyMeshWorkspacePreset(preset.id)}
                 title={preset.description}
               >
                 <div className="flex items-center gap-1.5">

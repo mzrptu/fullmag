@@ -20,7 +20,7 @@ type FlagEntry = {
   value: Primitive;
 };
 
-const LOCKED_PATHS = new Set(["shell.showAppBar"]);
+const LOCKED_PATHS = new Set(["shell.showAppBar", "shell.showRibbonBar"]);
 
 const SECTION_LABELS: Record<string, string> = {
   workspace: "Workspace",
@@ -37,6 +37,7 @@ const SECTION_LABELS: Record<string, string> = {
 
 const DESCRIPTIONS: Record<string, string> = {
   "shell.showAppBar": "Always ON. Global top bar cannot be disabled.",
+  "shell.showRibbonBar": "Always ON. Ribbon bar cannot be disabled.",
   "femViewport.enableSelectionOnlyInteractionMode": "Selection mode: disables camera controls and enables face picking.",
   "femViewport.enableGeometryHoverInteractions": "Hover raycast on mouse move (expensive on large meshes).",
   "session.enableSceneDraftAutoPush": "Auto-push scene draft to backend when builder changes.",
@@ -108,6 +109,7 @@ function setByPath(target: Record<string, unknown>, path: string, nextValue: Pri
 function enforceHardConstraints(next: FrontendDiagnosticFlags): FrontendDiagnosticFlags {
   const cloned = structuredClone(next);
   cloned.shell.showAppBar = true;
+  cloned.shell.showRibbonBar = true;
   return cloned;
 }
 

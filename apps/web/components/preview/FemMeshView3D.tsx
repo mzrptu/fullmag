@@ -2,9 +2,17 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import * as THREE from "three";
-import { useThree } from "@react-three/fiber";
-import { rotateCameraAroundTarget, setCameraPresetAroundTarget, focusCameraOnBounds, fitCameraToBounds } from "./camera/cameraHelpers";
+import { rotateCameraAroundTarget, setCameraPresetAroundTarget, focusCameraOnBounds } from "./camera/cameraHelpers";
 import { computeFaceAspectRatios } from "./r3f/colorUtils";
+import {
+  collectPartBoundaryFaceIndices,
+  collectPartElementIndices,
+  collectPartNodeMask,
+  markersForPart,
+  SUPPORTED_ARROW_COLOR_FIELDS,
+} from "./fem/femGeometryUtils";
+import { FemClipPlanes, CameraAutoFit } from "./fem/FemR3FHelpers";
+import { useFemVectorDomain } from "./fem/useFemVectorDomain";
 import type {
   FemLiveMeshObjectSegment,
   FemMeshPart,
@@ -29,10 +37,8 @@ import { FemViewportScene } from "./fem/FemViewportScene";
 import { FemContextMenu, FemHoverTooltip } from "./fem/FemContextMenu";
 import { FemRefineToolbar, FemSelectionHUD } from "./fem/FemSelectionHUD";
 import {
-  GLYPH_BUDGET_MIN,
   PREVIEW_MAX_POINTS_DEFAULT,
   glyphBudgetToMaxPoints,
-  maxPointsToGlyphBudget,
 } from "./fem/vectorDensityBudget";
 import HslSphere from "./HslSphere";
 import ViewCube from "./ViewCube";
@@ -50,6 +56,28 @@ import TextureTransformGizmo, {
 import type { TextureTransform3D } from "@/lib/textureTransform";
 import { FRONTEND_DIAGNOSTIC_FLAGS } from "@/lib/debug/frontendDiagnosticFlags";
 import { recordFrontendRender } from "@/lib/debug/frontendPerfDebug";
+export type {
+  FemMeshData,
+  MeshSelectionSnapshot,
+  FemColorField,
+  FemArrowColorMode,
+  RenderMode,
+  ClipAxis,
+  FemVectorDomainFilter,
+  FemFerromagnetVisibilityMode,
+  RenderLayer,
+} from "./fem/femMeshTypes";
+import type {
+  FemMeshData,
+  MeshSelectionSnapshot,
+  FemColorField,
+  FemArrowColorMode,
+  RenderMode,
+  ClipAxis,
+  FemVectorDomainFilter,
+  FemFerromagnetVisibilityMode,
+  RenderLayer,
+} from "./fem/femMeshTypes";
 
 const STABLE_ORIGIN: [number, number, number] = [0, 0, 0];
 
@@ -113,31 +141,6 @@ const RENDER_MODE_DISPLAY_PRESETS: Record<
     qualityProfile: "interactive",
   },
 };
-
-/* ── Types ─────────────────────────────────────────────────────────── */
-
-export interface FemMeshData {
-  nodes: number[];
-  elements: number[];
-  boundaryFaces: number[];
-  nNodes: number;
-  nElements: number;
-  fieldData?: { x: ArrayLike<number>; y: ArrayLike<number>; z: ArrayLike<number> };
-  activeMask?: boolean[] | null;
-  quantityDomain?: "magnetic_only" | "full_domain" | "surface_only" | null;
-}
-
-export interface MeshSelectionSnapshot {
-  selectedFaceIndices: number[];
-  primaryFaceIndex: number | null;
-}
-
-export type FemColorField = "orientation" | "x" | "y" | "z" | "magnitude" | "quality" | "sicn" | "none";
-export type FemArrowColorMode = "orientation" | "x" | "y" | "z" | "magnitude" | "monochrome";
-export type RenderMode = "surface" | "surface+edges" | "wireframe" | "points";
-export type ClipAxis = "x" | "y" | "z";
-export type FemVectorDomainFilter = "auto" | "magnetic_only" | "full_domain" | "airbox_only";
-export type FemFerromagnetVisibilityMode = "hide" | "ghost";
 
 /* ── Opacity constants (extracted from hardcoded values) ── */
 const DIMMED_MIN_MAGNETIC = 14;
@@ -227,21 +230,6 @@ interface Props {
   onTextureTransformCommit?: (next: TextureTransform3D) => void;
 }
 
-interface RenderLayer {
-  part: FemMeshPart;
-  viewState: MeshEntityViewState;
-  boundaryFaceIndices: number[] | null;
-  elementIndices: number[] | null;
-  nodeMask: Uint8Array | null;
-  surfaceFaces: [number, number, number][] | null;
-  isPrimaryForCamera: boolean;
-  isMagnetic: boolean;
-  isSelected: boolean;
-  isDimmed: boolean;
-  meshColor: string;
-  edgeColor: string;
-}
-
 type CameraProjection = "perspective" | "orthographic";
 type NavigationMode = "trackball" | "cad";
 
@@ -249,298 +237,6 @@ interface PartQualitySummary {
   markers: number[];
   domainCount: number;
   stats: MeshQualityStats | null;
-}
-
-function uniqueSortedMarkers(markers: readonly number[]): number[] {
-  return Array.from(new Set(markers.filter((value) => Number.isFinite(value) && value >= 0))).sort(
-    (left, right) => left - right,
-  );
-}
-
-function countActiveNodes(mask: ArrayLike<number | boolean> | null | undefined): number {
-  if (!mask || mask.length === 0) {
-    return 0;
-  }
-  let count = 0;
-  for (let index = 0; index < mask.length; index += 1) {
-    if (mask[index]) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-function markersForPart(
-  part: FemMeshPart,
-  elementMarkers: readonly number[] | null | undefined,
-): number[] {
-  if (!elementMarkers || elementMarkers.length === 0 || part.element_count <= 0) {
-    return [];
-  }
-  const start = Math.max(0, Math.trunc(part.element_start));
-  const end = Math.min(elementMarkers.length, start + Math.max(0, Math.trunc(part.element_count)));
-  if (start >= end) {
-    return [];
-  }
-  return uniqueSortedMarkers(elementMarkers.slice(start, end));
-}
-
-function collectSegmentBoundaryFaceIndices(
-  objectSegments: readonly FemLiveMeshObjectSegment[],
-  maxFaceCount: number,
-  selectedObjectId?: string | null,
-): number[] | null {
-  const relevantSegments =
-    selectedObjectId
-      ? objectSegments.filter((segment) => segment.object_id === selectedObjectId)
-      : objectSegments;
-  if (relevantSegments.length === 0) {
-    return null;
-  }
-  const faceIndices: number[] = [];
-  for (const segment of relevantSegments) {
-    const start = Math.max(0, Math.trunc(segment.boundary_face_start));
-    const count = Math.max(0, Math.trunc(segment.boundary_face_count));
-    const end = Math.min(start + count, maxFaceCount);
-    for (let faceIndex = start; faceIndex < end; faceIndex += 1) {
-      faceIndices.push(faceIndex);
-    }
-  }
-  if (faceIndices.length === 0 || faceIndices.length >= maxFaceCount) {
-    return null;
-  }
-  return faceIndices;
-}
-
-function collectSegmentElementIndices(
-  objectSegments: readonly FemLiveMeshObjectSegment[],
-  maxElementCount: number,
-  selectedObjectId?: string | null,
-): number[] | null {
-  const relevantSegments =
-    selectedObjectId
-      ? objectSegments.filter((segment) => segment.object_id === selectedObjectId)
-      : objectSegments;
-  if (relevantSegments.length === 0) {
-    return null;
-  }
-  const elementIndices: number[] = [];
-  for (const segment of relevantSegments) {
-    const start = Math.max(0, Math.trunc(segment.element_start));
-    const count = Math.max(0, Math.trunc(segment.element_count));
-    const end = Math.min(start + count, maxElementCount);
-    for (let elementIndex = start; elementIndex < end; elementIndex += 1) {
-      elementIndices.push(elementIndex);
-    }
-  }
-  if (elementIndices.length === 0 || elementIndices.length >= maxElementCount) {
-    return null;
-  }
-  return elementIndices;
-}
-
-function collectSegmentBoundaryFaceIndicesByIds(
-  objectSegments: readonly FemLiveMeshObjectSegment[],
-  maxFaceCount: number,
-  segmentIds: ReadonlySet<string>,
-): number[] | null {
-  if (segmentIds.size === 0) {
-    return [];
-  }
-  const relevantSegments = objectSegments.filter((segment) => segmentIds.has(segment.object_id));
-  if (relevantSegments.length === 0) {
-    return [];
-  }
-  const faceIndices: number[] = [];
-  for (const segment of relevantSegments) {
-    const start = Math.max(0, Math.trunc(segment.boundary_face_start));
-    const count = Math.max(0, Math.trunc(segment.boundary_face_count));
-    const end = Math.min(start + count, maxFaceCount);
-    for (let faceIndex = start; faceIndex < end; faceIndex += 1) {
-      faceIndices.push(faceIndex);
-    }
-  }
-  if (faceIndices.length === 0) {
-    return [];
-  }
-  if (faceIndices.length >= maxFaceCount) {
-    return null;
-  }
-  return faceIndices;
-}
-
-function collectSegmentElementIndicesByIds(
-  objectSegments: readonly FemLiveMeshObjectSegment[],
-  maxElementCount: number,
-  segmentIds: ReadonlySet<string>,
-): number[] | null {
-  if (segmentIds.size === 0) {
-    return [];
-  }
-  const relevantSegments = objectSegments.filter((segment) => segmentIds.has(segment.object_id));
-  if (relevantSegments.length === 0) {
-    return [];
-  }
-  const elementIndices: number[] = [];
-  for (const segment of relevantSegments) {
-    const start = Math.max(0, Math.trunc(segment.element_start));
-    const count = Math.max(0, Math.trunc(segment.element_count));
-    const end = Math.min(start + count, maxElementCount);
-    for (let elementIndex = start; elementIndex < end; elementIndex += 1) {
-      elementIndices.push(elementIndex);
-    }
-  }
-  if (elementIndices.length === 0) {
-    return [];
-  }
-  if (elementIndices.length >= maxElementCount) {
-    return null;
-  }
-  return elementIndices;
-}
-
-function collectSegmentNodeMask(
-  objectSegments: readonly FemLiveMeshObjectSegment[],
-  nNodes: number,
-  segmentIds: ReadonlySet<string>,
-): Uint8Array | null {
-  if (segmentIds.size === 0) {
-    return null;
-  }
-  const nodeMask = new Uint8Array(nNodes);
-  let sawNode = false;
-  for (const segment of objectSegments) {
-    if (!segmentIds.has(segment.object_id)) {
-      continue;
-    }
-    const start = Math.max(0, Math.trunc(segment.node_start));
-    const count = Math.max(0, Math.trunc(segment.node_count));
-    const end = Math.min(start + count, nNodes);
-    for (let nodeIndex = start; nodeIndex < end; nodeIndex += 1) {
-      nodeMask[nodeIndex] = 1;
-      sawNode = true;
-    }
-  }
-  return sawNode ? nodeMask : null;
-}
-
-function collectPartBoundaryFaceIndices(
-  part: FemMeshPart,
-  maxFaceCount: number,
-): number[] | null {
-  if (part.boundary_face_indices.length > 0) {
-    return part.boundary_face_indices.filter(
-      (faceIndex) => Number.isInteger(faceIndex) && faceIndex >= 0 && faceIndex < maxFaceCount,
-    );
-  }
-  const start = Math.max(0, Math.trunc(part.boundary_face_start));
-  const count = Math.max(0, Math.trunc(part.boundary_face_count));
-  const end = Math.min(start + count, maxFaceCount);
-  const faceIndices: number[] = [];
-  for (let faceIndex = start; faceIndex < end; faceIndex += 1) {
-    faceIndices.push(faceIndex);
-  }
-  if (faceIndices.length === 0) {
-    return [];
-  }
-  if (faceIndices.length >= maxFaceCount) {
-    return null;
-  }
-  return faceIndices;
-}
-
-function collectPartElementIndices(
-  part: FemMeshPart,
-  maxElementCount: number,
-): number[] | null {
-  const start = Math.max(0, Math.trunc(part.element_start));
-  const count = Math.max(0, Math.trunc(part.element_count));
-  const end = Math.min(start + count, maxElementCount);
-  const elementIndices: number[] = [];
-  for (let elementIndex = start; elementIndex < end; elementIndex += 1) {
-    elementIndices.push(elementIndex);
-  }
-  if (elementIndices.length === 0) {
-    return [];
-  }
-  if (elementIndices.length >= maxElementCount) {
-    return null;
-  }
-  return elementIndices;
-}
-
-function collectPartNodeMask(
-  part: FemMeshPart,
-  nNodes: number,
-): Uint8Array | null {
-  if (part.node_indices.length > 0) {
-    const nodeMask = new Uint8Array(nNodes);
-    let sawNode = false;
-    for (const nodeIndex of part.node_indices) {
-      if (!Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex >= nNodes) {
-        continue;
-      }
-      nodeMask[nodeIndex] = 1;
-      sawNode = true;
-    }
-    return sawNode ? nodeMask : null;
-  }
-  const start = Math.max(0, Math.trunc(part.node_start));
-  const count = Math.max(0, Math.trunc(part.node_count));
-  const end = Math.min(start + count, nNodes);
-  if (start >= end) {
-    return null;
-  }
-  const nodeMask = new Uint8Array(nNodes);
-  for (let nodeIndex = start; nodeIndex < end; nodeIndex += 1) {
-    nodeMask[nodeIndex] = 1;
-  }
-  return nodeMask;
-}
-
-const SUPPORTED_ARROW_COLOR_FIELDS: ReadonlySet<FemArrowColorMode> = new Set([
-  "orientation",
-  "x",
-  "y",
-  "z",
-  "magnitude",
-]);
-
-/* ── Global R3F Logic Components ───────────────────────────────────── */
-
-function FemClipPlanes({ enabled, axis, posPercentage, geomSize }: { enabled: boolean; axis: ClipAxis; posPercentage: number; geomSize: [number, number, number] }) {
-  const { gl } = useThree();
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  useEffect(() => {
-    rendererRef.current = gl;
-  }, [gl]);
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    if (!renderer) {
-      return;
-    }
-    renderer.localClippingEnabled = enabled;
-    if (!enabled) {
-      renderer.clippingPlanes = [];
-      return;
-    }
-    const axisSize = axis === "x" ? geomSize[0] : axis === "y" ? geomSize[1] : geomSize[2];
-    const pos = ((posPercentage / 100) - 0.5) * axisSize;
-    const normal = new THREE.Vector3(axis === "x" ? -1 : 0, axis === "y" ? -1 : 0, axis === "z" ? -1 : 0);
-    renderer.clippingPlanes = [new THREE.Plane(normal, pos)];
-  }, [enabled, axis, posPercentage, geomSize]);
-  return null;
-}
-
-/** Auto-fit the R3F camera to the geometry bounding sphere whenever maxDim changes. */
-function CameraAutoFit({ maxDim, generation, controlsRef }: { maxDim: number; generation: number; controlsRef?: React.MutableRefObject<any> }) {
-  const { camera, invalidate } = useThree();
-  useEffect(() => {
-    if (maxDim <= 0 || generation === 0) return;
-    fitCameraToBounds(camera, maxDim, undefined, controlsRef?.current ?? undefined);
-    invalidate();
-  }, [camera, controlsRef, invalidate, maxDim, generation]);
-  return null;
 }
 
 /* ── Component ─────────────────────────────────────────────────────── */
@@ -979,326 +675,43 @@ function FemMeshView3DInner({
           (part) => part.role === "magnetic_object" && part.object_id === selectedObjectId,
         )
       : !magneticSegments.some((segment) => segment.object_id === selectedObjectId));
-  const magneticBoundaryFaceIndices = useMemo(() => {
-    if (!wrapperFlags.enableVectorDerivedModel) {
-      return null;
-    }
-    if (missingExactScopeSegment) {
-      return null;
-    }
-    if (selectedObjectId) {
-      return collectSegmentBoundaryFaceIndices(
-        magneticSegments,
-        Math.floor(meshData.boundaryFaces.length / 3),
-        selectedObjectId,
-      );
-    }
-    return collectSegmentBoundaryFaceIndicesByIds(
-      magneticSegments,
-      Math.floor(meshData.boundaryFaces.length / 3),
-      visibleMagneticIds,
-    );
-  }, [
-    magneticSegments,
-    meshData.boundaryFaces.length,
-    missingExactScopeSegment,
-    selectedObjectId,
-    visibleMagneticIds,
-    wrapperFlags.enableVectorDerivedModel,
-  ]);
-  const magneticElementIndices = useMemo(() => {
-    if (!wrapperFlags.enableVectorDerivedModel) {
-      return null;
-    }
-    if (missingExactScopeSegment) {
-      return null;
-    }
-    if (selectedObjectId) {
-      return collectSegmentElementIndices(
-        magneticSegments,
-        meshData.nElements,
-        selectedObjectId,
-      );
-    }
-    return collectSegmentElementIndicesByIds(
-      magneticSegments,
-      meshData.nElements,
-      visibleMagneticIds,
-    );
-  }, [
-    magneticSegments,
-    meshData.nElements,
-    missingExactScopeSegment,
-    selectedObjectId,
-    visibleMagneticIds,
-    wrapperFlags.enableVectorDerivedModel,
-  ]);
-  const airBoundaryFaceIndices = useMemo(
-    () =>
-      !wrapperFlags.enableVectorDerivedModel
-        ? null
-        :
-      collectSegmentBoundaryFaceIndicesByIds(
-        objectSegments,
-        Math.floor(meshData.boundaryFaces.length / 3),
-        airSegmentIds,
-      ),
-    [airSegmentIds, meshData.boundaryFaces.length, objectSegments, wrapperFlags.enableVectorDerivedModel],
-  );
-  const airElementIndices = useMemo(
-    () =>
-      !wrapperFlags.enableVectorDerivedModel
-        ? null
-        : collectSegmentElementIndicesByIds(objectSegments, meshData.nElements, airSegmentIds),
-    [airSegmentIds, meshData.nElements, objectSegments, wrapperFlags.enableVectorDerivedModel],
-  );
-  const magneticArrowNodeMask = useMemo(() => {
-    if (!wrapperFlags.enableVectorDerivedModel) {
-      return null;
-    }
-    if (hasMeshParts) {
-      const visibleMagneticLayers = visibleLayers.filter((layer) => layer.isMagnetic);
-      if (visibleMagneticLayers.length === 0) {
-        return meshData.activeMask ?? null;
-      }
-      const baseActiveMask = meshData.activeMask;
-      const combined = new Uint8Array(meshData.nNodes);
-      for (const layer of visibleMagneticLayers) {
-        const nodeMask = layer.nodeMask;
-        if (!nodeMask) {
-          continue;
-        }
-        for (let index = 0; index < nodeMask.length; index += 1) {
-          if (nodeMask[index]) combined[index] = 1;
-        }
-      }
-      if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
-        return combined;
-      }
-      const result = new Uint8Array(meshData.nNodes);
-      for (let i = 0; i < result.length; i++) {
-        result[i] = combined[i] && baseActiveMask[i] ? 1 : 0;
-      }
-      return result;
-    }
-    const nodeMask = collectSegmentNodeMask(magneticSegments, meshData.nNodes, visibleMagneticIds);
-    if (!nodeMask) {
-      return meshData.activeMask ?? null;
-    }
-    const baseActiveMask = meshData.activeMask;
-    if (!baseActiveMask || baseActiveMask.length !== meshData.nNodes) {
-      return nodeMask;
-    }
-    const result = new Uint8Array(meshData.nNodes);
-    for (let i = 0; i < result.length; i++) {
-      result[i] = nodeMask[i] && baseActiveMask[i] ? 1 : 0;
-    }
-    return result;
-  }, [
-    hasMeshParts,
-    magneticSegments,
-    meshData.activeMask,
-    meshData.nNodes,
-    visibleLayers,
-    visibleMagneticIds,
-    wrapperFlags.enableVectorDerivedModel,
-  ]);
-  const fullDomainArrowNodeMask = useMemo(() => {
-    if (!wrapperFlags.enableVectorDerivedModel) {
-      return null;
-    }
-    if (meshData.quantityDomain !== "full_domain") {
-      return null;
-    }
-    if (!hasMeshParts) {
-      const mask = new Uint8Array(meshData.nNodes);
-      mask.fill(1);
-      return mask;
-    }
-    if (visibleLayers.length === 0) {
-      return new Uint8Array(meshData.nNodes);
-    }
-    const combined = new Uint8Array(meshData.nNodes);
-    let sawExplicitMask = false;
-    for (const layer of visibleLayers) {
-      const nodeMask = layer.nodeMask;
-      if (!nodeMask) {
-        continue;
-      }
-      sawExplicitMask = true;
-      for (let index = 0; index < nodeMask.length; index += 1) {
-        if (nodeMask[index]) combined[index] = 1;
-      }
-    }
-    if (!sawExplicitMask) {
-      const allOnes = new Uint8Array(meshData.nNodes);
-      allOnes.fill(1);
-      return allOnes;
-    }
-    return combined;
-  }, [hasMeshParts, meshData.nNodes, meshData.quantityDomain, visibleLayers, wrapperFlags.enableVectorDerivedModel]);
-  const airArrowNodeMask = useMemo(() => {
-    if (!wrapperFlags.enableVectorDerivedModel) {
-      return null;
-    }
-    if (hasMeshParts) {
-      const airLayers = visibleLayers.filter((layer) => layer.part.role === "air");
-      if (airLayers.length === 0) {
-        return new Uint8Array(meshData.nNodes);
-      }
-      const combined = new Uint8Array(meshData.nNodes);
-      for (const layer of airLayers) {
-        const nodeMask = layer.nodeMask;
-        if (!nodeMask) {
-          continue;
-        }
-        for (let index = 0; index < nodeMask.length; index += 1) {
-          if (nodeMask[index]) combined[index] = 1;
-        }
-      }
-      return combined;
-    }
-    const nodeMask = collectSegmentNodeMask(objectSegments, meshData.nNodes, airSegmentIds);
-    return nodeMask ?? new Uint8Array(meshData.nNodes);
-  }, [airSegmentIds, hasMeshParts, meshData.nNodes, objectSegments, visibleLayers, wrapperFlags.enableVectorDerivedModel]);
-  const resolvedVectorDomain: "magnetic_only" | "full_domain" | "airbox_only" = useMemo(() => {
-    if (effectiveVectorDomainFilter === "airbox_only") {
-      return "airbox_only";
-    }
-    if (effectiveVectorDomainFilter === "full_domain") {
-      return "full_domain";
-    }
-    if (effectiveVectorDomainFilter === "magnetic_only") {
-      return "magnetic_only";
-    }
-    return meshData.quantityDomain === "full_domain" ? "full_domain" : "magnetic_only";
-  }, [effectiveVectorDomainFilter, meshData.quantityDomain]);
-  const arrowActiveNodeMask = useMemo(() => {
-    if (resolvedVectorDomain === "full_domain") {
-      return fullDomainArrowNodeMask;
-    }
-    if (resolvedVectorDomain === "airbox_only") {
-      return airArrowNodeMask;
-    }
-    return magneticArrowNodeMask;
-  }, [airArrowNodeMask, fullDomainArrowNodeMask, magneticArrowNodeMask, resolvedVectorDomain]);
-  const arrowBoundaryFaceIndices = useMemo(() => {
-    if (resolvedVectorDomain === "full_domain") {
-      return null;
-    }
-    if (resolvedVectorDomain === "airbox_only") {
-      return airBoundaryFaceIndices;
-    }
-    return magneticBoundaryFaceIndices;
-  }, [airBoundaryFaceIndices, magneticBoundaryFaceIndices, resolvedVectorDomain]);
-  const baseArrowDensity = useMemo(
-    () => maxPointsToGlyphBudget(resolvedPreviewMaxPoints),
-    [resolvedPreviewMaxPoints],
-  );
-  const baselineArrowNodeCount = useMemo(() => {
-    if (meshData.nNodes <= 0) {
-      return 0;
-    }
-    if (resolvedVectorDomain === "full_domain") {
-      return meshData.nNodes;
-    }
-    if (meshData.activeMask && meshData.activeMask.length === meshData.nNodes) {
-      const count = countActiveNodes(meshData.activeMask);
-      return count > 0 ? count : meshData.nNodes;
-    }
-    return meshData.nNodes;
-  }, [meshData.activeMask, meshData.nNodes, resolvedVectorDomain]);
-  const visibleArrowNodeCount = useMemo(() => {
-    if (
-      arrowActiveNodeMask &&
-      arrowActiveNodeMask.length === meshData.nNodes
-    ) {
-      return countActiveNodes(arrowActiveNodeMask);
-    }
-    return baselineArrowNodeCount;
-  }, [arrowActiveNodeMask, baselineArrowNodeCount, meshData.nNodes]);
-  const effectiveArrowDensity = useMemo(() => {
-    if (baseArrowDensity <= 0 || baselineArrowNodeCount <= 0 || visibleArrowNodeCount <= 0) {
-      return 0;
-    }
-    const visibleRatio = Math.min(
-      1,
-      Math.max(0, visibleArrowNodeCount / baselineArrowNodeCount),
-    );
-    const scaled = Math.round(baseArrowDensity * visibleRatio);
-    if (visibleRatio >= 0.999) {
-      return Math.max(1, Math.min(baseArrowDensity, scaled));
-    }
-    const minBudget = Math.min(GLYPH_BUDGET_MIN, baseArrowDensity);
-    return Math.max(minBudget, Math.min(baseArrowDensity, scaled));
-  }, [baseArrowDensity, baselineArrowNodeCount, visibleArrowNodeCount]);
-  const runtimeQualityProfile = useMemo<ViewportQualityProfileId>(() => {
-    if (FRONTEND_DIAGNOSTIC_FLAGS.femViewport.forceLowQualityProfile) {
-      return "interactive-lite";
-    }
-    if (captureActive) {
-      return "capture";
-    }
-    return interactionActive ? "interactive-lite" : qualityProfile;
-  }, [captureActive, interactionActive, qualityProfile]);
-  const runtimeRenderMode = useMemo<RenderMode>(() => {
-    if (!interactionActive) {
-      return renderMode;
-    }
-    if (renderMode === "surface+edges" || renderMode === "points") {
-      return "surface";
-    }
-    return renderMode;
-  }, [interactionActive, renderMode]);
-  const runtimeArrowDensity = useMemo(() => {
-    if (!interactionActive || effectiveArrowDensity <= 0) {
-      return effectiveArrowDensity;
-    }
-    return Math.max(GLYPH_BUDGET_MIN, Math.round(effectiveArrowDensity * 0.45));
-  }, [effectiveArrowDensity, interactionActive]);
-  const hasMagneticDisplayContent = useMemo(() => {
-    if (missingExactScopeSegment) {
-      return false;
-    }
-    const faceCount =
-      magneticBoundaryFaceIndices == null
-        ? Math.floor(meshData.boundaryFaces.length / 3)
-        : magneticBoundaryFaceIndices.length;
-    const elementCount =
-      magneticElementIndices == null ? meshData.nElements : magneticElementIndices.length;
-    return faceCount > 0 || elementCount > 0;
-  }, [
+  const {
     magneticBoundaryFaceIndices,
     magneticElementIndices,
-    meshData.boundaryFaces.length,
-    meshData.nElements,
+    airBoundaryFaceIndices,
+    airElementIndices,
+    arrowActiveNodeMask,
+    arrowBoundaryFaceIndices,
+    baseArrowDensity,
+    effectiveArrowDensity,
+    resolvedVectorDomain,
+    runtimeQualityProfile,
+    runtimeRenderMode,
+    runtimeArrowDensity,
+    shouldRenderMagneticGeometry,
+    shouldRenderMagneticGeometryResolved,
+    shouldRenderAirGeometry,
+    visibleArrowNodeCount,
+  } = useFemVectorDomain({
+    enableVectorDerivedModel: wrapperFlags.enableVectorDerivedModel,
     missingExactScopeSegment,
-  ]);
-  const hasAirDisplayContent = useMemo(() => {
-    const faceCount =
-      airBoundaryFaceIndices == null
-        ? Math.floor(meshData.boundaryFaces.length / 3)
-        : airBoundaryFaceIndices.length;
-    const elementCount = airElementIndices == null ? meshData.nElements : airElementIndices.length;
-    return faceCount > 0 || elementCount > 0;
-  }, [airBoundaryFaceIndices, airElementIndices, meshData.boundaryFaces.length, meshData.nElements]);
-  const shouldRenderMagneticGeometry =
-    !hasMeshParts &&
-    !missingExactScopeSegment &&
-    (selectedObjectId != null || visibleMagneticIds.size > 0) &&
-    hasMagneticDisplayContent;
-  const shouldRenderMagneticGeometryResolved =
-    shouldRenderMagneticGeometry &&
-    !(
-      effectiveVectorDomainFilter === "airbox_only" &&
-      ferromagnetVisibilityMode === "hide"
-    );
-  const shouldRenderAirGeometry =
-    !hasMeshParts &&
-    (!selectedObjectId || effectiveVectorDomainFilter === "airbox_only") &&
-    airSegmentVisible &&
-    airSegmentIds.size > 0 &&
-    hasAirDisplayContent;
+    selectedObjectId,
+    magneticSegments,
+    meshData,
+    visibleMagneticIds,
+    objectSegments,
+    airSegmentIds,
+    hasMeshParts,
+    visibleLayers,
+    effectiveVectorDomainFilter,
+    ferromagnetVisibilityMode,
+    resolvedPreviewMaxPoints,
+    captureActive,
+    interactionActive,
+    qualityProfile,
+    renderMode,
+    airSegmentVisible,
+  });
   const baseViewStateByPartId = useMemo(() => {
     const next = new Map<string, MeshEntityViewState>();
     if (!hasMeshParts) {

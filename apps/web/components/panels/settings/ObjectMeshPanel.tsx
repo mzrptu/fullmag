@@ -30,8 +30,7 @@ import MeshSettingsPanel, {
   type SizeFieldSpec,
 } from "../MeshSettingsPanel";
 import MeshSequenceEditor from "./MeshSequenceEditor";
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
-import { useModel } from "../../runs/control-room/ControlRoomContext";
+import { useViewport, useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { type ViewportMode } from "../../runs/control-room/shared";
 import { fmtExp, fmtSI } from "@/lib/format";
 import {
@@ -194,8 +193,11 @@ function formatMeshSetting(value: string | null | undefined, fallback = "Inherit
 /* ── Component ── */
 
 export default function ObjectMeshPanel({ nodeId }: { nodeId?: string }) {
-  const ctx = useControlRoom();
+  const viewport = useViewport();
+  const cmd = useCommand();
   const model = useModel();
+  /* Backward-compatible ctx composed from granular hooks */
+  const ctx = { ...model, effectiveViewMode: viewport.effectiveViewMode, handleViewModeChange: viewport.handleViewModeChange, workspaceStatus: cmd.workspaceStatus, engineLog: cmd.engineLog, isWaitingForCompute: cmd.isWaitingForCompute, scriptSyncBusy: cmd.scriptSyncBusy, scriptSyncMessage: cmd.scriptSyncMessage };
 
   const { object: sceneObject, index: geoIndex } = useMemo(
     () => findSceneObjectByNodeId(nodeId, model.sceneDocument),

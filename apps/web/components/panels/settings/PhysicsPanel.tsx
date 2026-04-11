@@ -1,6 +1,6 @@
 "use client";
 
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { fmtExp, fmtSI } from "../../runs/control-room/shared";
 import { SidebarSection, InfoRow, StatusBadge } from "./primitives";
 
@@ -13,9 +13,10 @@ function formatVector(value: number[] | null | undefined, unit: string): string 
 }
 
 export default function PhysicsPanel() {
-  const ctx = useControlRoom();
-  const solverPlan = ctx.solverPlan;
-  const material = ctx.material;
+  const cmd = useCommand();
+  const model = useModel();
+  const solverPlan = model.solverPlan;
+  const material = model.material;
 
   return (
     <div className="flex flex-col pt-4 px-2">
@@ -23,11 +24,11 @@ export default function PhysicsPanel() {
         <div className="grid gap-1">
           <InfoRow
             label="Backend"
-            value={solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? ctx.sessionFooter.requestedBackend ?? "—"}
+            value={solverPlan?.resolvedBackend ?? solverPlan?.backendKind ?? cmd.sessionFooter.requestedBackend ?? "—"}
           />
           <InfoRow
             label="Integrator"
-            value={solverPlan?.integrator ?? ctx.solverSettings.integrator ?? "—"}
+            value={solverPlan?.integrator ?? model.solverSettings.integrator ?? "—"}
           />
           <InfoRow
             label="Exchange"

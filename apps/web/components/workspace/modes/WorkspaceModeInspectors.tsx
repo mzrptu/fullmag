@@ -1,6 +1,6 @@
 "use client";
 
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useViewport, useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWorkspaceStore } from "@/lib/workspace/workspace-store";
 import { SidebarSection, InfoRow } from "../../panels/settings/primitives";
@@ -20,9 +20,11 @@ function displayLaunchName(
 
 /** Right inspector for Build mode — shows selected object properties */
 export function BuildRightInspector() {
-  const ctx = useControlRoom();
+  const viewport = useViewport();
+  const cmd = useCommand();
+  const model = useModel();
   const launchIntent = useWorkspaceStore((state) => state.launchIntent);
-  const selectedId = ctx.selectedObjectId ?? ctx.selectedSidebarNodeId;
+  const selectedId = model.selectedObjectId ?? model.selectedSidebarNodeId;
 
   return (
     <div className="flex flex-col h-full overflow-hidden border-l border-border/30 bg-card/20">
@@ -38,14 +40,14 @@ export function BuildRightInspector() {
             <SidebarSection title="Workspace" defaultOpen={true}>
               <InfoRow
                 label="Simulation"
-                value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, ctx.session?.problem_name ?? "Workspace")}
+                value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, cmd.session?.problem_name ?? "Workspace")}
               />
-              <InfoRow label="Backend" value={ctx.session?.requested_backend ?? "—"} />
-              <InfoRow label="Objects" value={String(ctx.modelBuilderGraph?.objects.items.length ?? 0)} />
+              <InfoRow label="Backend" value={cmd.session?.requested_backend ?? "—"} />
+              <InfoRow label="Objects" value={String(model.modelBuilderGraph?.objects.items.length ?? 0)} />
             </SidebarSection>
             <SidebarSection title="Geometry" defaultOpen={true}>
-              <InfoRow label="View mode" value={ctx.effectiveViewMode} />
-              <InfoRow label="Mesh mode" value={ctx.isFemBackend ? "FEM workspace" : "FDM grid"} />
+              <InfoRow label="View mode" value={viewport.effectiveViewMode} />
+              <InfoRow label="Mesh mode" value={cmd.isFemBackend ? "FEM workspace" : "FDM grid"} />
             </SidebarSection>
           </>
         ) : (
@@ -61,8 +63,9 @@ export function BuildRightInspector() {
 
 /** Right inspector for Study mode — shows solver settings */
 export function StudyRightInspector() {
-  const ctx = useControlRoom();
-  const stages = ctx.studyStages ?? [];
+  const cmd = useCommand();
+  const model = useModel();
+  const stages = model.studyStages ?? [];
   const launchIntent = useWorkspaceStore((state) => state.launchIntent);
 
   return (
@@ -91,17 +94,17 @@ export function StudyRightInspector() {
           )}
         </SidebarSection>
         <SidebarSection title="Solver" defaultOpen={true}>
-          <InfoRow label="Torque tol." value={ctx.solverSettings?.torqueTolerance ?? "—"} />
-          <InfoRow label="Run until" value={ctx.runUntilInput || "—"} />
-          <InfoRow label="Status" value={ctx.workspaceStatus} />
+          <InfoRow label="Torque tol." value={model.solverSettings?.torqueTolerance ?? "—"} />
+          <InfoRow label="Run until" value={cmd.runUntilInput || "—"} />
+          <InfoRow label="Status" value={cmd.workspaceStatus} />
         </SidebarSection>
         <SidebarSection title="Session" defaultOpen={true}>
           <InfoRow
             label="Simulation"
-            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, ctx.session?.problem_name ?? "Workspace")}
+            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, cmd.session?.problem_name ?? "Workspace")}
           />
-          <InfoRow label="Runtime" value={ctx.runtimeEngineLabel ?? "—"} />
-          <InfoRow label="Command" value={ctx.commandMessage ?? "idle"} />
+          <InfoRow label="Runtime" value={cmd.runtimeEngineLabel ?? "—"} />
+          <InfoRow label="Command" value={cmd.commandMessage ?? "idle"} />
         </SidebarSection>
       </ScrollArea>
     </div>
@@ -110,7 +113,8 @@ export function StudyRightInspector() {
 
 /** Right inspector for Analyze mode — display settings */
 export function AnalyzeRightInspector() {
-  const ctx = useControlRoom();
+  const viewport = useViewport();
+  const cmd = useCommand();
   const launchIntent = useWorkspaceStore((state) => state.launchIntent);
 
   return (
@@ -120,21 +124,21 @@ export function AnalyzeRightInspector() {
       </div>
       <ScrollArea className="flex-1 px-2 py-2">
         <SidebarSection title="Active Quantity" defaultOpen={true}>
-          <InfoRow label="Quantity" value={ctx.selectedQuantityLabel ?? "—"} />
+          <InfoRow label="Quantity" value={viewport.selectedQuantityLabel ?? "—"} />
         </SidebarSection>
         <SidebarSection title="Viewport" defaultOpen={true}>
-          <InfoRow label="View mode" value={ctx.effectiveViewMode} />
+          <InfoRow label="View mode" value={viewport.effectiveViewMode} />
         </SidebarSection>
         <SidebarSection title="Preview" defaultOpen={true}>
-          <InfoRow label="Grid" value={`${ctx.previewGrid[0]}×${ctx.previewGrid[1]}×${ctx.previewGrid[2]}`} />
-          <InfoRow label="Artifacts" value={String(ctx.artifacts.length)} />
+          <InfoRow label="Grid" value={`${viewport.previewGrid[0]}×${viewport.previewGrid[1]}×${viewport.previewGrid[2]}`} />
+          <InfoRow label="Artifacts" value={String(cmd.artifacts.length)} />
         </SidebarSection>
         <SidebarSection title="Dataset" defaultOpen={true}>
           <InfoRow
             label="Simulation"
-            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, ctx.session?.problem_name ?? "Workspace")}
+            value={displayLaunchName(launchIntent?.displayName, launchIntent?.entryPath, cmd.session?.problem_name ?? "Workspace")}
           />
-          <InfoRow label="Status" value={ctx.workspaceStatus} />
+          <InfoRow label="Status" value={cmd.workspaceStatus} />
         </SidebarSection>
       </ScrollArea>
     </div>

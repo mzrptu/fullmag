@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useRuntimeCapabilities } from "../../lib/hooks/useRuntimeCapabilities";
-import { useControlRoom } from "../runs/control-room/ControlRoomContext";
+import { useCommand, useModel } from "../runs/control-room/context-hooks";
 
 type RuntimeField = "requested_backend" | "requested_device" | "requested_precision" | "requested_mode";
 
@@ -33,9 +33,10 @@ function humanize(value: string): string {
 }
 
 export default function SolverSelector() {
-  const ctx = useControlRoom();
+  const cmd = useCommand();
+  const model = useModel();
   const { capabilities, loading, error } = useRuntimeCapabilities();
-  const requested = ctx.requestedRuntimeSelection;
+  const requested = model.requestedRuntimeSelection;
   const entries = useMemo(() => capabilities?.engines ?? [], [capabilities?.engines]);
 
   const backendOptions = useMemo<OptionState[]>(() => {
@@ -93,7 +94,7 @@ export default function SolverSelector() {
   }, [entries, requested.requested_backend, requested.requested_device]);
 
   const resolvedEntry = useMemo(() => {
-    const engineId = ctx.session?.resolved_engine_id ?? null;
+    const engineId = cmd.session?.resolved_engine_id ?? null;
     const byEngineId =
       engineId != null
         ? entries.find(
@@ -105,11 +106,11 @@ export default function SolverSelector() {
     }
     return entries.find(
       (entry) =>
-        entry.backend === (ctx.session?.resolved_backend ?? "") &&
-        entry.device === (ctx.session?.resolved_device ?? "") &&
-        entry.precision === (ctx.session?.resolved_precision ?? ""),
+        entry.backend === (cmd.session?.resolved_backend ?? "") &&
+        entry.device === (cmd.session?.resolved_device ?? "") &&
+        entry.precision === (cmd.session?.resolved_precision ?? ""),
     ) ?? null;
-  }, [ctx.session?.resolved_backend, ctx.session?.resolved_device, ctx.session?.resolved_engine_id, ctx.session?.resolved_precision, entries]);
+  }, [cmd.session?.resolved_backend, cmd.session?.resolved_device, cmd.session?.resolved_engine_id, cmd.session?.resolved_precision, entries]);
 
   const unavailableNotes = useMemo(() => {
     return [...deviceOptions, ...precisionOptions]
@@ -118,7 +119,7 @@ export default function SolverSelector() {
   }, [deviceOptions, precisionOptions]);
 
   const updateField = (field: RuntimeField, value: string) => {
-    ctx.setRequestedRuntimeSelection((current) => ({
+    model.setRequestedRuntimeSelection((current) => ({
       ...current,
       [field]: value,
     }));
@@ -170,25 +171,25 @@ export default function SolverSelector() {
       <div className="rounded-lg border border-border/35 bg-background/35 p-3 text-[0.74rem]">
         <div className="font-semibold text-foreground">Resolved runtime</div>
         <div className="mt-1 text-muted-foreground">
-          {ctx.session?.resolved_backend
-            ? `${humanize(ctx.session.resolved_backend)} / ${humanize(ctx.session.resolved_device ?? "unknown")} / ${humanize(ctx.session.resolved_precision ?? "unknown")}`
+          {cmd.session?.resolved_backend
+            ? `${humanize(cmd.session.resolved_backend)} / ${humanize(cmd.session.resolved_device ?? "unknown")} / ${humanize(cmd.session.resolved_precision ?? "unknown")}`
             : "Waiting for session runtime resolution."}
         </div>
         <div className="mt-2 flex flex-wrap gap-2 text-[0.68rem] text-muted-foreground">
           <span className="rounded border border-border/40 px-2 py-1">
-            engine: {ctx.session?.resolved_engine_id ?? "—"}
+            engine: {cmd.session?.resolved_engine_id ?? "—"}
           </span>
           <span className="rounded border border-border/40 px-2 py-1">
-            family: {ctx.session?.resolved_runtime_family ?? resolvedEntry?.runtime_family ?? "—"}
+            family: {cmd.session?.resolved_runtime_family ?? resolvedEntry?.runtime_family ?? "—"}
           </span>
           <span className="rounded border border-border/40 px-2 py-1">
-            worker: {ctx.session?.resolved_worker ?? resolvedEntry?.worker ?? "—"}
+            worker: {cmd.session?.resolved_worker ?? resolvedEntry?.worker ?? "—"}
           </span>
         </div>
-        {ctx.session?.resolved_fallback?.occurred ? (
+        {cmd.session?.resolved_fallback?.occurred ? (
           <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[0.72rem] text-amber-100">
-            Fallback: {ctx.session.resolved_fallback.original_engine} → {ctx.session.resolved_fallback.fallback_engine}
-            <div className="mt-1 text-amber-200/90">{ctx.session.resolved_fallback.message}</div>
+            Fallback: {cmd.session.resolved_fallback.original_engine} → {cmd.session.resolved_fallback.fallback_engine}
+            <div className="mt-1 text-amber-200/90">{cmd.session.resolved_fallback.message}</div>
           </div>
         ) : null}
         {loading ? (

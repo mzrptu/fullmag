@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useControlRoom } from "../runs/control-room/ControlRoomContext";
+import { useViewport, useCommand, useModel } from "../runs/control-room/context-hooks";
 import { Button } from "../ui/button";
 import MeshSettingsPanel from "./MeshSettingsPanel";
 import { SidebarSection, InfoRow } from "./settings/primitives";
@@ -31,20 +31,20 @@ interface SettingsPanelProps {
 }
 
 function SessionInfoPanel() {
-  const ctx = useControlRoom();
+  const cmd = useCommand();
 
   return (
     <SidebarSection
       title="Session"
       icon="🔗"
-      badge={ctx.sessionFooter.requestedBackend ?? null}
+      badge={cmd.sessionFooter.requestedBackend ?? null}
       defaultOpen={true}
     >
       <div className="grid gap-1">
-        <InfoRow label="Backend" value={ctx.sessionFooter.requestedBackend ?? "—"} />
-        <InfoRow label="Runtime" value={ctx.runtimeEngineLabel ?? "—"} />
-        {ctx.sessionFooter.scriptPath && (
-          <InfoRow label="Script" value={ctx.sessionFooter.scriptPath.split("/").pop() ?? "—"} />
+        <InfoRow label="Backend" value={cmd.sessionFooter.requestedBackend ?? "—"} />
+        <InfoRow label="Runtime" value={cmd.runtimeEngineLabel ?? "—"} />
+        {cmd.sessionFooter.scriptPath && (
+          <InfoRow label="Script" value={cmd.sessionFooter.scriptPath.split("/").pop() ?? "—"} />
         )}
       </div>
     </SidebarSection>
@@ -52,10 +52,10 @@ function SessionInfoPanel() {
 }
 
 function ScriptBuilderInfoPanel() {
-  const ctx = useControlRoom();
-  const builderContract = useMemo(() => readBuilderContract(ctx.metadata), [ctx.metadata]);
+  const cmd = useCommand();
+  const builderContract = useMemo(() => readBuilderContract(cmd.metadata), [cmd.metadata]);
   const canSyncScriptBuilder =
-    Boolean(builderContract?.rewriteStrategy === "canonical_rewrite" && ctx.sessionFooter.scriptPath);
+    Boolean(builderContract?.rewriteStrategy === "canonical_rewrite" && cmd.sessionFooter.scriptPath);
 
   if (!builderContract) {
     return (
@@ -104,17 +104,17 @@ function ScriptBuilderInfoPanel() {
             size="sm"
             variant="outline"
             type="button"
-            disabled={!canSyncScriptBuilder || ctx.scriptSyncBusy}
-            onClick={() => { void ctx.syncScriptBuilder(); }}
+            disabled={!canSyncScriptBuilder || cmd.scriptSyncBusy}
+            onClick={() => { void cmd.syncScriptBuilder(); }}
           >
-            {ctx.scriptSyncBusy ? "Syncing Script…" : "Sync UI To Script"}
+            {cmd.scriptSyncBusy ? "Syncing Script…" : "Sync UI To Script"}
           </Button>
           <div className="text-[0.68rem] leading-relaxed text-muted-foreground">
             Rewrites the source `.py` file in canonical Fullmag form using the current builder contract plus solver and mesh settings from this control room.
           </div>
-          {ctx.scriptSyncMessage && (
+          {cmd.scriptSyncMessage && (
             <div className="text-[0.68rem] leading-relaxed text-muted-foreground p-2 rounded-md bg-muted/30 border border-border/40">
-              {ctx.scriptSyncMessage}
+              {cmd.scriptSyncMessage}
             </div>
           )}
         </div>
@@ -124,29 +124,31 @@ function ScriptBuilderInfoPanel() {
 }
 
 export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
-  const ctx = useControlRoom();
+  const viewport = useViewport();
+  const cmd = useCommand();
+  const model = useModel();
   const studyNodeContext = parseStudyNodeContext(nodeId);
   const capabilitySummary = summarizeCapabilityCoverage();
   const showSolverTelemetrySection = false;
   const showEnergySection = false;
-  const selectedObjectNodeId = ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}` : undefined;
-  const selectedObjectMeshNodeId = ctx.selectedObjectId ? `geo-${ctx.selectedObjectId}-mesh` : undefined;
+  const selectedObjectNodeId = model.selectedObjectId ? `geo-${model.selectedObjectId}` : undefined;
+  const selectedObjectMeshNodeId = model.selectedObjectId ? `geo-${model.selectedObjectId}-mesh` : undefined;
   const airboxSelected =
     nodeId === "universe-airbox" || nodeId === "universe-airbox-mesh";
   const selectedObjectPartId =
-    ctx.selectedObjectId
-      ? ctx.meshParts.find(
+    model.selectedObjectId
+      ? model.meshParts.find(
           (part) =>
-            part.role === "magnetic_object" && part.object_id === ctx.selectedObjectId,
+            part.role === "magnetic_object" && part.object_id === model.selectedObjectId,
         )?.id ?? null
       : null;
 
   const showFullFemContext = () => {
-    ctx.setViewMode("3D");
-    ctx.setObjectViewMode("context");
-    ctx.setMeshEntityViewState((prev) => {
+    viewport.setViewMode("3D");
+    model.setObjectViewMode("context");
+    model.setMeshEntityViewState((prev) => {
       const next = { ...prev };
-      for (const part of ctx.meshParts) {
+      for (const part of model.meshParts) {
         const current = next[part.id];
         if (!current) continue;
         next[part.id] = { ...current, visible: true };
@@ -156,35 +158,35 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   };
 
   const isolateSelectedObject = () => {
-    if (!ctx.selectedObjectId) return;
-    ctx.setViewMode("3D");
-    ctx.setObjectViewMode("isolate");
-    ctx.setMeshEntityViewState((prev) => {
+    if (!model.selectedObjectId) return;
+    viewport.setViewMode("3D");
+    model.setObjectViewMode("isolate");
+    model.setMeshEntityViewState((prev) => {
       const next = { ...prev };
-      for (const part of ctx.meshParts) {
+      for (const part of model.meshParts) {
         const current = next[part.id];
         if (!current) continue;
         next[part.id] = {
           ...current,
           visible:
-            part.role === "magnetic_object" && part.object_id === ctx.selectedObjectId,
+            part.role === "magnetic_object" && part.object_id === model.selectedObjectId,
         };
       }
       return next;
     });
-    ctx.setSelectedEntityId(selectedObjectPartId);
-    ctx.setFocusedEntityId(selectedObjectPartId);
+    model.setSelectedEntityId(selectedObjectPartId);
+    model.setFocusedEntityId(selectedObjectPartId);
   };
 
   const isolateAirbox = () => {
-    const airPartId = ctx.airPart?.id ?? null;
-    ctx.setViewMode("3D");
-    ctx.setObjectViewMode("isolate");
-    ctx.setSelectedEntityId(airPartId);
-    ctx.setFocusedEntityId(airPartId);
-    ctx.setMeshEntityViewState((prev) => {
+    const airPartId = model.airPart?.id ?? null;
+    viewport.setViewMode("3D");
+    model.setObjectViewMode("isolate");
+    model.setSelectedEntityId(airPartId);
+    model.setFocusedEntityId(airPartId);
+    model.setMeshEntityViewState((prev) => {
       const next = { ...prev };
-      for (const part of ctx.meshParts) {
+      for (const part of model.meshParts) {
         const current = next[part.id];
         if (!current) continue;
         next[part.id] = { ...current, visible: part.role === "air" };
@@ -208,12 +210,12 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
         <>
           <MeshPanel />
           <MeshSettingsPanel
-            options={ctx.meshOptions}
-            onChange={ctx.setMeshOptions}
-            quality={ctx.meshQualityData}
-            nodeCount={ctx.effectiveFemMesh?.nodes.length}
-            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-            waitMode={ctx.isWaitingForCompute}
+            options={model.meshOptions}
+            onChange={model.setMeshOptions}
+            quality={model.meshQualityData}
+            nodeCount={model.effectiveFemMesh?.nodes.length}
+            disabled={model.meshGenerating || !(cmd.awaitingCommand || cmd.isWaitingForCompute)}
+            waitMode={cmd.isWaitingForCompute}
           />
         </>
       );
@@ -227,12 +229,12 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
             </div>
           </SidebarSection>
           <MeshSettingsPanel
-            options={ctx.meshOptions}
-            onChange={ctx.setMeshOptions}
-            quality={ctx.meshQualityData}
-            nodeCount={ctx.effectiveFemMesh?.nodes.length}
-            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-            waitMode={ctx.isWaitingForCompute}
+            options={model.meshOptions}
+            onChange={model.setMeshOptions}
+            quality={model.meshQualityData}
+            nodeCount={model.effectiveFemMesh?.nodes.length}
+            disabled={model.meshGenerating || !(cmd.awaitingCommand || cmd.isWaitingForCompute)}
+            waitMode={cmd.isWaitingForCompute}
           />
         </>
       );
@@ -247,12 +249,12 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
             </div>
           </SidebarSection>
           <MeshSettingsPanel
-            options={ctx.meshOptions}
-            onChange={ctx.setMeshOptions}
-            quality={ctx.meshQualityData}
-            nodeCount={ctx.effectiveFemMesh?.nodes.length}
-            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-            waitMode={ctx.isWaitingForCompute}
+            options={model.meshOptions}
+            onChange={model.setMeshOptions}
+            quality={model.meshQualityData}
+            nodeCount={model.effectiveFemMesh?.nodes.length}
+            disabled={model.meshGenerating || !(cmd.awaitingCommand || cmd.isWaitingForCompute)}
+            waitMode={cmd.isWaitingForCompute}
           />
         </>
       );
@@ -262,12 +264,12 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
         <>
           <MeshPanel />
           <MeshSettingsPanel
-            options={ctx.meshOptions}
-            onChange={ctx.setMeshOptions}
-            quality={ctx.meshQualityData}
-            nodeCount={ctx.effectiveFemMesh?.nodes.length}
-            disabled={ctx.meshGenerating || !(ctx.awaitingCommand || ctx.isWaitingForCompute)}
-            waitMode={ctx.isWaitingForCompute}
+            options={model.meshOptions}
+            onChange={model.setMeshOptions}
+            quality={model.meshQualityData}
+            nodeCount={model.effectiveFemMesh?.nodes.length}
+            disabled={model.meshGenerating || !(cmd.awaitingCommand || cmd.isWaitingForCompute)}
+            waitMode={cmd.isWaitingForCompute}
           />
         </>
       );
@@ -308,7 +310,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
   return (
     <div className="flex flex-col gap-1 pb-6">
       {/* ── Object Actions (only when an object is selected) ── */}
-      {ctx.selectedObjectId ? (
+      {model.selectedObjectId ? (
         <section className="rounded-xl border border-border/40 bg-gradient-to-b from-card/50 to-card/20 px-4 py-3 shadow-[0_2px_12px_rgba(0,0,0,0.15)] backdrop-blur-xl mb-1">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -316,7 +318,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
                 Inspecting
               </div>
               <div className="truncate font-mono text-sm font-semibold text-foreground mt-0.5">
-                {ctx.selectedObjectId}
+                {model.selectedObjectId}
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -325,17 +327,17 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
                 variant="outline"
                 type="button"
                 onClick={() => {
-                  ctx.setViewMode("3D");
-                  ctx.requestFocusObject(ctx.selectedObjectId!);
+                  viewport.setViewMode("3D");
+                  model.requestFocusObject(model.selectedObjectId!);
                 }}
               >
                 Focus 3D
               </Button>
-              {ctx.isFemBackend ? (
+              {cmd.isFemBackend ? (
                 <>
                   <Button
                     size="sm"
-                    variant={ctx.objectViewMode === "context" ? "default" : "outline"}
+                    variant={model.objectViewMode === "context" ? "default" : "outline"}
                     type="button"
                     onClick={showFullFemContext}
                   >
@@ -343,7 +345,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
                   </Button>
                   <Button
                     size="sm"
-                    variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
+                    variant={model.objectViewMode === "isolate" ? "default" : "outline"}
                     type="button"
                     onClick={isolateSelectedObject}
                   >
@@ -354,7 +356,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
             </div>
           </div>
         </section>
-      ) : airboxSelected && ctx.isFemBackend ? (
+      ) : airboxSelected && cmd.isFemBackend ? (
         <section className="rounded-xl border border-border/40 bg-gradient-to-b from-card/50 to-card/20 px-4 py-3 shadow-[0_2px_12px_rgba(0,0,0,0.15)] backdrop-blur-xl mb-1">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -368,7 +370,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
             <div className="flex items-center gap-1.5 shrink-0">
               <Button
                 size="sm"
-                variant={ctx.objectViewMode === "context" ? "default" : "outline"}
+                variant={model.objectViewMode === "context" ? "default" : "outline"}
                 type="button"
                 onClick={showFullFemContext}
               >
@@ -376,7 +378,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
               </Button>
               <Button
                 size="sm"
-                variant={ctx.objectViewMode === "isolate" ? "default" : "outline"}
+                variant={model.objectViewMode === "isolate" ? "default" : "outline"}
                 type="button"
                 onClick={isolateAirbox}
               >
@@ -409,7 +411,7 @@ export default function SettingsPanel({ nodeId }: SettingsPanelProps) {
 
       {/* ── Global sections ── */}
       {showSolverTelemetrySection && (
-        <SidebarSection title="Solver Telemetry" icon="📊" badge={ctx.workspaceStatus}>
+        <SidebarSection title="Solver Telemetry" icon="📊" badge={cmd.workspaceStatus}>
           <SolverTelemetryPanel />
         </SidebarSection>
       )}

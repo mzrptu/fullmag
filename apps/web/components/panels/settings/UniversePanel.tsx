@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitCommitHorizontal, Layers, MemoryStick, Triangle } from "lucide-react";
 
-import { useControlRoom } from "../../runs/control-room/ControlRoomContext";
+import { useViewport, useCommand, useModel } from "../../runs/control-room/context-hooks";
 import { defaultMeshEntityViewState, type ScriptBuilderUniverseState } from "../../../lib/session/types";
 import { fmtSI } from "@/lib/format";
 import SelectField from "../../ui/SelectField";
@@ -88,7 +88,11 @@ function universeTabFromNodeId(nodeId: string): string {
 }
 
 export default function UniversePanel() {
-  const ctx = useControlRoom();
+  const viewport = useViewport();
+  const cmd = useCommand();
+  const model = useModel();
+  /* Compose a backward-compatible ctx alias from granular hooks */
+  const ctx = { ...model, setViewMode: viewport.setViewMode, metadata: cmd.metadata, isFemBackend: cmd.isFemBackend, commandStatus: cmd.commandStatus, session: cmd.session, commandMessage: cmd.commandMessage, scriptSyncBusy: cmd.scriptSyncBusy, scriptSyncMessage: cmd.scriptSyncMessage, syncScriptBuilder: cmd.syncScriptBuilder };
   const selectedNodeId = ctx.selectedSidebarNodeId ?? "universe";
   const builderContract = useMemo(() => readBuilderContract(ctx.metadata), [ctx.metadata]);
   const runtimeUniverse = useMemo<ScriptBuilderUniverseState | null>(() => {
