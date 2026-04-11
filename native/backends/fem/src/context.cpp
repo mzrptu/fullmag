@@ -134,6 +134,27 @@ double average_magnetic_node_volume(const Context &ctx) {
     return total_magnetic_volume / static_cast<double>(magnetic_node_count);
 }
 
+/// Compute per-node dual volume: each node receives 1/4 of the volume of every
+/// magnetic tetrahedron it belongs to (P1 lumped-mass semantics).
+void compute_node_volumes(Context &ctx) {
+    const size_t n = static_cast<size_t>(ctx.n_nodes);
+    ctx.node_volumes.assign(n, 0.0);
+
+    for (uint32_t elem = 0; elem < ctx.n_elements; ++elem) {
+        if (!ctx.magnetic_element_mask.empty() &&
+            ctx.magnetic_element_mask[static_cast<size_t>(elem)] == 0u) {
+            continue;
+        }
+        const double v_tet = tetrahedron_volume(ctx.nodes_xyz, ctx.elements, elem);
+        const double quarter_v = v_tet * 0.25;
+        const size_t base = static_cast<size_t>(elem) * 4u;
+        for (int k = 0; k < 4; ++k) {
+            const uint32_t node = ctx.elements[base + static_cast<size_t>(k)];
+            ctx.node_volumes[node] += quarter_v;
+        }
+    }
+}
+
 void refresh_thermal_field_for_current_state(Context &ctx) {
     if (ctx.h_therm_xyz.size() != static_cast<size_t>(ctx.n_nodes) * 3u) {
         ctx.h_therm_xyz.assign(static_cast<size_t>(ctx.n_nodes) * 3u, 0.0);
@@ -149,9 +170,13 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
     }
 
     const double gamma_red = ctx.material.gyromagnetic_ratio;
-    const double V_node = average_magnetic_node_volume(ctx);
+    // Use per-node dual volumes for correct local noise scaling on
+    // non-uniform meshes.  Fall back to average only if the per-node
+    // vector was not computed (should not happen in normal flow).
+    const bool has_per_node_vol = !ctx.node_volumes.empty();
+    const double V_avg = has_per_node_vol ? 0.0 : average_magnetic_node_volume(ctx);
 
-    if (!(gamma_red > 0.0) || !(V_node > 0.0)) {
+    if (!(gamma_red > 0.0) || (!has_per_node_vol && !(V_avg > 0.0))) {
         ctx.thermal_sigma = 0.0;
         std::fill(ctx.h_therm_xyz.begin(), ctx.h_therm_xyz.end(), 0.0);
         ctx.last_thermal_refresh_time = ctx.current_time;
@@ -207,9 +232,16 @@ void refresh_thermal_field_for_current_state(Context &ctx) {
         }
 
         const double gamma0_i = gamma_red * (1.0 + alpha_i * alpha_i);
+        const double V_i = has_per_node_vol ? ctx.node_volumes[node] : V_avg;
+        if (!(V_i > 0.0)) {
+            ctx.h_therm_xyz[base + 0] = 0.0;
+            ctx.h_therm_xyz[base + 1] = 0.0;
+            ctx.h_therm_xyz[base + 2] = 0.0;
+            continue;
+        }
         const double sigma_i = std::sqrt(
             2.0 * alpha_i * kB * ctx.temperature /
-            (gamma0_i * kMU0 * Ms_i * V_node * ctx.current_dt)
+            (gamma0_i * kMU0 * Ms_i * V_i * ctx.current_dt)
         );
         if (sigma_i > max_sigma) max_sigma = sigma_i;
 
@@ -558,6 +590,11 @@ bool context_from_plan(Context &ctx, const fullmag_fem_plan_desc &plan, std::str
     fill_zero_vector_field(ctx.h_demag_xyz, ctx.n_nodes);
     fill_zero_vector_field(ctx.h_ani_xyz, ctx.n_nodes);
     fill_zero_vector_field(ctx.h_dmi_xyz, ctx.n_nodes);
+
+    // Precompute per-node dual volumes for thermal noise (must come after
+    // magnetic_element_mask and elements are populated).
+    compute_node_volumes(ctx);
+
     if (ctx.has_external_field) {
         fill_repeated_vector_field(ctx.h_ext_xyz, ctx.n_nodes, ctx.external_field_am);
         ctx.h_eff_xyz = ctx.h_ext_xyz;
@@ -924,9 +961,10 @@ void fullmag::fem::compute_magnetoelastic_field(
     Context &ctx,
     const std::vector<double> &m_xyz)
 {
-    // Implements: H_mel,x = −(2 B₁ m_x ε₁₁ + B₂ (m_y ε₁₂ + m_z ε₁₃)) / (μ₀ M_s)
-    //             H_mel,y = −(2 B₁ m_y ε₂₂ + B₂ (m_x ε₁₂ + m_z ε₂₃)) / (μ₀ M_s)
-    //             H_mel,z = −(2 B₁ m_z ε₃₃ + B₂ (m_x ε₁₃ + m_y ε₂₃)) / (μ₀ M_s)
+    // Implements (standard convention, B₂ = −3λ₁₁₁C₄₄, tensor strain ε₁₂):
+    //   H_mel,x = −(2 B₁ m_x ε₁₁ + 2 B₂ (m_y ε₁₂ + m_z ε₁₃)) / (μ₀ M_s)
+    //   H_mel,y = −(2 B₁ m_y ε₂₂ + 2 B₂ (m_x ε₁₂ + m_z ε₂₃)) / (μ₀ M_s)
+    //   H_mel,z = −(2 B₁ m_z ε₃₃ + 2 B₂ (m_x ε₁₃ + m_y ε₂₃)) / (μ₀ M_s)
     // Voigt: [ε₁₁, ε₂₂, ε₃₃, 2ε₂₃, 2ε₁₃, 2ε₁₂]
     constexpr double kMu0_local = 4.0e-7 * 3.14159265358979323846;
     const size_t n = ctx.n_nodes;
@@ -969,15 +1007,15 @@ void fullmag::fem::compute_magnetoelastic_field(
         const double my = m_xyz[base + 1];
         const double mz = m_xyz[base + 2];
 
-        ctx.h_mel_xyz[base + 0] = inv_mu0_ms * (2.0 * b1 * mx * e11 + b2 * (my * e12 + mz * e13));
-        ctx.h_mel_xyz[base + 1] = inv_mu0_ms * (2.0 * b1 * my * e22 + b2 * (mx * e12 + mz * e23));
-        ctx.h_mel_xyz[base + 2] = inv_mu0_ms * (2.0 * b1 * mz * e33 + b2 * (mx * e13 + my * e23));
+        ctx.h_mel_xyz[base + 0] = inv_mu0_ms * (2.0 * b1 * mx * e11 + 2.0 * b2 * (my * e12 + mz * e13));
+        ctx.h_mel_xyz[base + 1] = inv_mu0_ms * (2.0 * b1 * my * e22 + 2.0 * b2 * (mx * e12 + mz * e23));
+        ctx.h_mel_xyz[base + 2] = inv_mu0_ms * (2.0 * b1 * mz * e33 + 2.0 * b2 * (mx * e13 + my * e23));
 
-        // Energy density: e_mel = B₁(mx²ε₁₁ + my²ε₂₂ + mz²ε₃₃) + B₂(mx*my*ε₁₂ + mx*mz*ε₁₃ + my*mz*ε₂₃)
+        // Energy density: e_mel = B₁(mx²ε₁₁ + my²ε₂₂ + mz²ε₃₃) + 2B₂(mx·my·ε₁₂ + mx·mz·ε₁₃ + my·mz·ε₂₃)
         if (!ctx.mfem_lumped_mass.empty()) {
             const double e_density =
                 b1 * (mx*mx*e11 + my*my*e22 + mz*mz*e33) +
-                b2 * (mx*my*e12 + mx*mz*e13 + my*mz*e23);
+                2.0 * b2 * (mx*my*e12 + mx*mz*e13 + my*mz*e23);
             energy += e_density * ctx.mfem_lumped_mass[i];
         }
     }

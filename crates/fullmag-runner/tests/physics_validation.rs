@@ -653,16 +653,22 @@ fn cube_mesh(side_nm: f64) -> MeshIR {
             pair_id: "x_faces".to_string(),
             marker_a: 1,
             marker_b: 1,
+            translation: None,
+            tolerance: None,
         },
         fullmag_ir::MeshPeriodicBoundaryPairIR {
             pair_id: "y_faces".to_string(),
             marker_a: 1,
             marker_b: 1,
+            translation: None,
+            tolerance: None,
         },
         fullmag_ir::MeshPeriodicBoundaryPairIR {
             pair_id: "z_faces".to_string(),
             marker_a: 1,
             marker_b: 1,
+            translation: None,
+            tolerance: None,
         },
     ];
     let periodic_node_pairs = vec![

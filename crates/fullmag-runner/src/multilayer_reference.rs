@@ -8,8 +8,9 @@
 
 use fullmag_engine::{
     multilayer::{FdmLayerRuntime, KernelPair, MultilayerDemagRuntime},
-    CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem, ExchangeLlgState,
-    GridShape, LlgConfig, MaterialParameters, UniaxialAnisotropyConfig, MU0,
+    AxisBoundary, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem,
+    ExchangeLlgState, FdmBoundaryPolicy, GridShape, LlgConfig, MaterialParameters,
+    UniaxialAnisotropyConfig, MU0,
 };
 use fullmag_fdm_demag::{compute_exact_self_kernel, compute_shifted_kernel};
 use fullmag_ir::{ExecutionPrecision, FdmMultilayerPlanIR, IntegratorChoice, OutputIR};
@@ -304,7 +305,7 @@ fn build_contexts_and_states(
                 message: format!("LLG for magnet '{}': {}", layer.magnet_name, error),
             })?
             .with_precession_enabled(!pure_damping_relax);
-        let problem = ExchangeLlgProblem::with_terms_and_mask(
+        let mut problem = ExchangeLlgProblem::with_terms_and_mask(
             grid,
             cell_size,
             material,
@@ -351,6 +352,21 @@ fn build_contexts_and_states(
                 layer.magnet_name, error
             ),
         })?;
+        // Wire periodic boundary policy
+        if let Some(ref pbc) = plan.periodicity {
+            let map_axis = |a: &fullmag_ir::AxisBoundary| match a {
+                fullmag_ir::AxisBoundary::Periodic => AxisBoundary::Periodic,
+                fullmag_ir::AxisBoundary::Open => AxisBoundary::Open,
+            };
+            problem.boundary_policy = FdmBoundaryPolicy {
+                x: map_axis(&pbc.axes[0]),
+                y: map_axis(&pbc.axes[1]),
+                z: map_axis(&pbc.axes[2]),
+            };
+            if let Some(ic) = pbc.image_counts {
+                problem.demag_image_counts = ic;
+            }
+        }
         let state = problem
             .new_state(layer.initial_magnetization.clone())
             .map_err(|error| RunError {
@@ -951,6 +967,7 @@ mod tests {
             gyromagnetic_ratio: 2.211e5,
             precision: ExecutionPrecision::Double,
             exchange_bc: ExchangeBoundaryCondition::Neumann,
+            periodicity: None,
             integrator: IntegratorChoice::Heun,
             fixed_timestep: Some(1e-13),
             relaxation: Some(RelaxationControlIR {

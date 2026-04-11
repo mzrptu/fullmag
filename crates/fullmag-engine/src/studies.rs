@@ -616,6 +616,8 @@ fn structured_periodic_pairs(
             pair_id: pair_id.to_string(),
             marker_a: 1,
             marker_b: 1,
+            translation: None,
+            tolerance: None,
         });
         for k in 0..=divisions {
             for j in 0..=divisions {

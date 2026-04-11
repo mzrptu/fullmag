@@ -79,6 +79,58 @@ impl CellSize {
     }
 }
 
+// ── Periodic boundary policy ───────────────────────────────────────────
+
+/// Per-axis boundary policy (open = clamp, periodic = wrap).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AxisBoundary {
+    #[default]
+    Open,
+    Periodic,
+}
+
+/// FDM boundary policy for each axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FdmBoundaryPolicy {
+    pub x: AxisBoundary,
+    pub y: AxisBoundary,
+    pub z: AxisBoundary,
+}
+
+impl Default for FdmBoundaryPolicy {
+    fn default() -> Self {
+        Self {
+            x: AxisBoundary::Open,
+            y: AxisBoundary::Open,
+            z: AxisBoundary::Open,
+        }
+    }
+}
+
+impl FdmBoundaryPolicy {
+    /// Returns `true` if any axis is periodic.
+    pub fn has_any_periodic(&self) -> bool {
+        matches!(self.x, AxisBoundary::Periodic)
+            || matches!(self.y, AxisBoundary::Periodic)
+            || matches!(self.z, AxisBoundary::Periodic)
+    }
+}
+
+/// Compute neighbor index along one axis with clamp or wrap semantics.
+///
+/// - `i`: current index along the axis
+/// - `n`: axis extent (number of cells)
+/// - `delta`: neighbor offset (`-1` or `+1`)
+/// - `periodic`: whether the axis wraps around
+#[inline]
+pub fn neighbor_index(i: usize, n: usize, delta: i32, periodic: bool) -> usize {
+    if periodic {
+        ((i as i32 + delta).rem_euclid(n as i32)) as usize
+    } else {
+        (i as i32 + delta).clamp(0, n as i32 - 1) as usize
+    }
+}
+
 // ── Material ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]

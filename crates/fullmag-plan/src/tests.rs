@@ -2790,6 +2790,8 @@ fn fem_eigen_periodic_bc_with_pairs_plans_successfully() {
                     pair_id: "x_faces".to_string(),
                     marker_a: 10,
                     marker_b: 11,
+                    translation: None,
+                    tolerance: None,
                 }],
                 periodic_node_pairs: vec![fullmag_ir::MeshPeriodicNodePairIR {
                     pair_id: "x_faces".to_string(),
@@ -2870,6 +2872,8 @@ fn fem_eigen_floquet_bc_with_pairs_and_k_sampling_plans_successfully() {
                     pair_id: "x_faces".to_string(),
                     marker_a: 10,
                     marker_b: 11,
+                    translation: None,
+                    tolerance: None,
                 }],
                 periodic_node_pairs: vec![fullmag_ir::MeshPeriodicNodePairIR {
                     pair_id: "x_faces".to_string(),

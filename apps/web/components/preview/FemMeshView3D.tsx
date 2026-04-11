@@ -979,6 +979,7 @@ function FemMeshView3DInner({
             mode={textureGizmoMode}
             previewProxy={activeTexturePreviewProxy}
             showPreviewProxy
+            syncPivotWithTranslation
             onDragStart={() => setTextureGizmoDragging(true)}
             onDragEnd={() => setTextureGizmoDragging(false)}
             onLiveChange={handleTextureTransformLiveChange}

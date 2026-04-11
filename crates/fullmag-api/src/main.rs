@@ -2352,8 +2352,6 @@ fn quat_changed(a: [f64; 4], b: [f64; 4]) -> bool {
         || (a[2] - b[2]).abs() > EPS
         || (a[3] - b[3]).abs() > EPS
 }
-rs
-
 fn fmt_preset_params(params: Option<&Value>) -> String {
     let Some(params) = params else {
         return "<none>".to_string();

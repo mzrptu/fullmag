@@ -87,11 +87,15 @@ $$
 \varepsilon^{\text{mag}}_{ij} = \frac{3}{2} \lambda_{111} m_i m_j \quad (i \neq j)
 $$
 
-In the B1/B2 formulation:
+In the B1/B2 formulation (using tensor strain $\varepsilon_{ij}$, with $B_2 = -3\lambda_{111}C_{44}$):
 
 $$
-e_{\text{mel}} = B_1 \left(\varepsilon_{11}(m_1^2 - \tfrac{1}{3}) + \varepsilon_{22}(m_2^2 - \tfrac{1}{3}) + \varepsilon_{33}(m_3^2 - \tfrac{1}{3})\right) + B_2 (\varepsilon_{12} m_1 m_2 + \varepsilon_{13} m_1 m_3 + \varepsilon_{23} m_2 m_3)
+e_{\text{mel}} = B_1 \left(\varepsilon_{11}(m_1^2 - \tfrac{1}{3}) + \varepsilon_{22}(m_2^2 - \tfrac{1}{3}) + \varepsilon_{33}(m_3^2 - \tfrac{1}{3})\right) + 2 B_2 (\varepsilon_{12} m_1 m_2 + \varepsilon_{13} m_1 m_3 + \varepsilon_{23} m_2 m_3)
 $$
+
+> **Note:** The factor 2 in front of $B_2$ arises because $\varepsilon_{ij}$ are *tensor* (symmetric)
+> strain components.  In engineering-shear convention ($\gamma_{ij} = 2\varepsilon_{ij}$) the
+> equivalent formula reads $B_2 (\gamma_{12} m_1 m_2 + \ldots)$ without the explicit 2.
 
 The coupling constants relate to magnetostriction constants as:
 
@@ -119,7 +123,7 @@ $$
 For cubic B1/B2 coupling:
 
 $$
-H_{\text{mel},1} = -\frac{1}{\mu_0 M_s} \left(2 B_1 \varepsilon_{11} m_1 + B_2 (\varepsilon_{12} m_2 + \varepsilon_{13} m_3)\right)
+H_{\text{mel},1} = -\frac{1}{\mu_0 M_s} \left(2 B_1 \varepsilon_{11} m_1 + 2 B_2 (\varepsilon_{12} m_2 + \varepsilon_{13} m_3)\right)
 $$
 
 (and cyclic permutations for components 2, 3).

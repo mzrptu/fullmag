@@ -135,6 +135,12 @@ struct Context {
     std::vector<double> h_mel_xyz;         // per-node H_mel buffer (AOS-3)
     double mel_energy = 0.0;               // E_mel [J] from last evaluation
 
+    // ── Per-node dual volumes for thermal noise scaling ──────────────
+    // V_i = sum over tets containing node i of (1/4) * V_tet.
+    // Computed once during context_from_plan.  Used by thermal field
+    // instead of a single average_magnetic_node_volume.
+    std::vector<double> node_volumes;
+
     // ── Per-node spatially varying material fields ────────────────────
     // When non-empty (size == n_nodes), kernels use per-node values.
     // When empty, scalar fallback (ctx.material.saturation_magnetisation etc.).

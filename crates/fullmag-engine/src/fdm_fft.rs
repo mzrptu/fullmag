@@ -4,6 +4,8 @@ use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::sync::Arc;
 
+use crate::fdm_types::{AxisBoundary, FdmBoundaryPolicy};
+
 use crate::newell;
 use crate::Vector3;
 
@@ -78,6 +80,104 @@ impl FftWorkspace {
             let mut buf: Vec<Complex<f64>> =
                 real.into_iter().map(|v| Complex::new(v, 0.0)).collect();
             // 3D FFT: x then y then z, same as fft3_m_forward
+            let mut line_y_tmp = vec![zero; py];
+            let mut line_z_tmp = vec![zero; pz];
+            fft3_core(
+                &mut buf,
+                px,
+                py,
+                pz,
+                &*fwd_x,
+                &*fwd_y,
+                &*fwd_z,
+                &mut line_y_tmp,
+                &mut line_z_tmp,
+            );
+            buf
+        };
+
+        let kern_xx = fft_kernel(nk.n_xx);
+        let kern_yy = fft_kernel(nk.n_yy);
+        let kern_zz = fft_kernel(nk.n_zz);
+        let kern_xy = fft_kernel(nk.n_xy);
+        let kern_xz = fft_kernel(nk.n_xz);
+        let kern_yz = fft_kernel(nk.n_yz);
+
+        Self {
+            fwd_x,
+            fwd_y: planner.plan_fft_forward(py),
+            fwd_z: planner.plan_fft_forward(pz),
+            inv_x: planner.plan_fft_inverse(px),
+            inv_y: planner.plan_fft_inverse(py),
+            inv_z: planner.plan_fft_inverse(pz),
+            px,
+            py,
+            pz,
+            line_y: vec![zero; py],
+            line_z: vec![zero; pz],
+            buf_mx: vec![zero; padded_len],
+            buf_my: vec![zero; padded_len],
+            buf_mz: vec![zero; padded_len],
+            buf_hx: vec![zero; padded_len],
+            buf_hy: vec![zero; padded_len],
+            buf_hz: vec![zero; padded_len],
+            kern_xx,
+            kern_yy,
+            kern_zz,
+            kern_xy,
+            kern_xz,
+            kern_yz,
+        }
+    }
+
+    /// Create an FFT workspace with per-axis periodic boundary support.
+    ///
+    /// For periodic axes: padded size = N (no zero-padding).
+    /// For open axes: padded size = 2*N (standard zero-padding).
+    ///
+    /// `image_counts` specifies how many image repetitions to include in
+    /// each periodic axis for the truncated-images demag kernel.
+    pub fn new_with_boundary(
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        dx: f64,
+        dy: f64,
+        dz: f64,
+        boundary: &FdmBoundaryPolicy,
+        image_counts: [u32; 3],
+    ) -> Self {
+        let pbc_x = matches!(boundary.x, AxisBoundary::Periodic);
+        let pbc_y = matches!(boundary.y, AxisBoundary::Periodic);
+        let pbc_z = matches!(boundary.z, AxisBoundary::Periodic);
+
+        let px = if pbc_x { nx } else { nx * 2 };
+        let py = if pbc_y { ny } else { ny * 2 };
+        let pz = if pbc_z { nz } else { nz * 2 };
+        let padded_len = px * py * pz;
+        let mut planner = FftPlanner::<f64>::new();
+        let zero = Complex::new(0.0, 0.0);
+
+        let fwd_x = planner.plan_fft_forward(px);
+        let fwd_y = planner.plan_fft_forward(py);
+        let fwd_z = planner.plan_fft_forward(pz);
+
+        // Compute periodic kernel via truncated images:
+        // N^pbc(r) = Σ_{|n_i| ≤ I_i on periodic axes} N^open(r + n · L)
+        let nk = compute_periodic_newell_kernels(
+            nx,
+            ny,
+            nz,
+            dx,
+            dy,
+            dz,
+            [pbc_x, pbc_y, pbc_z],
+            image_counts,
+        );
+
+        let fft_kernel = |real: Vec<f64>| -> Vec<Complex<f64>> {
+            let mut buf: Vec<Complex<f64>> =
+                real.into_iter().map(|v| Complex::new(v, 0.0)).collect();
             let mut line_y_tmp = vec![zero; py];
             let mut line_z_tmp = vec![zero; pz];
             fft3_core(
@@ -506,6 +606,113 @@ pub(crate) fn padded_index(nx: usize, ny: usize, x: usize, y: usize, z: usize) -
 /// Allocate a vector of zero 3-vectors.
 pub(crate) fn zero_vectors(len: usize) -> Vec<Vector3> {
     vec![[0.0, 0.0, 0.0]; len]
+}
+
+/// Compute PBC Newell kernels via truncated images.
+///
+/// For each cell offset `(i, j, k)` in the padded grid `(px × py × pz)`:
+///   `N^pbc(i,j,k) = Σ N^open(i + n_x·Nx, j + n_y·Ny, k + n_z·Nz)`
+/// where the sum runs over `n_α ∈ {-I_α, ..., I_α}` for periodic axes
+/// and `n_α = 0` for open axes.
+///
+/// We compute the open-boundary kernel on a large grid that covers
+/// all images, then fold contributions back.
+fn compute_periodic_newell_kernels(
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+    periodic: [bool; 3],
+    images: [u32; 3],
+) -> newell::NewellKernels {
+    let px = if periodic[0] { nx } else { 2 * nx };
+    let py = if periodic[1] { ny } else { 2 * ny };
+    let pz = if periodic[2] { nz } else { 2 * nz };
+    let padded_len = px * py * pz;
+
+    // Number of images per axis: 0 for open, images[i] for periodic.
+    let ix = if periodic[0] { images[0] as i32 } else { 0 };
+    let iy = if periodic[1] { images[1] as i32 } else { 0 };
+    let iz = if periodic[2] { images[2] as i32 } else { 0 };
+
+    // Compute the open-boundary kernel on a grid large enough to cover
+    // all images: extended_N = N + 2 * images * N = N * (1 + 2*images).
+    let enx = nx * (1 + 2 * ix as usize);
+    let eny = ny * (1 + 2 * iy as usize);
+    let enz = nz * (1 + 2 * iz as usize);
+    let nk_open = newell::compute_newell_kernels(enx, eny, enz, dx, dy, dz);
+    let epx = 2 * enx;
+    let epy = 2 * eny;
+    let _epz = 2 * enz;
+
+    let mut n_xx = vec![0.0_f64; padded_len];
+    let mut n_yy = vec![0.0_f64; padded_len];
+    let mut n_zz = vec![0.0_f64; padded_len];
+    let mut n_xy = vec![0.0_f64; padded_len];
+    let mut n_xz = vec![0.0_f64; padded_len];
+    let mut n_yz = vec![0.0_f64; padded_len];
+
+    // For each offset in the padded grid, fold contributions from images.
+    for k in 0..pz {
+        for j in 0..py {
+            for i in 0..px {
+                let dst = i + px * (j + py * k);
+                let mut sum_xx = 0.0_f64;
+                let mut sum_yy = 0.0_f64;
+                let mut sum_zz = 0.0_f64;
+                let mut sum_xy = 0.0_f64;
+                let mut sum_xz = 0.0_f64;
+                let mut sum_yz = 0.0_f64;
+
+                for niz in -iz..=iz {
+                    for niy in -iy..=iy {
+                        for nix in -ix..=ix {
+                            // Image offset in cells.
+                            let gi = i as i32 + nix * nx as i32;
+                            let gj = j as i32 + niy * ny as i32;
+                            let gk = k as i32 + niz * nz as i32;
+
+                            // Map to the open-boundary extended kernel grid.
+                            // The open kernel is stored in a 2N-padded grid
+                            // with periodic wrap-around indexing.
+                            let ei = gi.rem_euclid(epx as i32) as usize;
+                            let ej = gj.rem_euclid(epy as i32) as usize;
+                            let ek = gk.rem_euclid(_epz as i32) as usize;
+                            let src = ei + epx * (ej + epy * ek);
+
+                            sum_xx += nk_open.n_xx[src];
+                            sum_yy += nk_open.n_yy[src];
+                            sum_zz += nk_open.n_zz[src];
+                            sum_xy += nk_open.n_xy[src];
+                            sum_xz += nk_open.n_xz[src];
+                            sum_yz += nk_open.n_yz[src];
+                        }
+                    }
+                }
+
+                n_xx[dst] = sum_xx;
+                n_yy[dst] = sum_yy;
+                n_zz[dst] = sum_zz;
+                n_xy[dst] = sum_xy;
+                n_xz[dst] = sum_xz;
+                n_yz[dst] = sum_yz;
+            }
+        }
+    }
+
+    newell::NewellKernels {
+        n_xx,
+        n_yy,
+        n_zz,
+        n_xy,
+        n_xz,
+        n_yz,
+        px,
+        py,
+        pz,
+    }
 }
 
 /// Combine 4 field contributions into H_eff.

@@ -125,6 +125,54 @@ pub enum ExchangeBoundaryCondition {
     Neumann,
 }
 
+// ── Periodic Boundary Conditions (FDM) ─────────────────────────────
+
+/// Per-axis boundary policy for FDM PBC.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AxisBoundary {
+    #[default]
+    Open,
+    Periodic,
+}
+
+/// FDM periodicity configuration, carried in `FdmPlanIR`.
+///
+/// See `docs/physics/0600-periodic-boundary-conditions.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FdmPeriodicityIR {
+    /// Per-axis boundary: `[x, y, z]`.
+    pub axes: [AxisBoundary; 3],
+    /// Demagnetization periodicity semantics.
+    pub demag: FdmDemagPeriodicityIR,
+    /// Per-axis image count for `TruncatedImages` demag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_counts: Option<[u32; 3]>,
+}
+
+/// Demag periodicity semantics for FDM.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FdmDemagPeriodicityIR {
+    /// Standard open-boundary zero-padded FFT convolution.
+    #[default]
+    Open,
+    /// Truncated periodic images (MuMax-style N^pbc kernel).
+    TruncatedImages,
+}
+
+impl FdmPeriodicityIR {
+    /// Returns `true` if any axis is periodic.
+    pub fn has_any_periodic(&self) -> bool {
+        self.axes.iter().any(|a| matches!(a, AxisBoundary::Periodic))
+    }
+
+    /// Returns `true` if a specific axis index (0=x, 1=y, 2=z) is periodic.
+    pub fn is_periodic(&self, axis: usize) -> bool {
+        matches!(self.axes[axis], AxisBoundary::Periodic)
+    }
+}
+
 /// Spin-wave boundary condition applied to the linearised LLG eigenvalue problem.
 ///
 /// * `Free` (default) — natural Neumann BC: ∂m/∂n = 0 at the magnetic surface.
@@ -1033,6 +1081,9 @@ pub struct FdmMultilayerPlanIR {
     pub gyromagnetic_ratio: f64,
     pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
+    /// Periodic boundary conditions configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub periodicity: Option<FdmPeriodicityIR>,
     pub integrator: IntegratorChoice,
     pub fixed_timestep: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1113,11 +1164,18 @@ pub struct MeshIR {
     pub per_domain_quality: HashMap<u32, MeshQualityIR>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MeshPeriodicBoundaryPairIR {
     pub pair_id: String,
     pub marker_a: u32,
     pub marker_b: u32,
+    /// Lattice translation vector connecting face A to face B [m].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<[f64; 3]>,
+    /// Node-pairing tolerance [m]. When absent the mesher/planner chooses a
+    /// default based on mesh element size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1758,6 +1816,11 @@ pub struct ProblemIR {
     /// User-configurable policy for air-box construction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub air_box_policy: Option<AirBoxPolicyIR>,
+
+    /// Periodic boundary conditions for FDM (per-axis).
+    /// `None` means fully open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pbc: Option<FdmPeriodicityIR>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1820,6 +1883,11 @@ pub struct FdmPlanIR {
     pub gyromagnetic_ratio: f64,
     pub precision: ExecutionPrecision,
     pub exchange_bc: ExchangeBoundaryCondition,
+    /// Periodic boundary conditions configuration.
+    /// `None` means fully open (no PBC), equivalent to `axes: [Open, Open, Open]`.
+    /// See `docs/physics/0600-periodic-boundary-conditions.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub periodicity: Option<FdmPeriodicityIR>,
     pub integrator: IntegratorChoice,
     pub fixed_timestep: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2502,6 +2570,7 @@ impl ProblemIR {
             mechanical_bcs: vec![],
             mechanical_loads: vec![],
             air_box_policy: None,
+            pbc: None,
         }
     }
 
@@ -3527,6 +3596,8 @@ mod tests {
                 pair_id: "x_faces".to_string(),
                 marker_a: 99,
                 marker_b: 99,
+                translation: None,
+                tolerance: None,
             }],
             periodic_node_pairs: vec![MeshPeriodicNodePairIR {
                 pair_id: "x_faces".to_string(),

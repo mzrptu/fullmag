@@ -8,19 +8,20 @@
 //!
 //!   H_mel,i = −(1/μ₀Mₛ) ∂e_mel/∂mᵢ
 //!
-//! For cubic magnetostriction with coupling constants B₁, B₂:
+//! For cubic magnetostriction with coupling constants B₁, B₂
+//! (where B₂ = −3λ₁₁₁C₄₄ in the standard convention):
 //!
 //!   e_mel = B₁ (m₁² ε₁₁ + m₂² ε₂₂ + m₃² ε₃₃)
-//!         + B₂ (m₁ m₂ ε₁₂ + m₁ m₃ ε₁₃ + m₂ m₃ ε₂₃)
+//!         + 2 B₂ (m₁ m₂ ε₁₂ + m₁ m₃ ε₁₃ + m₂ m₃ ε₂₃)
 //!
-//! where εᵢⱼ uses engineering shear convention in Voigt order:
-//!   [ε₁₁, ε₂₂, ε₃₃, 2ε₂₃, 2ε₁₃, 2ε₁₂]  (indices 0..5)
+//! where εᵢⱼ are tensor strain components.  Input uses engineering shear
+//! (Voigt) convention: [ε₁₁, ε₂₂, ε₃₃, 2ε₂₃, 2ε₁₃, 2ε₁₂]  (indices 0..5)
 //!
 //! The effective field (in A/m) is:
 //!
-//!   H_mel,x = −(2 B₁ mₓ ε₁₁ + B₂ (mᵧ ε₁₂ + m_z ε₁₃)) / (μ₀ Mₛ)
-//!   H_mel,y = −(2 B₁ mᵧ ε₂₂ + B₂ (mₓ ε₁₂ + m_z ε₂₃)) / (μ₀ Mₛ)
-//!   H_mel,z = −(2 B₁ m_z ε₃₃ + B₂ (mₓ ε₁₃ + mᵧ ε₂₃)) / (μ₀ Mₛ)
+//!   H_mel,x = −(2 B₁ mₓ ε₁₁ + 2 B₂ (mᵧ ε₁₂ + m_z ε₁₃)) / (μ₀ Mₛ)
+//!   H_mel,y = −(2 B₁ mᵧ ε₂₂ + 2 B₂ (mₓ ε₁₂ + m_z ε₂₃)) / (μ₀ Mₛ)
+//!   H_mel,z = −(2 B₁ m_z ε₃₃ + 2 B₂ (mₓ ε₁₃ + mᵧ ε₂₃)) / (μ₀ Mₛ)
 
 use crate::Vector3;
 
@@ -66,9 +67,9 @@ pub fn h_mel_single(m: Vector3, strain: &StrainVoigt, params: &MagnetoelasticPar
     let inv_mu0_ms = -1.0 / (MU0 * params.ms);
 
     [
-        inv_mu0_ms * (2.0 * params.b1 * mx * e11 + params.b2 * (my * e12 + mz * e13)),
-        inv_mu0_ms * (2.0 * params.b1 * my * e22 + params.b2 * (mx * e12 + mz * e23)),
-        inv_mu0_ms * (2.0 * params.b1 * mz * e33 + params.b2 * (mx * e13 + my * e23)),
+        inv_mu0_ms * (2.0 * params.b1 * mx * e11 + 2.0 * params.b2 * (my * e12 + mz * e13)),
+        inv_mu0_ms * (2.0 * params.b1 * my * e22 + 2.0 * params.b2 * (mx * e12 + mz * e23)),
+        inv_mu0_ms * (2.0 * params.b1 * mz * e33 + 2.0 * params.b2 * (mx * e13 + my * e23)),
     ]
 }
 
@@ -153,7 +154,7 @@ pub fn h_mel_field_add_into(
 /// Compute the magnetoelastic energy density for a single cell [J/m³].
 ///
 /// e_mel = B₁ (m₁² ε₁₁ + m₂² ε₂₂ + m₃² ε₃₃)
-///       + B₂ (m₁ m₂ ε₁₂ + m₁ m₃ ε₁₃ + m₂ m₃ ε₂₃)
+///       + 2 B₂ (m₁ m₂ ε₁₂ + m₁ m₃ ε₁₃ + m₂ m₃ ε₂₃)
 #[inline]
 pub fn e_mel_density_single(
     m: Vector3,
@@ -168,7 +169,7 @@ pub fn e_mel_density_single(
     let e23 = e23_2 * 0.5;
 
     params.b1 * (mx * mx * e11 + my * my * e22 + mz * mz * e33)
-        + params.b2 * (mx * my * e12 + mx * mz * e13 + my * mz * e23)
+        + 2.0 * params.b2 * (mx * my * e12 + mx * mz * e13 + my * mz * e23)
 }
 
 /// Compute the total magnetoelastic energy [J] for the grid.

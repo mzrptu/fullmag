@@ -6,6 +6,7 @@
 use rustfft::num_complex::Complex;
 
 use crate::fdm_fft::{combine_fields_4, padded_index, zero_vectors};
+use crate::fdm_types::{neighbor_index, AxisBoundary};
 use crate::magnetoelastic;
 use crate::telemetry::{StepTelemetry, sections};
 use crate::vector::{add, cross, dot, max_norm, norm, scale, squared_norm, sub};
@@ -113,6 +114,9 @@ impl ExchangeLlgProblem {
         let dy2 = self.cell_size.dy * self.cell_size.dy;
         let dz2 = self.cell_size.dz * self.cell_size.dz;
         let grid = self.grid;
+        let px = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+        let py = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
+        let pz = matches!(self.boundary_policy.z, AxisBoundary::Periodic);
 
         let compute_cell = |flat_index: usize| -> Vector3 {
             if !self.is_active(flat_index) {
@@ -130,12 +134,12 @@ impl ExchangeLlgProblem {
                     center
                 }
             };
-            let x_minus = sample_neighbor(x.saturating_sub(1), y, z);
-            let x_plus = sample_neighbor((x + 1).min(grid.nx - 1), y, z);
-            let y_minus = sample_neighbor(x, y.saturating_sub(1), z);
-            let y_plus = sample_neighbor(x, (y + 1).min(grid.ny - 1), z);
-            let z_minus = sample_neighbor(x, y, z.saturating_sub(1));
-            let z_plus = sample_neighbor(x, y, (z + 1).min(grid.nz - 1));
+            let x_minus = sample_neighbor(neighbor_index(x, grid.nx, -1, px), y, z);
+            let x_plus = sample_neighbor(neighbor_index(x, grid.nx, 1, px), y, z);
+            let y_minus = sample_neighbor(x, neighbor_index(y, grid.ny, -1, py), z);
+            let y_plus = sample_neighbor(x, neighbor_index(y, grid.ny, 1, py), z);
+            let z_minus = sample_neighbor(x, y, neighbor_index(z, grid.nz, -1, pz));
+            let z_plus = sample_neighbor(x, y, neighbor_index(z, grid.nz, 1, pz));
 
             let mut laplacian = [0.0, 0.0, 0.0];
             for component in 0..3 {
@@ -362,6 +366,8 @@ impl ExchangeLlgProblem {
         let _nz = self.grid.nz;
         let dx = self.cell_size.dx;
         let dy = self.cell_size.dy;
+        let px = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+        let py = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
 
         (0..self.grid.cell_count())
             .map(|flat| {
@@ -372,10 +378,10 @@ impl ExchangeLlgProblem {
                 let y = (flat / nx) % ny;
                 let z = flat / (nx * ny);
 
-                let xp = if x + 1 < nx { self.grid.index(x + 1, y, z) } else { flat };
-                let xm = if x > 0 { self.grid.index(x - 1, y, z) } else { flat };
-                let yp = if y + 1 < ny { self.grid.index(x, y + 1, z) } else { flat };
-                let ym = if y > 0 { self.grid.index(x, y - 1, z) } else { flat };
+                let xp = self.grid.index(neighbor_index(x, nx, 1, px), y, z);
+                let xm = self.grid.index(neighbor_index(x, nx, -1, px), y, z);
+                let yp = self.grid.index(x, neighbor_index(y, ny, 1, py), z);
+                let ym = self.grid.index(x, neighbor_index(y, ny, -1, py), z);
 
                 let dx_mz = (magnetization[xp][2] - magnetization[xm][2]) / (2.0 * dx);
                 let dy_mz = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy);
@@ -400,6 +406,9 @@ impl ExchangeLlgProblem {
         let dx = self.cell_size.dx;
         let dy = self.cell_size.dy;
         let dz = self.cell_size.dz;
+        let px = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+        let py = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
+        let pz = matches!(self.boundary_policy.z, AxisBoundary::Periodic);
 
         (0..self.grid.cell_count())
             .map(|flat| {
@@ -410,12 +419,12 @@ impl ExchangeLlgProblem {
                 let y = (flat / nx) % ny;
                 let z = flat / (nx * ny);
 
-                let xp = if x + 1 < nx { self.grid.index(x + 1, y, z) } else { flat };
-                let xm = if x > 0 { self.grid.index(x - 1, y, z) } else { flat };
-                let yp = if y + 1 < ny { self.grid.index(x, y + 1, z) } else { flat };
-                let ym = if y > 0 { self.grid.index(x, y - 1, z) } else { flat };
-                let zp = if z + 1 < nz { self.grid.index(x, y, z + 1) } else { flat };
-                let zm = if z > 0 { self.grid.index(x, y, z - 1) } else { flat };
+                let xp = self.grid.index(neighbor_index(x, nx, 1, px), y, z);
+                let xm = self.grid.index(neighbor_index(x, nx, -1, px), y, z);
+                let yp = self.grid.index(x, neighbor_index(y, ny, 1, py), z);
+                let ym = self.grid.index(x, neighbor_index(y, ny, -1, py), z);
+                let zp = self.grid.index(x, y, neighbor_index(z, nz, 1, pz));
+                let zm = self.grid.index(x, y, neighbor_index(z, nz, -1, pz));
 
                 let curl_x = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy)
                     - (magnetization[zp][1] - magnetization[zm][1]) / (2.0 * dz);
@@ -440,6 +449,9 @@ impl ExchangeLlgProblem {
         let dy2 = self.cell_size.dy * self.cell_size.dy;
         let dz2 = self.cell_size.dz * self.cell_size.dz;
         let grid = self.grid;
+        let px = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+        let py = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
+        let pz = matches!(self.boundary_policy.z, AxisBoundary::Periodic);
 
         #[cfg(feature = "parallel")]
         {
@@ -462,12 +474,12 @@ impl ExchangeLlgProblem {
                             center
                         }
                     };
-                    let x_minus = sample(x.saturating_sub(1), y, z);
-                    let x_plus = sample((x + 1).min(grid.nx - 1), y, z);
-                    let y_minus = sample(x, y.saturating_sub(1), z);
-                    let y_plus = sample(x, (y + 1).min(grid.ny - 1), z);
-                    let z_minus = sample(x, y, z.saturating_sub(1));
-                    let z_plus = sample(x, y, (z + 1).min(grid.nz - 1));
+                    let x_minus = sample(neighbor_index(x, grid.nx, -1, px), y, z);
+                    let x_plus = sample(neighbor_index(x, grid.nx, 1, px), y, z);
+                    let y_minus = sample(x, neighbor_index(y, grid.ny, -1, py), z);
+                    let y_plus = sample(x, neighbor_index(y, grid.ny, 1, py), z);
+                    let z_minus = sample(x, y, neighbor_index(z, grid.nz, -1, pz));
+                    let z_plus = sample(x, y, neighbor_index(z, grid.nz, 1, pz));
 
                     for c in 0..3 {
                         h[c] += prefactor
@@ -495,12 +507,12 @@ impl ExchangeLlgProblem {
                         center
                     }
                 };
-                let x_minus = sample(x.saturating_sub(1), y, z);
-                let x_plus = sample((x + 1).min(grid.nx - 1), y, z);
-                let y_minus = sample(x, y.saturating_sub(1), z);
-                let y_plus = sample(x, (y + 1).min(grid.ny - 1), z);
-                let z_minus = sample(x, y, z.saturating_sub(1));
-                let z_plus = sample(x, y, (z + 1).min(grid.nz - 1));
+                let x_minus = sample(neighbor_index(x, grid.nx, -1, px), y, z);
+                let x_plus = sample(neighbor_index(x, grid.nx, 1, px), y, z);
+                let y_minus = sample(x, neighbor_index(y, grid.ny, -1, py), z);
+                let y_plus = sample(x, neighbor_index(y, grid.ny, 1, py), z);
+                let z_minus = sample(x, y, neighbor_index(z, grid.nz, -1, pz));
+                let z_plus = sample(x, y, neighbor_index(z, grid.nz, 1, pz));
 
                 let h = &mut h_eff[flat_index];
                 for c in 0..3 {
@@ -704,6 +716,8 @@ impl ExchangeLlgProblem {
         let dx = self.cell_size.dx;
         let dy = self.cell_size.dy;
         let grid = self.grid;
+        let bpx = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+        let bpy = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
 
         let compute = |flat: usize, h: &mut Vector3| {
             if !self.is_active(flat) {
@@ -713,10 +727,10 @@ impl ExchangeLlgProblem {
             let y = (flat / nx) % ny;
             let z = flat / (nx * ny);
 
-            let xp = if x + 1 < nx { grid.index(x + 1, y, z) } else { flat };
-            let xm = if x > 0 { grid.index(x - 1, y, z) } else { flat };
-            let yp = if y + 1 < ny { grid.index(x, y + 1, z) } else { flat };
-            let ym = if y > 0 { grid.index(x, y - 1, z) } else { flat };
+            let xp = grid.index(neighbor_index(x, nx, 1, bpx), y, z);
+            let xm = grid.index(neighbor_index(x, nx, -1, bpx), y, z);
+            let yp = grid.index(x, neighbor_index(y, ny, 1, bpy), z);
+            let ym = grid.index(x, neighbor_index(y, ny, -1, bpy), z);
 
             let dx_mz = (magnetization[xp][2] - magnetization[xm][2]) / (2.0 * dx);
             let dy_mz = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy);
@@ -756,6 +770,9 @@ impl ExchangeLlgProblem {
         let dy = self.cell_size.dy;
         let dz = self.cell_size.dz;
         let grid = self.grid;
+        let bpx = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+        let bpy = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
+        let bpz = matches!(self.boundary_policy.z, AxisBoundary::Periodic);
 
         let compute = |flat: usize, h: &mut Vector3| {
             if !self.is_active(flat) {
@@ -765,12 +782,12 @@ impl ExchangeLlgProblem {
             let y = (flat / nx) % ny;
             let z = flat / (nx * ny);
 
-            let xp = if x + 1 < nx { grid.index(x + 1, y, z) } else { flat };
-            let xm = if x > 0 { grid.index(x - 1, y, z) } else { flat };
-            let yp = if y + 1 < ny { grid.index(x, y + 1, z) } else { flat };
-            let ym = if y > 0 { grid.index(x, y - 1, z) } else { flat };
-            let zp = if z + 1 < nz { grid.index(x, y, z + 1) } else { flat };
-            let zm = if z > 0 { grid.index(x, y, z - 1) } else { flat };
+            let xp = grid.index(neighbor_index(x, nx, 1, bpx), y, z);
+            let xm = grid.index(neighbor_index(x, nx, -1, bpx), y, z);
+            let yp = grid.index(x, neighbor_index(y, ny, 1, bpy), z);
+            let ym = grid.index(x, neighbor_index(y, ny, -1, bpy), z);
+            let zp = grid.index(x, y, neighbor_index(z, nz, 1, bpz));
+            let zm = grid.index(x, y, neighbor_index(z, nz, -1, bpz));
 
             let curl_x = (magnetization[yp][2] - magnetization[ym][2]) / (2.0 * dy)
                 - (magnetization[zp][1] - magnetization[zm][1]) / (2.0 * dz);
@@ -1270,42 +1287,46 @@ impl ExchangeLlgProblem {
                 let mut dm1 = 0.0f64;
                 let mut dm2 = 0.0f64;
 
-                if ux > 0.0 && x > 0 {
-                    let prev = self.grid.index(x - 1, y, z);
+                let pbc_x = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+                let pbc_y = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
+                let pbc_z = matches!(self.boundary_policy.z, AxisBoundary::Periodic);
+
+                if ux > 0.0 && (pbc_x || x > 0) {
+                    let prev = self.grid.index(neighbor_index(x, nx, -1, pbc_x), y, z);
                     let [p0, p1, p2] = magnetization[prev];
                     dm0 += ux * (m0 - p0) / dx;
                     dm1 += ux * (m1 - p1) / dx;
                     dm2 += ux * (m2 - p2) / dx;
-                } else if ux < 0.0 && x + 1 < nx {
-                    let next = self.grid.index(x + 1, y, z);
+                } else if ux < 0.0 && (pbc_x || x + 1 < nx) {
+                    let next = self.grid.index(neighbor_index(x, nx, 1, pbc_x), y, z);
                     let [n0, n1, n2] = magnetization[next];
                     dm0 += ux * (n0 - m0) / dx;
                     dm1 += ux * (n1 - m1) / dx;
                     dm2 += ux * (n2 - m2) / dx;
                 }
 
-                if uy > 0.0 && y > 0 {
-                    let prev = self.grid.index(x, y - 1, z);
+                if uy > 0.0 && (pbc_y || y > 0) {
+                    let prev = self.grid.index(x, neighbor_index(y, ny, -1, pbc_y), z);
                     let [p0, p1, p2] = magnetization[prev];
                     dm0 += uy * (m0 - p0) / dy;
                     dm1 += uy * (m1 - p1) / dy;
                     dm2 += uy * (m2 - p2) / dy;
-                } else if uy < 0.0 && y + 1 < ny {
-                    let next = self.grid.index(x, y + 1, z);
+                } else if uy < 0.0 && (pbc_y || y + 1 < ny) {
+                    let next = self.grid.index(x, neighbor_index(y, ny, 1, pbc_y), z);
                     let [n0, n1, n2] = magnetization[next];
                     dm0 += uy * (n0 - m0) / dy;
                     dm1 += uy * (n1 - m1) / dy;
                     dm2 += uy * (n2 - m2) / dy;
                 }
 
-                if uz > 0.0 && z > 0 {
-                    let prev = self.grid.index(x, y, z - 1);
+                if uz > 0.0 && (pbc_z || z > 0) {
+                    let prev = self.grid.index(x, y, neighbor_index(z, nz, -1, pbc_z));
                     let [p0, p1, p2] = magnetization[prev];
                     dm0 += uz * (m0 - p0) / dz;
                     dm1 += uz * (m1 - p1) / dz;
                     dm2 += uz * (m2 - p2) / dz;
-                } else if uz < 0.0 && z + 1 < nz {
-                    let next = self.grid.index(x, y, z + 1);
+                } else if uz < 0.0 && (pbc_z || z + 1 < nz) {
+                    let next = self.grid.index(x, y, neighbor_index(z, nz, 1, pbc_z));
                     let [n0, n1, n2] = magnetization[next];
                     dm0 += uz * (n0 - m0) / dz;
                     dm1 += uz * (n1 - m1) / dz;
@@ -1456,46 +1477,50 @@ impl ExchangeLlgProblem {
             let z = flat / (nx * ny);
             let [m0, m1, m2] = magnetization[flat];
 
+            let pbc_x = matches!(self.boundary_policy.x, AxisBoundary::Periodic);
+            let pbc_y = matches!(self.boundary_policy.y, AxisBoundary::Periodic);
+            let pbc_z = matches!(self.boundary_policy.z, AxisBoundary::Periodic);
+
             let mut dm0 = 0.0f64;
             let mut dm1 = 0.0f64;
             let mut dm2 = 0.0f64;
 
-            if ux > 0.0 && x > 0 {
-                let prev = grid.index(x - 1, y, z);
+            if ux > 0.0 && (pbc_x || x > 0) {
+                let prev = grid.index(neighbor_index(x, nx, -1, pbc_x), y, z);
                 let [p0, p1, p2] = magnetization[prev];
                 dm0 += ux * (m0 - p0) / dx;
                 dm1 += ux * (m1 - p1) / dx;
                 dm2 += ux * (m2 - p2) / dx;
-            } else if ux < 0.0 && x + 1 < nx {
-                let next = grid.index(x + 1, y, z);
+            } else if ux < 0.0 && (pbc_x || x + 1 < nx) {
+                let next = grid.index(neighbor_index(x, nx, 1, pbc_x), y, z);
                 let [n0, n1, n2] = magnetization[next];
                 dm0 += ux * (n0 - m0) / dx;
                 dm1 += ux * (n1 - m1) / dx;
                 dm2 += ux * (n2 - m2) / dx;
             }
 
-            if uy > 0.0 && y > 0 {
-                let prev = grid.index(x, y - 1, z);
+            if uy > 0.0 && (pbc_y || y > 0) {
+                let prev = grid.index(x, neighbor_index(y, ny, -1, pbc_y), z);
                 let [p0, p1, p2] = magnetization[prev];
                 dm0 += uy * (m0 - p0) / dy;
                 dm1 += uy * (m1 - p1) / dy;
                 dm2 += uy * (m2 - p2) / dy;
-            } else if uy < 0.0 && y + 1 < ny {
-                let next = grid.index(x, y + 1, z);
+            } else if uy < 0.0 && (pbc_y || y + 1 < ny) {
+                let next = grid.index(x, neighbor_index(y, ny, 1, pbc_y), z);
                 let [n0, n1, n2] = magnetization[next];
                 dm0 += uy * (n0 - m0) / dy;
                 dm1 += uy * (n1 - m1) / dy;
                 dm2 += uy * (n2 - m2) / dy;
             }
 
-            if uz > 0.0 && z > 0 {
-                let prev = grid.index(x, y, z - 1);
+            if uz > 0.0 && (pbc_z || z > 0) {
+                let prev = grid.index(x, y, neighbor_index(z, nz, -1, pbc_z));
                 let [p0, p1, p2] = magnetization[prev];
                 dm0 += uz * (m0 - p0) / dz;
                 dm1 += uz * (m1 - p1) / dz;
                 dm2 += uz * (m2 - p2) / dz;
-            } else if uz < 0.0 && z + 1 < nz {
-                let next = grid.index(x, y, z + 1);
+            } else if uz < 0.0 && (pbc_z || z + 1 < nz) {
+                let next = grid.index(x, y, neighbor_index(z, nz, 1, pbc_z));
                 let [n0, n1, n2] = magnetization[next];
                 dm0 += uz * (n0 - m0) / dz;
                 dm1 += uz * (n1 - m1) / dz;

@@ -873,6 +873,9 @@ class Problem:
     mechanical_bcs: Sequence[MechanicalBoundaryCondition] = ()
     mechanical_loads: Sequence[MechanicalLoad] = ()
 
+    # Periodic boundary conditions (per-axis, for FDM)
+    pbc: tuple[bool, bool, bool] | None = None
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", require_non_empty(self.name, "name"))
         if not self.magnets:
@@ -1046,6 +1049,15 @@ class Problem:
             "magnetostriction_laws": [ml.to_ir() for ml in self.magnetostriction_laws],
             "mechanical_bcs": [bc.to_ir() for bc in self.mechanical_bcs],
             "mechanical_loads": [ml.to_ir() for ml in self.mechanical_loads],
+            # Periodic boundary conditions
+            **({"pbc": {
+                "axes": [
+                    "periodic" if self.pbc[0] else "open",
+                    "periodic" if self.pbc[1] else "open",
+                    "periodic" if self.pbc[2] else "open",
+                ],
+                "demag": "open",
+            }} if self.pbc is not None else {}),
         }
 
     def _resolve_discretization(

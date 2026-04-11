@@ -8,10 +8,11 @@ import { useEffect, useMemo, useRef } from "react";
 import type {
   FemMeshPart,
   MeshQualityStats,
-  VisibleSubmeshSnapshot,
-} from "./femMeshTypes";
-import type { RenderLayer } from "./femRenderModel";
-import { markersForPart, combineMeshQualityStats } from "./femRenderModel";
+} from "../../../lib/session/types";
+import type { VisibleSubmeshSnapshot } from "../../runs/control-room/submeshSnapshot";
+import type { RenderLayer } from "./femMeshTypes";
+import { markersForPart } from "@/features/viewport-fem/model/femTopologyCache";
+import { combineMeshQualityStats } from "./femQualityUtils";
 
 export interface PartQualitySummary {
   markers: number[];

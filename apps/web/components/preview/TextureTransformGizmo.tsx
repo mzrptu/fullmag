@@ -14,6 +14,7 @@ interface Props {
   visible?: boolean;
   previewProxy?: TexturePreviewProxy;
   showPreviewProxy?: boolean;
+  syncPivotWithTranslation?: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onLiveChange?: (next: TextureTransform3D) => void;
@@ -29,10 +30,30 @@ function toObject3DTransform(transform: TextureTransform3D) {
 
 function snapshotGroupTransform(
   group: THREE.Group,
-  pivot: [number, number, number],
+  baseTransform: TextureTransform3D,
+  mode: TextureGizmoMode,
+  syncPivotWithTranslation: boolean,
 ): TextureTransform3D {
+  const translation: [number, number, number] = [
+    group.position.x,
+    group.position.y,
+    group.position.z,
+  ];
+  const pivot = [...baseTransform.pivot] as [number, number, number];
+
+  // Keep pivot synchronized with live translation when requested.
+  // This makes the detailed numeric editor and 3D gizmo stay in lockstep.
+  if (syncPivotWithTranslation && mode === "translate") {
+    const dx = translation[0] - baseTransform.translation[0];
+    const dy = translation[1] - baseTransform.translation[1];
+    const dz = translation[2] - baseTransform.translation[2];
+    pivot[0] += dx;
+    pivot[1] += dy;
+    pivot[2] += dz;
+  }
+
   return {
-    translation: [group.position.x, group.position.y, group.position.z],
+    translation,
     rotation_quat: [
       group.quaternion.x,
       group.quaternion.y,
@@ -40,7 +61,7 @@ function snapshotGroupTransform(
       group.quaternion.w,
     ],
     scale: [group.scale.x, group.scale.y, group.scale.z],
-    pivot: [...pivot] as [number, number, number],
+    pivot,
   };
 }
 
@@ -115,6 +136,7 @@ export default function TextureTransformGizmo({
   visible = true,
   previewProxy = "box",
   showPreviewProxy = false,
+  syncPivotWithTranslation = false,
   onDragStart,
   onDragEnd,
   onLiveChange,
@@ -152,7 +174,7 @@ export default function TextureTransformGizmo({
         if (!group || !onLiveChange) {
           return;
         }
-        onLiveChange(snapshotGroupTransform(group, transform.pivot));
+        onLiveChange(snapshotGroupTransform(group, transform, mode, syncPivotWithTranslation));
       }}
       onDragEnd={() => {
         onDragEnd?.();
@@ -160,7 +182,7 @@ export default function TextureTransformGizmo({
         if (!group || !onCommit) {
           return;
         }
-        onCommit(snapshotGroupTransform(group, transform.pivot));
+        onCommit(snapshotGroupTransform(group, transform, mode, syncPivotWithTranslation));
       }}
     >
       <group ref={groupRef}>

@@ -3,8 +3,8 @@
 use crate::fdm_fft::zero_vectors;
 use crate::{
     EffectiveFieldObservables, EffectiveFieldTerms, EngineError, ExchangeLlgState,
-    FftWorkspace, GridShape, IntegratorBuffers, LlgConfig, MaterialParameters, Result, StepReport,
-    TimeIntegrator, Vector3, CellSize,
+    FdmBoundaryPolicy, FftWorkspace, GridShape, IntegratorBuffers, LlgConfig,
+    MaterialParameters, Result, StepReport, TimeIntegrator, Vector3, CellSize,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -16,6 +16,11 @@ pub struct ExchangeLlgProblem {
     pub dynamics: LlgConfig,
     pub terms: EffectiveFieldTerms,
     pub active_mask: Option<Vec<bool>>,
+    /// Per-axis periodic / open boundary policy for exchange and DMI stencils.
+    pub boundary_policy: FdmBoundaryPolicy,
+    /// Per-axis image counts for truncated-images periodic demag.
+    /// Only used when `boundary_policy` has periodic axes.
+    pub demag_image_counts: [u32; 3],
     /// Temperature in Kelvin for Brown thermal field (sLLG). 0 = no thermal noise.
     pub temperature: f64,
     /// Current timestep used for thermal σ computation (set by runner before stepping).
@@ -81,6 +86,8 @@ impl ExchangeLlgProblem {
             dynamics,
             terms,
             active_mask,
+            boundary_policy: FdmBoundaryPolicy::default(),
+            demag_image_counts: [10, 10, 10],
             temperature: 0.0,
             thermal_dt: 1e-13,
             thermal_seed: 42,
@@ -106,14 +113,27 @@ impl ExchangeLlgProblem {
 
     /// Build a reusable FFT workspace matching this problem's grid.
     pub fn create_workspace(&self) -> FftWorkspace {
-        FftWorkspace::new(
-            self.grid.nx,
-            self.grid.ny,
-            self.grid.nz,
-            self.cell_size.dx,
-            self.cell_size.dy,
-            self.cell_size.dz,
-        )
+        if self.boundary_policy.has_any_periodic() {
+            FftWorkspace::new_with_boundary(
+                self.grid.nx,
+                self.grid.ny,
+                self.grid.nz,
+                self.cell_size.dx,
+                self.cell_size.dy,
+                self.cell_size.dz,
+                &self.boundary_policy,
+                self.demag_image_counts,
+            )
+        } else {
+            FftWorkspace::new(
+                self.grid.nx,
+                self.grid.ny,
+                self.grid.nz,
+                self.cell_size.dx,
+                self.cell_size.dy,
+                self.cell_size.dz,
+            )
+        }
     }
 
     pub fn exchange_field(&self, state: &ExchangeLlgState) -> Result<Vec<Vector3>> {
@@ -262,6 +282,8 @@ impl Clone for ExchangeLlgProblem {
             dynamics: self.dynamics.clone(),
             terms: self.terms.clone(),
             active_mask: self.active_mask.clone(),
+            boundary_policy: self.boundary_policy,
+            demag_image_counts: self.demag_image_counts,
             temperature: self.temperature,
             thermal_dt: self.thermal_dt,
             thermal_seed: self.thermal_seed,

@@ -43,6 +43,9 @@ impl StepSnapshot {
 }
 
 /// Per-step telemetry accumulator.
+#[cfg(feature = "telemetry")]
+use std::time::Instant;
+
 ///
 /// When the `telemetry` feature is **not** enabled, all methods are `#[inline]`
 /// no-ops and the struct is zero-sized.

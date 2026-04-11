@@ -630,6 +630,9 @@ class _WorldState:
     _wait_for_solve: bool = False
     _adaptive_mesh: dict[str, object] | None = None
 
+    # Periodic boundary conditions (per-axis)
+    _pbc: tuple[bool, bool, bool] | None = None
+
     # Outputs
     _outputs: list = field(default_factory=list)
     _current_modules: list[AntennaFieldSource] = field(default_factory=list)
@@ -1217,6 +1220,20 @@ def boundary_correction(mode: str) -> None:
     if mode not in allowed:
         raise ValueError(f"boundary_correction must be one of {allowed!r}, got {mode!r}")
     _state._boundary_correction = mode
+
+
+def pbc(x: bool = False, y: bool = False, z: bool = False) -> None:
+    """Enable periodic boundary conditions for FDM along the given axes.
+
+    Parameters
+    ----------
+    x, y, z : bool
+        Set to ``True`` to make the corresponding axis periodic.
+    """
+    if not any((x, y, z)):
+        _state._pbc = None
+    else:
+        _state._pbc = (bool(x), bool(y), bool(z))
 
 
 def object_mesh_defaults(
@@ -2356,6 +2373,7 @@ def _build_problem(
         current_modules=tuple(s._current_modules),
         excitation_analysis=s._excitation_analysis,
         geometry_asset_cache=s._geometry_asset_cache,
+        pbc=s._pbc,
     )
 
 

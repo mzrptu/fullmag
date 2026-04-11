@@ -55,10 +55,11 @@ pub use fdm_state::{
 pub use fdm_problem::ExchangeLlgProblem;
 
 pub use fdm_types::{
-    AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, EngineError,
-    EvaluationRequest, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters,
-    OerstedCylinderConfig, Result, SlonczewskiSttConfig, SotConfig, TimeIntegrator,
-    UniaxialAnisotropyConfig, ZhangLiSttConfig,
+    AdaptiveStepConfig, AxisBoundary, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms,
+    EngineError, EvaluationRequest, FdmBoundaryPolicy, GridShape, LlgConfig,
+    MagnetoelasticTermConfig, MaterialParameters, OerstedCylinderConfig, Result,
+    SlonczewskiSttConfig, SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
+    neighbor_index,
 };
 
 // ── Vector math utilities ─────────────────────────────────────────────

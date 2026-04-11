@@ -5,10 +5,10 @@
 
 use fullmag_engine::{
     magnetoelastic::{MagnetoelasticParams, PrescribedStrainField},
-    AdaptiveStepConfig, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms, ExchangeLlgProblem,
-    ExchangeLlgState, GridShape, LlgConfig, MagnetoelasticTermConfig, MaterialParameters,
-    OerstedCylinderConfig, SlonczewskiSttConfig, SotConfig, TimeIntegrator,
-    UniaxialAnisotropyConfig, ZhangLiSttConfig,
+    AdaptiveStepConfig, AxisBoundary, CellSize, CubicAnisotropyConfig, EffectiveFieldTerms,
+    ExchangeLlgProblem, ExchangeLlgState, FdmBoundaryPolicy, GridShape, LlgConfig,
+    MagnetoelasticTermConfig, MaterialParameters, OerstedCylinderConfig, SlonczewskiSttConfig,
+    SotConfig, TimeIntegrator, UniaxialAnisotropyConfig, ZhangLiSttConfig,
 };
 use fullmag_ir::{
     ExecutionPrecision, FdmPlanIR, IntegratorChoice, OutputIR, RelaxationAlgorithmIR,
@@ -268,6 +268,21 @@ pub(crate) fn build_snapshot_problem_and_state(
     .map_err(|e| RunError {
         message: format!("Problem construction: {}", e),
     })?;
+    // Wire periodic boundary policy from plan
+    if let Some(ref pbc) = plan.periodicity {
+        let map_axis = |a: &fullmag_ir::AxisBoundary| match a {
+            fullmag_ir::AxisBoundary::Periodic => AxisBoundary::Periodic,
+            fullmag_ir::AxisBoundary::Open => AxisBoundary::Open,
+        };
+        problem.boundary_policy = FdmBoundaryPolicy {
+            x: map_axis(&pbc.axes[0]),
+            y: map_axis(&pbc.axes[1]),
+            z: map_axis(&pbc.axes[2]),
+        };
+        if let Some(ic) = pbc.image_counts {
+            problem.demag_image_counts = ic;
+        }
+    }
     // Set thermal noise parameters
     problem.temperature = plan.temperature.unwrap_or(0.0);
     if let Some(dt) = plan.fixed_timestep {
@@ -362,7 +377,7 @@ pub(crate) fn execute_reference_fdm(
         });
     }
 
-    let problem = ExchangeLlgProblem::with_terms_and_mask(
+    let mut problem = ExchangeLlgProblem::with_terms_and_mask(
         grid,
         cell_size,
         material,
@@ -407,6 +422,21 @@ pub(crate) fn execute_reference_fdm(
     .map_err(|e| RunError {
         message: format!("Problem construction: {}", e),
     })?;
+    // Wire periodic boundary policy
+    if let Some(ref pbc) = plan.periodicity {
+        let map_axis = |a: &fullmag_ir::AxisBoundary| match a {
+            fullmag_ir::AxisBoundary::Periodic => AxisBoundary::Periodic,
+            fullmag_ir::AxisBoundary::Open => AxisBoundary::Open,
+        };
+        problem.boundary_policy = FdmBoundaryPolicy {
+            x: map_axis(&pbc.axes[0]),
+            y: map_axis(&pbc.axes[1]),
+            z: map_axis(&pbc.axes[2]),
+        };
+        if let Some(ic) = pbc.image_counts {
+            problem.demag_image_counts = ic;
+        }
+    }
 
     let mut state = problem
         .new_state(plan.initial_magnetization.clone())
