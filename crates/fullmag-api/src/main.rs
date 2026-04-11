@@ -11,6 +11,8 @@ use axum::{
 };
 use base64::Engine;
 use fullmag_authoring::{MagnetizationAsset, SceneDocument, ScriptBuilderInitialState};
+use fullmag_ir::{TextureMappingIR, TextureTransform3DIR};
+use fullmag_plan::{generate_random_unit_vectors, sample_preset_texture, TextureSamplePoint};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -1807,7 +1809,13 @@ async fn update_current_live_scene(
         summary = %scene_magnetization_summary(&scene_document),
         "frontend scene update received"
     );
-    let (scene_document, session_state_messages, public_json, preset_texture_change_logs) = {
+    let (
+        scene_document,
+        session_state_messages,
+        public_json,
+        preset_texture_change_logs,
+        live_rebuild_stats,
+    ) = {
         let mut current = state.current_live_state.write().await;
         let snapshot = current
             .as_mut()
@@ -1845,6 +1853,14 @@ async fn update_current_live_scene(
         };
         snapshot.builder_adapter = Some(builder_state);
         snapshot.scene_document = Some(scene_document.clone());
+        let live_rebuild_stats = rebuild_live_scene_magnetization(snapshot);
+        let previous_preview = snapshot.preview.clone();
+        snapshot.preview = build_preview_state(
+            snapshot,
+            &snapshot.display_selection,
+            &snapshot.preview_config,
+        )
+        .or(previous_preview);
         let session_state_messages = build_current_live_ws_messages(&state, snapshot)?;
         let public_json = serialize_current_live_response(snapshot, true)?;
         let preset_texture_change_logs =
@@ -1854,6 +1870,7 @@ async fn update_current_live_scene(
             session_state_messages,
             public_json,
             preset_texture_change_logs,
+            live_rebuild_stats,
         )
     };
 
@@ -1871,6 +1888,20 @@ async fn update_current_live_scene(
     for line in &preset_texture_change_logs {
         eprintln!("[fullmag-api][mag-texture] {}", line);
     }
+    if let Some(stats) = live_rebuild_stats {
+        eprintln!(
+            "[fullmag-api][mag-texture] LIVE_REBUILD mesh_nodes={} magnetic_nodes={} rewritten_nodes={} rewritten_objects={} skipped_objects={} warnings={}",
+            stats.mesh_nodes,
+            stats.magnetic_nodes,
+            stats.rewritten_nodes,
+            stats.rewritten_objects,
+            stats.skipped_objects,
+            stats.warnings.len()
+        );
+        for warning in stats.warnings {
+            eprintln!("[fullmag-api][mag-texture] LIVE_REBUILD_WARN {}", warning);
+        }
+    }
     info!(
         target: "fullmag_api::scene_sync",
         direction = "tx",
@@ -1879,6 +1910,377 @@ async fn update_current_live_scene(
         "frontend scene update committed"
     );
     Ok(Json(scene_document))
+}
+
+#[derive(Debug, Clone, Default)]
+struct LiveSceneMagnetizationRebuildStats {
+    mesh_nodes: usize,
+    magnetic_nodes: usize,
+    rewritten_nodes: usize,
+    rewritten_objects: usize,
+    skipped_objects: usize,
+    warnings: Vec<String>,
+}
+
+fn rebuild_live_scene_magnetization(
+    snapshot: &mut SessionStateResponse,
+) -> Option<LiveSceneMagnetizationRebuildStats> {
+    let scene = snapshot.scene_document.as_ref()?;
+    let mesh = snapshot.fem_mesh.as_ref()?;
+    let node_count = mesh.nodes.len();
+    if node_count == 0 {
+        return Some(LiveSceneMagnetizationRebuildStats::default());
+    }
+
+    let mut stats = LiveSceneMagnetizationRebuildStats {
+        mesh_nodes: node_count,
+        ..LiveSceneMagnetizationRebuildStats::default()
+    };
+
+    let mut vectors = existing_live_magnetization_vectors(snapshot, node_count)
+        .unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; node_count]);
+    if vectors.len() != node_count {
+        vectors = vec![[0.0, 0.0, 0.0]; node_count];
+    }
+
+    let object_index = scene
+        .objects
+        .iter()
+        .enumerate()
+        .flat_map(|(index, object)| {
+            let mut keys = vec![(object.id.clone(), index)];
+            if !object.name.trim().is_empty() {
+                keys.push((object.name.clone(), index));
+            }
+            keys
+        })
+        .collect::<HashMap<_, _>>();
+    let mut node_owner: Vec<Option<usize>> = vec![None; node_count];
+
+    for part in &mesh.mesh_parts {
+        if part.role != "magnetic_object" {
+            continue;
+        }
+        let Some(owner_id) = part
+            .object_id
+            .as_ref()
+            .or(part.geometry_id.as_ref())
+            .map(String::as_str)
+        else {
+            continue;
+        };
+        let Some(owner_index) = object_index.get(owner_id).copied() else {
+            continue;
+        };
+        if !part.node_indices.is_empty() {
+            for &node in &part.node_indices {
+                let node = node as usize;
+                if node < node_count && node_owner[node].is_none() {
+                    node_owner[node] = Some(owner_index);
+                }
+            }
+        } else {
+            let start = part.node_start as usize;
+            let end = start
+                .saturating_add(part.node_count as usize)
+                .min(node_count);
+            for slot in node_owner.iter_mut().take(end).skip(start) {
+                if slot.is_none() {
+                    *slot = Some(owner_index);
+                }
+            }
+        }
+    }
+
+    for segment in &mesh.object_segments {
+        if segment.object_id == "__air__" {
+            continue;
+        }
+        let Some(owner_index) = object_index.get(segment.object_id.as_str()).copied() else {
+            continue;
+        };
+        let start = segment.node_start as usize;
+        let end = start
+            .saturating_add(segment.node_count as usize)
+            .min(node_count);
+        for slot in node_owner.iter_mut().take(end).skip(start) {
+            if slot.is_none() {
+                *slot = Some(owner_index);
+            }
+        }
+    }
+
+    let mut nodes_by_object = vec![Vec::<usize>::new(); scene.objects.len()];
+    for (node_index, owner) in node_owner.iter().enumerate() {
+        if let Some(owner) = owner {
+            nodes_by_object[*owner].push(node_index);
+        }
+    }
+    stats.magnetic_nodes = nodes_by_object.iter().map(Vec::len).sum();
+
+    let magnetization_assets = scene
+        .magnetization_assets
+        .iter()
+        .map(|asset| (asset.id.as_str(), asset))
+        .collect::<HashMap<_, _>>();
+
+    for (object_index, node_indices) in nodes_by_object.iter().enumerate() {
+        if node_indices.is_empty() {
+            continue;
+        }
+        let object = &scene.objects[object_index];
+        let Some(magnetization_ref) = object.magnetization_ref.as_deref() else {
+            stats.skipped_objects += 1;
+            continue;
+        };
+        let Some(asset) = magnetization_assets.get(magnetization_ref).copied() else {
+            stats.skipped_objects += 1;
+            stats.warnings.push(format!(
+                "object '{}' references missing magnetization '{}'",
+                object.id, magnetization_ref
+            ));
+            continue;
+        };
+        let rewritten = apply_live_scene_magnetization_asset(
+            asset,
+            object,
+            node_indices,
+            &mesh.nodes,
+            &mut vectors,
+            &mut stats,
+        );
+        if rewritten {
+            stats.rewritten_objects += 1;
+        } else {
+            stats.skipped_objects += 1;
+        }
+    }
+
+    let flat = flatten_vectors(&vectors);
+    if let Some(live_state) = snapshot.live_state.as_mut() {
+        live_state.latest_step.magnetization = Some(flat);
+    }
+
+    let latest_m = json!({
+        "layout": { "grid_cells": [node_count, 1, 1] },
+        "values": vectors,
+    });
+    match serde_json::from_value::<LatestFields>(json!({ "m": latest_m })) {
+        Ok(update) => {
+            merge_latest_fields(&mut snapshot.latest_fields, update);
+        }
+        Err(error) => {
+            stats.warnings.push(format!(
+                "failed to serialize live magnetization field: {}",
+                error
+            ));
+        }
+    }
+
+    let field_location = if snapshot.fem_mesh.is_some() {
+        "node"
+    } else {
+        "cell"
+    };
+    snapshot.quantities = build_quantities(
+        &snapshot.latest_fields,
+        &snapshot.preview_cache,
+        snapshot.live_state.as_ref(),
+        snapshot.run.as_ref(),
+        snapshot.metadata.as_ref(),
+        &snapshot.scalar_rows,
+        field_location,
+    );
+
+    Some(stats)
+}
+
+fn apply_live_scene_magnetization_asset(
+    asset: &MagnetizationAsset,
+    object: &fullmag_authoring::SceneObject,
+    node_indices: &[usize],
+    world_nodes: &[[f64; 3]],
+    vectors: &mut [[f64; 3]],
+    stats: &mut LiveSceneMagnetizationRebuildStats,
+) -> bool {
+    match asset.kind.as_str() {
+        "uniform" => {
+            let value = parse_uniform_value(asset).unwrap_or([1.0, 0.0, 0.0]);
+            for &node in node_indices {
+                vectors[node] = value;
+            }
+            stats.rewritten_nodes += node_indices.len();
+            true
+        }
+        "random" | "random_seeded" => {
+            let seed = asset.seed.unwrap_or(1);
+            let random = generate_random_unit_vectors(seed, node_indices.len());
+            for (slot, value) in node_indices.iter().zip(random.iter()) {
+                vectors[*slot] = *value;
+            }
+            stats.rewritten_nodes += node_indices.len();
+            true
+        }
+        "preset_texture" => {
+            let preset_kind = asset.preset_kind.as_deref().unwrap_or("uniform");
+            let params = asset
+                .preset_params
+                .as_ref()
+                .and_then(Value::as_object)
+                .map(|map| {
+                    map.iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default();
+            let mapping = TextureMappingIR {
+                space: asset.mapping.space.clone(),
+                projection: asset.mapping.projection.clone(),
+                clamp_mode: asset.mapping.clamp_mode.clone(),
+            };
+            let texture_transform = TextureTransform3DIR {
+                translation: asset.texture_transform.translation,
+                rotation_quat: asset.texture_transform.rotation_quat,
+                scale: asset.texture_transform.scale,
+                pivot: asset.texture_transform.pivot,
+            };
+            let sample_points = node_indices
+                .iter()
+                .map(|&node_index| {
+                    let world = world_nodes[node_index];
+                    TextureSamplePoint {
+                        position_world: world,
+                        position_object: apply_inverse_object_transform(world, &object.transform),
+                        active: true,
+                    }
+                })
+                .collect::<Vec<_>>();
+            match sample_preset_texture(
+                preset_kind,
+                &params,
+                &mapping,
+                &texture_transform,
+                &sample_points,
+            ) {
+                Ok(sampled) => {
+                    for (slot, value) in node_indices.iter().zip(sampled.iter()) {
+                        vectors[*slot] = *value;
+                    }
+                    stats.rewritten_nodes += node_indices.len();
+                    true
+                }
+                Err(error) => {
+                    stats.warnings.push(format!(
+                        "preset_texture '{}' for object '{}' failed: {}",
+                        preset_kind, object.id, error
+                    ));
+                    false
+                }
+            }
+        }
+        other => {
+            stats.warnings.push(format!(
+                "object '{}' magnetization kind '{}' is not remapped live",
+                object.id, other
+            ));
+            false
+        }
+    }
+}
+
+fn parse_uniform_value(asset: &MagnetizationAsset) -> Option<[f64; 3]> {
+    let value = asset.value.as_ref()?;
+    if value.len() < 3 {
+        return None;
+    }
+    Some([value[0], value[1], value[2]])
+}
+
+fn existing_live_magnetization_vectors(
+    snapshot: &SessionStateResponse,
+    node_count: usize,
+) -> Option<Vec<[f64; 3]>> {
+    if let Some(flat) = snapshot
+        .live_state
+        .as_ref()
+        .and_then(|state| state.latest_step.magnetization.as_ref())
+    {
+        if flat.len() == node_count * 3 {
+            return Some(
+                flat.chunks_exact(3)
+                    .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+                    .collect(),
+            );
+        }
+    }
+    snapshot
+        .latest_fields
+        .get("m")
+        .and_then(parse_field_value)
+        .and_then(|(vectors, _)| (vectors.len() == node_count).then_some(vectors))
+}
+
+fn apply_inverse_object_transform(
+    point_world: [f64; 3],
+    transform: &fullmag_authoring::Transform3D,
+) -> [f64; 3] {
+    let mut p = [
+        point_world[0] - transform.translation[0] - transform.pivot[0],
+        point_world[1] - transform.translation[1] - transform.pivot[1],
+        point_world[2] - transform.translation[2] - transform.pivot[2],
+    ];
+    let mut inv_quat = [
+        -transform.rotation_quat[0],
+        -transform.rotation_quat[1],
+        -transform.rotation_quat[2],
+        transform.rotation_quat[3],
+    ];
+    let qn = (inv_quat[0] * inv_quat[0]
+        + inv_quat[1] * inv_quat[1]
+        + inv_quat[2] * inv_quat[2]
+        + inv_quat[3] * inv_quat[3])
+        .sqrt();
+    if qn > 1.0e-30 {
+        inv_quat = [
+            inv_quat[0] / qn,
+            inv_quat[1] / qn,
+            inv_quat[2] / qn,
+            inv_quat[3] / qn,
+        ];
+    }
+    p = rotate_point_by_quat(p, inv_quat);
+    p = [
+        p[0] + transform.pivot[0],
+        p[1] + transform.pivot[1],
+        p[2] + transform.pivot[2],
+    ];
+    [
+        p[0] / safe_scale_component(transform.scale[0]),
+        p[1] / safe_scale_component(transform.scale[1]),
+        p[2] / safe_scale_component(transform.scale[2]),
+    ]
+}
+
+fn rotate_point_by_quat(point: [f64; 3], quat: [f64; 4]) -> [f64; 3] {
+    let qvec = [quat[0], quat[1], quat[2]];
+    let t = [
+        2.0 * (qvec[1] * point[2] - qvec[2] * point[1]),
+        2.0 * (qvec[2] * point[0] - qvec[0] * point[2]),
+        2.0 * (qvec[0] * point[1] - qvec[1] * point[0]),
+    ];
+    [
+        point[0] + quat[3] * t[0] + (qvec[1] * t[2] - qvec[2] * t[1]),
+        point[1] + quat[3] * t[1] + (qvec[2] * t[0] - qvec[0] * t[2]),
+        point[2] + quat[3] * t[2] + (qvec[0] * t[1] - qvec[1] * t[0]),
+    ]
+}
+
+fn safe_scale_component(value: f64) -> f64 {
+    if value.abs() > 1.0e-30 {
+        value
+    } else {
+        1.0
+    }
 }
 
 fn scene_magnetization_summary(scene: &SceneDocument) -> String {
@@ -1992,10 +2394,7 @@ fn detect_preset_texture_changes(
                     "ASSIGN objects={:?} asset={} preset={} mapping=({}/{}/{}) T={} S={} R={}",
                     objects,
                     next_asset.id,
-                    next_asset
-                        .preset_kind
-                        .as_deref()
-                        .unwrap_or("<none>"),
+                    next_asset.preset_kind.as_deref().unwrap_or("<none>"),
                     next_asset.mapping.space,
                     next_asset.mapping.projection,
                     next_asset.mapping.clamp_mode,
@@ -2015,10 +2414,7 @@ fn detect_preset_texture_changes(
                         objects,
                         next_asset.id,
                         prev_asset.kind,
-                        next_asset
-                            .preset_kind
-                            .as_deref()
-                            .unwrap_or("<none>"),
+                        next_asset.preset_kind.as_deref().unwrap_or("<none>"),
                     ));
                     continue;
                 }
@@ -2115,19 +2511,13 @@ fn detect_preset_texture_changes(
                         "REMOVE objects={:?} asset={} preset={}",
                         objects,
                         prev_asset.id,
-                        prev_asset
-                            .preset_kind
-                            .as_deref()
-                            .unwrap_or("<none>")
+                        prev_asset.preset_kind.as_deref().unwrap_or("<none>")
                     ));
                 } else {
                     out.push(format!(
                         "REMOVE objects=[] asset={} preset={}",
                         prev_asset.id,
-                        prev_asset
-                            .preset_kind
-                            .as_deref()
-                            .unwrap_or("<none>")
+                        prev_asset.preset_kind.as_deref().unwrap_or("<none>")
                     ));
                 }
             }

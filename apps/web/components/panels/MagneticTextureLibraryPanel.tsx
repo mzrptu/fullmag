@@ -42,22 +42,34 @@ export default function MagneticTextureLibraryPanel({
             <div className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               {category}
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 @[520px]:grid-cols-2">
               {descriptors.map((descriptor) => {
                 const active = selectedKind === descriptor.kind;
+                const handleAssign = () => {
+                  if (onSelectKind) {
+                    onSelectKind(descriptor.kind);
+                    return;
+                  }
+                  onCreatePreset(descriptor.kind);
+                };
                 return (
                   <button
                     key={descriptor.kind}
                     type="button"
                     className={cn(
-                      "rounded-xl border px-3 py-3 text-left transition-colors",
+                      "relative rounded-xl border px-3 py-3 text-left transition-colors",
                       active
-                        ? "border-primary/35 bg-primary/10"
+                        ? "border-cyan-300/55 bg-cyan-400/12 shadow-[0_0_0_1px_rgba(103,232,249,0.35)]"
                         : "border-border/20 bg-background/35 hover:bg-background/50",
                     )}
-                    onClick={() => onSelectKind?.(descriptor.kind)}
-                    onDoubleClick={() => onCreatePreset(descriptor.kind)}
+                    onClick={handleAssign}
+                    aria-pressed={active}
                   >
+                    {active ? (
+                      <span className="absolute right-2 top-2 rounded border border-cyan-200/40 bg-cyan-300/20 px-1.5 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-cyan-100">
+                        Selected
+                      </span>
+                    ) : null}
                     <div className="flex items-center gap-2">
                       <span className="text-base">{descriptor.icon}</span>
                       <span className="text-sm font-medium text-foreground">
@@ -68,7 +80,7 @@ export default function MagneticTextureLibraryPanel({
                       Proxy: {descriptor.previewProxy}
                     </div>
                     <div className="mt-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-primary">
-                      Double click to assign
+                      Click to assign
                     </div>
                   </button>
                 );

@@ -13,6 +13,7 @@ interface Props {
   mode: TextureGizmoMode;
   visible?: boolean;
   previewProxy?: TexturePreviewProxy;
+  showPreviewProxy?: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onLiveChange?: (next: TextureTransform3D) => void;
@@ -113,6 +114,7 @@ export default function TextureTransformGizmo({
   mode,
   visible = true,
   previewProxy = "box",
+  showPreviewProxy = false,
   onDragStart,
   onDragEnd,
   onLiveChange,
@@ -162,7 +164,14 @@ export default function TextureTransformGizmo({
       }}
     >
       <group ref={groupRef}>
-        <PreviewProxyMesh proxy={previewProxy} />
+        {showPreviewProxy ? (
+          <PreviewProxyMesh proxy={previewProxy} />
+        ) : (
+          <mesh>
+            <sphereGeometry args={[0.01, 6, 6]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+          </mesh>
+        )}
       </group>
     </PivotControls>
   );

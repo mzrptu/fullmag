@@ -136,10 +136,24 @@ pub(crate) fn bootstrap_control_plane(
         browser_control_room_assets(&root, dev_mode);
     fs::create_dir_all(&log_dir)?;
 
+    let stream_api_logs_to_terminal = dev_mode
+        || std::env::var("FULLMAG_API_LOG_TO_TERMINAL")
+            .ok()
+            .map(|raw| {
+                let value = raw.trim().to_ascii_lowercase();
+                value == "1" || value == "true" || value == "yes" || value == "on"
+            })
+            .unwrap_or(false);
+
     eprintln!("  starting fullmag-api on :{} ...", api_port());
     let api_log =
         fs::File::create(log_dir.join("fullmag-api.log")).context("failed to create api log")?;
     let api_err = api_log.try_clone()?;
+    if stream_api_logs_to_terminal {
+        eprintln!("  streaming fullmag-api logs to terminal (and saving to .fullmag/logs/fullmag-api.log)");
+    } else {
+        eprintln!("  fullmag-api logs: {}", log_dir.join("fullmag-api.log").display());
+    }
 
     let self_exe = std::env::current_exe().unwrap_or_default();
     let mut api_child = spawn_fullmag_api(
@@ -148,6 +162,7 @@ pub(crate) fn bootstrap_control_plane(
         api_log,
         api_err,
         external_control_room_available,
+        stream_api_logs_to_terminal,
     )?;
     wait_for_api_ready(api_port(), &mut api_child, Duration::from_secs(60))?;
 
@@ -531,6 +546,7 @@ pub(crate) fn spawn_fullmag_api(
     stdout: fs::File,
     stderr: fs::File,
     disable_static_control_room: bool,
+    stream_logs_to_terminal: bool,
 ) -> Result<std::process::Child> {
     let sibling_api = self_exe.with_file_name(format!("fullmag-api{EXE_SUFFIX}"));
     let web_static_dir = {
@@ -577,9 +593,12 @@ pub(crate) fn spawn_fullmag_api(
             .current_dir(root)
             .env("FULLMAG_API_PORT", api_port().to_string())
             .env("FULLMAG_WEB_STATIC_DIR", &web_static_dir)
-            .stdin(Stdio::null())
-            .stdout(stdout)
-            .stderr(stderr);
+            .stdin(Stdio::null());
+        if stream_logs_to_terminal {
+            command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        } else {
+            command.stdout(stdout).stderr(stderr);
+        }
         configure_child_process(&mut command);
         configure_repo_local_library_env(&mut command, root, Some(path));
         if disable_static_control_room {
@@ -596,9 +615,12 @@ pub(crate) fn spawn_fullmag_api(
         .current_dir(root)
         .env("FULLMAG_API_PORT", api_port().to_string())
         .env("FULLMAG_WEB_STATIC_DIR", &web_static_dir)
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr);
+        .stdin(Stdio::null());
+    if stream_logs_to_terminal {
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        command.stdout(stdout).stderr(stderr);
+    }
     configure_child_process(&mut command);
     configure_repo_local_library_env(&mut command, root, None);
     if disable_static_control_room {

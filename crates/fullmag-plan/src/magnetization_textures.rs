@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct TextureSamplePoint {
+pub struct TextureSamplePoint {
     pub position_world: [f64; 3],
     pub position_object: [f64; 3],
     pub active: bool,
@@ -46,7 +46,11 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
     }
 }
 
-fn parse_f64(params: &BTreeMap<String, Value>, key: &str, default: Option<f64>) -> Result<f64, String> {
+fn parse_f64(
+    params: &BTreeMap<String, Value>,
+    key: &str,
+    default: Option<f64>,
+) -> Result<f64, String> {
     if let Some(value) = params.get(key) {
         value
             .as_f64()
@@ -56,7 +60,11 @@ fn parse_f64(params: &BTreeMap<String, Value>, key: &str, default: Option<f64>) 
     }
 }
 
-fn parse_i64(params: &BTreeMap<String, Value>, key: &str, default: Option<i64>) -> Result<i64, String> {
+fn parse_i64(
+    params: &BTreeMap<String, Value>,
+    key: &str,
+    default: Option<i64>,
+) -> Result<i64, String> {
     if let Some(value) = params.get(key) {
         value
             .as_i64()
@@ -74,7 +82,11 @@ fn parse_string(params: &BTreeMap<String, Value>, key: &str, default: &str) -> S
         .unwrap_or_else(|| default.to_string())
 }
 
-fn parse_vec3(params: &BTreeMap<String, Value>, key: &str, default: [f64; 3]) -> Result<[f64; 3], String> {
+fn parse_vec3(
+    params: &BTreeMap<String, Value>,
+    key: &str,
+    default: [f64; 3],
+) -> Result<[f64; 3], String> {
     let Some(value) = params.get(key) else {
         return Ok(default);
     };
@@ -160,14 +172,26 @@ fn wrap_repeat(x: f64) -> f64 {
 
 fn wrap_mirror(x: f64) -> f64 {
     let wrapped = (x + 0.5).rem_euclid(2.0);
-    let mirrored = if wrapped <= 1.0 { wrapped } else { 2.0 - wrapped };
+    let mirrored = if wrapped <= 1.0 {
+        wrapped
+    } else {
+        2.0 - wrapped
+    };
     mirrored - 0.5
 }
 
 fn apply_clamp_mode(point: [f64; 3], mode: &str) -> [f64; 3] {
     match mode {
-        "repeat" | "wrap" => [wrap_repeat(point[0]), wrap_repeat(point[1]), wrap_repeat(point[2])],
-        "mirror" => [wrap_mirror(point[0]), wrap_mirror(point[1]), wrap_mirror(point[2])],
+        "repeat" | "wrap" => [
+            wrap_repeat(point[0]),
+            wrap_repeat(point[1]),
+            wrap_repeat(point[2]),
+        ],
+        "mirror" => [
+            wrap_mirror(point[0]),
+            wrap_mirror(point[1]),
+            wrap_mirror(point[2]),
+        ],
         _ => [
             point[0].clamp(-0.5, 0.5),
             point[1].clamp(-0.5, 0.5),
@@ -202,11 +226,9 @@ fn eval_uniform(params: &BTreeMap<String, Value>) -> Result<[f64; 3], String> {
 
 fn eval_random_seeded(params: &BTreeMap<String, Value>, point: [f64; 3]) -> [f64; 3] {
     let seed = parse_i64(params, "seed", Some(1)).unwrap_or(1) as f64;
-    let angle1 = (seed * 12.9898 + point[0] * 78.233 + point[1] * 37.719 + point[2] * 11.137)
-        .sin()
+    let angle1 = (seed * 12.9898 + point[0] * 78.233 + point[1] * 37.719 + point[2] * 11.137).sin()
         * 43758.5453;
-    let angle2 = (seed * 4.1414 + point[0] * 93.989 + point[1] * 67.345 + point[2] * 45.678)
-        .sin()
+    let angle2 = (seed * 4.1414 + point[0] * 93.989 + point[1] * 67.345 + point[2] * 45.678).sin()
         * 43758.5453;
     let u1 = angle1 - angle1.floor();
     let u2 = angle2 - angle2.floor();
@@ -216,7 +238,11 @@ fn eval_random_seeded(params: &BTreeMap<String, Value>, point: [f64; 3]) -> [f64
     [sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta]
 }
 
-fn eval_vortex(params: &BTreeMap<String, Value>, point: [f64; 3], anti: bool) -> Result<[f64; 3], String> {
+fn eval_vortex(
+    params: &BTreeMap<String, Value>,
+    point: [f64; 3],
+    anti: bool,
+) -> Result<[f64; 3], String> {
     let plane = parse_string(params, "plane", "xy");
     let p = plane_coords(point, plane.as_str());
     let phi = p[1].atan2(p[0]);
@@ -306,7 +332,10 @@ fn eval_helical(params: &BTreeMap<String, Value>, point: [f64; 3]) -> Result<[f6
     let e1 = normalize(parse_vec3(params, "e1", [1.0, 0.0, 0.0])?);
     let e2 = normalize(parse_vec3(params, "e2", [0.0, 1.0, 0.0])?);
     let phase = dot(point, k) + parse_f64(params, "phase_rad", Some(0.0))?;
-    Ok(normalize(add(scale(e1, phase.cos()), scale(e2, phase.sin()))))
+    Ok(normalize(add(
+        scale(e1, phase.cos()),
+        scale(e2, phase.sin()),
+    )))
 }
 
 fn eval_conical(params: &BTreeMap<String, Value>, point: [f64; 3]) -> Result<[f64; 3], String> {
@@ -328,7 +357,11 @@ fn eval_conical(params: &BTreeMap<String, Value>, point: [f64; 3]) -> Result<[f6
     )))
 }
 
-fn eval_preset(preset_kind: &str, params: &BTreeMap<String, Value>, point: [f64; 3]) -> Result<[f64; 3], String> {
+fn eval_preset(
+    preset_kind: &str,
+    params: &BTreeMap<String, Value>,
+    point: [f64; 3],
+) -> Result<[f64; 3], String> {
     match preset_kind {
         "uniform" => eval_uniform(params),
         "random_seeded" => Ok(normalize(eval_random_seeded(params, point))),
@@ -344,7 +377,7 @@ fn eval_preset(preset_kind: &str, params: &BTreeMap<String, Value>, point: [f64;
     }
 }
 
-pub(crate) fn sample_preset_texture(
+pub fn sample_preset_texture(
     preset_kind: &str,
     params: &BTreeMap<String, Value>,
     mapping: &TextureMappingIR,

@@ -336,6 +336,25 @@ pub(crate) fn plan_fdm(
             mapping,
             texture_transform,
         }) => {
+            eprintln!(
+                "[fullmag-plan][mag-texture] sampling preset '{}' for FDM magnet '{}' (cells={} active={}) mapping=({}/{}/{}) T=[{:+.3e},{:+.3e},{:+.3e}]m S=[{:+.3e},{:+.3e},{:+.3e}]",
+                preset_kind,
+                magnet.name,
+                n_cells,
+                active_mask
+                    .as_ref()
+                    .map(|mask| mask.iter().filter(|active| **active).count())
+                    .unwrap_or(n_cells),
+                mapping.space,
+                mapping.projection,
+                mapping.clamp_mode,
+                texture_transform.translation[0],
+                texture_transform.translation[1],
+                texture_transform.translation[2],
+                texture_transform.scale[0],
+                texture_transform.scale[1],
+                texture_transform.scale[2],
+            );
             let origin = [
                 -(grid_cells[0] as f64 * cell_size[0]) * 0.5,
                 -(grid_cells[1] as f64 * cell_size[1]) * 0.5,
@@ -846,13 +865,15 @@ pub(crate) fn plan_fdm_multilayer(
                 mapping,
                 texture_transform,
             }) => {
-                let points = grid_sample_points(
-                    grid_cells,
-                    cell_size,
-                    native_origin,
-                    active_mask.as_ref(),
-                );
-                match sample_preset_texture(preset_kind, params, mapping, texture_transform, &points) {
+                let points =
+                    grid_sample_points(grid_cells, cell_size, native_origin, active_mask.as_ref());
+                match sample_preset_texture(
+                    preset_kind,
+                    params,
+                    mapping,
+                    texture_transform,
+                    &points,
+                ) {
                     Ok(values) => values,
                     Err(message) => {
                         errors.push(format!("magnet '{}': {}", magnet.name, message));

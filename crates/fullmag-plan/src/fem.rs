@@ -581,12 +581,12 @@ pub(crate) fn plan_fem(
                     effective_initial,
                     segment.node_count as usize,
                     Some(
-                        &domain_asset.mesh.nodes
-                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                        &domain_asset.mesh.nodes[segment.node_start as usize
+                            ..(segment.node_start + segment.node_count) as usize],
                     ),
                     Some(
-                        &domain_asset.mesh.nodes
-                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                        &domain_asset.mesh.nodes[segment.node_start as usize
+                            ..(segment.node_start + segment.node_count) as usize],
                     ),
                 )
                 .map_err(|message| PlanError {
@@ -1325,12 +1325,12 @@ pub(crate) fn plan_fem_eigen(
                     effective_initial,
                     segment.node_count as usize,
                     Some(
-                        &domain_asset.mesh.nodes
-                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                        &domain_asset.mesh.nodes[segment.node_start as usize
+                            ..(segment.node_start + segment.node_count) as usize],
                     ),
                     Some(
-                        &domain_asset.mesh.nodes
-                            [segment.node_start as usize..(segment.node_start + segment.node_count) as usize],
+                        &domain_asset.mesh.nodes[segment.node_start as usize
+                            ..(segment.node_start + segment.node_count) as usize],
                     ),
                 )
                 .map_err(|message| PlanError {

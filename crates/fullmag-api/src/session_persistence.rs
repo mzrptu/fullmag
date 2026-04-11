@@ -12,9 +12,8 @@ use crate::error::ApiError;
 use crate::types::AppState;
 
 use fullmag_session::{
-    inspect_fms, pack_fms, unpack_fms,
-    FmsExportProfile, FmsRunManifest, FmsSessionManifest, FmsWorkspaceManifest,
-    PackOptions, SaveProfile, SessionInspection, SessionStore,
+    inspect_fms, pack_fms, unpack_fms, FmsExportProfile, FmsRunManifest, FmsSessionManifest,
+    FmsWorkspaceManifest, PackOptions, SaveProfile, SessionInspection, SessionStore,
 };
 
 // ── Request / Response types ───────────────────────────────────────────
@@ -227,7 +226,9 @@ pub(crate) async fn export_session(
     let docs = collect_project_documents(&state).await;
 
     let opts = PackOptions {
-        compression: req.compression.unwrap_or(fullmag_session::CompressionProfile::Balanced),
+        compression: req
+            .compression
+            .unwrap_or(fullmag_session::CompressionProfile::Balanced),
     };
 
     store
@@ -360,9 +361,7 @@ pub(crate) async fn clear_recovery(
         .clear_recovery()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    Ok(Json(RecoveryClearResponse {
-        cleared: before,
-    }))
+    Ok(Json(RecoveryClearResponse { cleared: before }))
 }
 
 // ── Base64 helpers ─────────────────────────────────────────────────────

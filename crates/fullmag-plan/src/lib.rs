@@ -23,6 +23,7 @@ mod validate;
 pub mod boundary_geometry;
 
 pub use error::PlanError;
+pub use magnetization_textures::{sample_preset_texture, TextureSamplePoint};
 pub use util::generate_random_unit_vectors;
 
 /// Plans a `ProblemIR` into an `ExecutionPlanIR`.

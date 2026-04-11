@@ -99,6 +99,7 @@ const DEFAULT_TEXTURE_TRANSFORM = {
   scale: [1, 1, 1] as [number, number, number],
   pivot: [0, 0, 0] as [number, number, number],
 } as const;
+const NON_PRESET_TEXTURE_BASELINE = "__non_preset_texture_baseline__";
 
 function clampFinite(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
@@ -186,6 +187,7 @@ export default function MaterialPanel({
     () => ensureObjectPhysicsStack(sceneObject?.physics_stack, materialAsset?.properties.Dind ?? null),
     [materialAsset?.properties.Dind, sceneObject?.physics_stack],
   );
+  const [selectedPresetKindUi, setSelectedPresetKindUi] = useState<MagneticPresetKind | null>(null);
 
   const updateMaterial = useCallback(
     (updater: (asset: SceneMaterialAsset) => SceneMaterialAsset) => {
@@ -253,28 +255,34 @@ export default function MaterialPanel({
       const descriptor = MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === kind);
       const magnetizationRef = sceneObject?.magnetization_ref;
       if (!descriptor || !sceneObject || !magnetizationRef) return;
+      setSelectedPresetKindUi(kind);
       model.setSceneDocument((prev) =>
         prev
-          ? assignMagneticPreset(prev, magnetizationRef, descriptor, {
-              objectId: sceneObject.id,
-            })
+          ? (() => {
+              const next = assignMagneticPreset(prev, magnetizationRef, descriptor, {
+                objectId: sceneObject.id,
+              });
+              return {
+                ...next,
+                editor: {
+                  ...next.editor,
+                  active_transform_scope: "texture",
+                  gizmo_mode: "translate",
+                },
+              };
+            })()
           : prev,
       );
       model.setActiveTransformScope("texture");
-      model.setSceneDocument((prev) =>
-        prev
-          ? {
-              ...prev,
-              editor: {
-                ...prev.editor,
-                active_transform_scope: "texture",
-                gizmo_mode: "translate",
-              },
-            }
-          : prev,
-      );
     },
     [model, sceneObject],
+  );
+
+  const handlePresetCardSelect = useCallback(
+    (kind: MagneticPresetKind) => {
+      assignPresetTexture(kind);
+    },
+    [assignPresetTexture],
   );
 
   const updatePresetParam = useCallback(
@@ -467,10 +475,13 @@ export default function MaterialPanel({
     }));
   };
 
-  const selectedPresetDescriptor: MagneticPresetDescriptor | null =
-    magnetizationAsset?.preset_kind
-      ? MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === magnetizationAsset.preset_kind) ?? null
-      : null;
+  const selectedPresetKind =
+    selectedPresetKindUi ??
+    (magnetizationAsset?.preset_kind as MagneticPresetKind | null | undefined) ??
+    null;
+  const selectedPresetDescriptor: MagneticPresetDescriptor | null = selectedPresetKind
+    ? MAGNETIC_PRESET_CATALOG.find((entry) => entry.kind === selectedPresetKind) ?? null
+    : null;
 
   const liveApi = useMemo(() => currentLiveApiClient(), []);
   const [presetTextureSync, setPresetTextureSync] = useState<PresetTextureSyncState>({
@@ -479,10 +490,16 @@ export default function MaterialPanel({
     processedSpins: null,
     message: null,
   });
+  const [presetTextureModalOpen, setPresetTextureModalOpen] = useState(false);
   const presetTextureSyncTickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const presetTextureSyncModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presetTextureSyncGenerationRef = useRef(0);
   const presetTextureSyncObjectRef = useRef<string | null>(null);
   const lastAppliedPresetTextureHashRef = useRef<string | null>(null);
+  const [numericTransformOpen, setNumericTransformOpen] = useState(false);
+  const [numericMode, setNumericMode] = useState<NumericTransformMode>("translate");
+  const [numericAbsolute, setNumericAbsolute] = useState<[number, number, number]>([0, 0, 0]);
+  const [numericOffset, setNumericOffset] = useState<[number, number, number]>([0, 0, 0]);
   const targetSpinCount = useMemo(() => {
     if (!sceneObject) return null;
     const objectId = sceneObject.id;
@@ -514,6 +531,7 @@ export default function MaterialPanel({
   }, [magnetizationAsset, sceneObject]);
   const isPresetTextureDirty = useMemo(() => {
     if (!presetTextureHash) return false;
+    if (lastAppliedPresetTextureHashRef.current == null) return false;
     return lastAppliedPresetTextureHashRef.current !== presetTextureHash;
   }, [presetTextureHash]);
   const presetTextureSyncPercent = useMemo(() => {
@@ -544,6 +562,11 @@ export default function MaterialPanel({
       clearInterval(presetTextureSyncTickerRef.current);
       presetTextureSyncTickerRef.current = null;
     }
+    if (presetTextureSyncModalTimerRef.current) {
+      clearTimeout(presetTextureSyncModalTimerRef.current);
+      presetTextureSyncModalTimerRef.current = null;
+    }
+    setPresetTextureModalOpen(true);
 
     setPresetTextureSync({
       status: "syncing",
@@ -591,6 +614,10 @@ export default function MaterialPanel({
               ? `Gotowe. Zsynchronizowano ${totalSpins.toLocaleString()} spinów.`
               : "Gotowe. Tekstura została zsynchronizowana z backendem.",
         });
+        presetTextureSyncModalTimerRef.current = setTimeout(() => {
+          setPresetTextureModalOpen(false);
+          presetTextureSyncModalTimerRef.current = null;
+        }, 1400);
       })
       .catch((error) => {
         if (presetTextureSyncGenerationRef.current !== generation) {
@@ -609,6 +636,7 @@ export default function MaterialPanel({
               ? `Błąd synchronizacji tekstury: ${error.message}`
               : "Błąd synchronizacji tekstury z backendem.",
         });
+        setPresetTextureModalOpen(true);
       });
   }, [liveApi, model.sceneDocument, presetTextureHash, sceneObject, targetSpinCount]);
 
@@ -617,46 +645,70 @@ export default function MaterialPanel({
       if (presetTextureSyncTickerRef.current) {
         clearInterval(presetTextureSyncTickerRef.current);
       }
+      if (presetTextureSyncModalTimerRef.current) {
+        clearTimeout(presetTextureSyncModalTimerRef.current);
+      }
     };
   }, []);
 
   useEffect(() => {
-    if (!sceneObject || !magnetizationAsset || magnetizationAsset.kind !== "preset_texture") {
+    if (!sceneObject) {
+      presetTextureSyncObjectRef.current = null;
+      lastAppliedPresetTextureHashRef.current = null;
+      setSelectedPresetKindUi(null);
+      setPresetTextureModalOpen(false);
+      if (presetTextureSyncModalTimerRef.current) {
+        clearTimeout(presetTextureSyncModalTimerRef.current);
+        presetTextureSyncModalTimerRef.current = null;
+      }
       return;
     }
-    if (!presetTextureHash) {
-      return;
+    if (presetTextureSyncObjectRef.current === sceneObject.id) return;
+    presetTextureSyncObjectRef.current = sceneObject.id;
+    setPresetTextureModalOpen(false);
+    if (presetTextureSyncModalTimerRef.current) {
+      clearTimeout(presetTextureSyncModalTimerRef.current);
+      presetTextureSyncModalTimerRef.current = null;
     }
+    setSelectedPresetKindUi(
+      magnetizationAsset?.kind === "preset_texture"
+        ? ((magnetizationAsset.preset_kind as MagneticPresetKind | null | undefined) ?? null)
+        : null,
+    );
+    lastAppliedPresetTextureHashRef.current =
+      magnetizationAsset?.kind === "preset_texture" && presetTextureHash
+        ? presetTextureHash
+        : NON_PRESET_TEXTURE_BASELINE;
+    setPresetTextureSync({
+      status: "idle",
+      totalSpins: targetSpinCount,
+      processedSpins: null,
+      message: null,
+    });
+  }, [magnetizationAsset, presetTextureHash, sceneObject?.id, targetSpinCount]);
 
-    if (presetTextureSyncObjectRef.current !== sceneObject.id) {
-      presetTextureSyncObjectRef.current = sceneObject.id;
-      lastAppliedPresetTextureHashRef.current = presetTextureHash;
-      setPresetTextureSync({
-        status: "idle",
-        totalSpins: targetSpinCount,
-        processedSpins: null,
-        message: null,
-      });
+  useEffect(() => {
+    if (!sceneObject) return;
+    if (magnetizationAsset?.kind !== "preset_texture") {
+      setSelectedPresetKindUi(null);
       return;
     }
-    if (lastAppliedPresetTextureHashRef.current == null) {
-      lastAppliedPresetTextureHashRef.current = presetTextureHash;
-    }
-    if (presetTextureSync.status !== "syncing") {
-      setPresetTextureSync((prev) => ({
-        ...prev,
-        status: "idle",
-        message: isPresetTextureDirty ? "Masz lokalne zmiany. Kliknij Apply, aby wysłać je do backendu." : null,
-      }));
-    }
-  }, [
-    isPresetTextureDirty,
-    magnetizationAsset,
-    presetTextureHash,
-    presetTextureSync.status,
-    sceneObject,
-    targetSpinCount,
-  ]);
+    setSelectedPresetKindUi(
+      (magnetizationAsset.preset_kind as MagneticPresetKind | null | undefined) ?? null,
+    );
+  }, [magnetizationAsset?.kind, magnetizationAsset?.preset_kind, sceneObject?.id]);
+
+  useEffect(() => {
+    if (!sceneObject) return;
+    if (presetTextureSync.status === "syncing") return;
+    if (!isPresetTextureDirty) return;
+    setPresetTextureSync({
+      status: "idle",
+      totalSpins: targetSpinCount,
+      processedSpins: null,
+      message: "Masz lokalne zmiany. Kliknij Apply, aby wysłać je do backendu.",
+    });
+  }, [isPresetTextureDirty, presetTextureSync.status, sceneObject?.id, targetSpinCount]);
 
   if (!sceneObject || !materialAsset || !magnetizationAsset) {
     if (!model.material) {
@@ -689,10 +741,6 @@ export default function MaterialPanel({
     ...DEFAULT_TEXTURE_MAPPING,
   };
   const activeTextureMode = model.sceneDocument?.editor.gizmo_mode ?? "translate";
-  const [numericTransformOpen, setNumericTransformOpen] = useState(false);
-  const [numericMode, setNumericMode] = useState<NumericTransformMode>("translate");
-  const [numericAbsolute, setNumericAbsolute] = useState<[number, number, number]>([0, 0, 0]);
-  const [numericOffset, setNumericOffset] = useState<[number, number, number]>([0, 0, 0]);
 
   const openNumericTransform = useCallback(
     (mode: NumericTransformMode) => {
@@ -965,7 +1013,7 @@ export default function MaterialPanel({
           )}
 
           {mag.kind === "preset_texture" && (
-            <div className="grid grid-cols-1 gap-4">
+            <div className="@container grid grid-cols-1 gap-4">
               {presetTextureSync.status !== "idle" && (
                 <div className="rounded-xl border border-border/30 bg-card/15 p-3">
                   <div className="flex items-center justify-between gap-2">
@@ -1006,13 +1054,13 @@ export default function MaterialPanel({
                 </div>
               )}
 
-              <div className="rounded-xl border border-border/30 bg-card/15 p-2">
-                <MagneticTextureLibraryPanel
-                  selectedKind={(mag.preset_kind as MagneticPresetKind | null | undefined) ?? null}
-                  onCreatePreset={assignPresetTexture}
-                  onSelectKind={assignPresetTexture}
-                />
-              </div>
+                <div className="rounded-xl border border-border/30 bg-card/15 p-2">
+                  <MagneticTextureLibraryPanel
+                    selectedKind={selectedPresetKind}
+                    onCreatePreset={handlePresetCardSelect}
+                    onSelectKind={handlePresetCardSelect}
+                  />
+                </div>
 
               {selectedPresetDescriptor && (
                 <div className="rounded-xl border border-border/30 bg-card/15 p-3">
@@ -1030,7 +1078,7 @@ export default function MaterialPanel({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-1 gap-3 @[560px]:grid-cols-2">
                     {selectedPresetDescriptor.parameters.map((parameter) => {
                       const rawValue =
                         presetParams[parameter.key] ?? selectedPresetDescriptor.defaultParams[parameter.key];
@@ -1038,7 +1086,7 @@ export default function MaterialPanel({
                       if (parameter.type === "vector3") {
                         const vector = Array.isArray(rawValue) ? rawValue : [0, 0, 0];
                         return (
-                          <div key={parameter.key} className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                          <div key={parameter.key} className="grid grid-cols-1 gap-2 @[860px]:col-span-2 @[860px]:grid-cols-3">
                             {[0, 1, 2].map((axis) => (
                               <TextField
                                 key={`${parameter.key}-${axis}`}
@@ -1166,7 +1214,7 @@ export default function MaterialPanel({
                     <div className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
                       Mapping
                     </div>
-                    <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-3">
                       <SelectField
                         label="Space"
                         value={textureMapping.space}
@@ -1225,7 +1273,11 @@ export default function MaterialPanel({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="rounded-lg border border-border/25 bg-background/30 p-2.5">
+                    <div className="mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Translate
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
                         key={`tx-translation-${axis}-${textureTransform.translation[axis]}`}
@@ -1238,9 +1290,14 @@ export default function MaterialPanel({
                         mono
                       />
                     ))}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  <div className="rounded-lg border border-border/25 bg-background/30 p-2.5">
+                    <div className="mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Rotation (Quaternion)
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-2 @[980px]:grid-cols-4">
                     {[0, 1, 2, 3].map((axis) => (
                       <TextField
                         key={`tx-rotation-${axis}-${textureTransform.rotation_quat[axis]}`}
@@ -1250,9 +1307,14 @@ export default function MaterialPanel({
                         mono
                       />
                     ))}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="rounded-lg border border-border/25 bg-background/30 p-2.5">
+                    <div className="mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Scale
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
                         key={`tx-scale-${axis}-${textureTransform.scale[axis]}`}
@@ -1264,9 +1326,14 @@ export default function MaterialPanel({
                         mono
                       />
                     ))}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="rounded-lg border border-border/25 bg-background/30 p-2.5">
+                    <div className="mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Pivot
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 @[720px]:grid-cols-3">
                     {[0, 1, 2].map((axis) => (
                       <TextField
                         key={`tx-pivot-${axis}-${textureTransform.pivot[axis]}`}
@@ -1279,29 +1346,85 @@ export default function MaterialPanel({
                         mono
                       />
                     ))}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-card/15 px-3 py-2.5">
-                <div className="text-[0.72rem] text-muted-foreground">
-                  {isPresetTextureDirty
-                    ? "Masz niezastosowane zmiany tekstury."
-                    : "Brak niezastosowanych zmian."}
+              <div className="sticky bottom-0 z-20 rounded-xl border border-border/30 bg-background/90 px-3 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[0.72rem] text-muted-foreground">
+                    {isPresetTextureDirty
+                      ? "Masz niezastosowane zmiany tekstury."
+                      : "Brak niezastosowanych zmian."}
+                  </div>
+                  <Button
+                    size="sm"
+                    type="button"
+                    disabled={!isPresetTextureDirty || presetTextureSync.status === "syncing"}
+                    onClick={applyPresetTextureChanges}
+                  >
+                    {presetTextureSync.status === "syncing" ? "Applying…" : "Apply"}
+                  </Button>
                 </div>
-                <Button
-                  size="sm"
-                  type="button"
-                  disabled={!isPresetTextureDirty || presetTextureSync.status === "syncing"}
-                  onClick={applyPresetTextureChanges}
-                >
-                  Apply
-                </Button>
               </div>
             </div>
           )}
         </div>
       </SidebarSection>
+      {mag.kind === "preset_texture" && presetTextureModalOpen ? (
+        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-background/95 p-4 shadow-[0_20px_90px_rgba(0,0,0,0.55)]">
+            <div className="mb-2 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-primary/90">
+              Magnetization Texture Apply
+            </div>
+            <div className="text-sm font-medium text-foreground">
+              {presetTextureSync.status === "syncing"
+                ? "Trwa przypisywanie tekstury magnetycznej do spinów/węzłów…"
+                : presetTextureSync.status === "done"
+                  ? "Przypisanie tekstury zakończone."
+                  : "Nie udało się przypisać tekstury."}
+            </div>
+            {presetTextureSync.totalSpins != null ? (
+              <div className="mt-1 text-[0.78rem] text-muted-foreground">
+                {Math.max(0, presetTextureSync.processedSpins ?? 0).toLocaleString()}
+                {" / "}
+                {presetTextureSync.totalSpins.toLocaleString()} węzłów
+              </div>
+            ) : (
+              <div className="mt-1 text-[0.78rem] text-muted-foreground">
+                Oczekiwanie na potwierdzenie backendu.
+              </div>
+            )}
+            <div className="mt-3 h-2 w-full overflow-hidden rounded bg-muted/40">
+              <div
+                className={`h-full transition-all duration-150 ${
+                  presetTextureSync.status === "error"
+                    ? "bg-red-400"
+                    : presetTextureSync.status === "done"
+                      ? "bg-emerald-400"
+                      : "bg-primary"
+                }`}
+                style={{ width: `${presetTextureSyncPercent}%` }}
+              />
+            </div>
+            {presetTextureSync.message ? (
+              <div className="mt-2 text-[0.8rem] text-muted-foreground">{presetTextureSync.message}</div>
+            ) : null}
+            <div className="mt-4 flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                disabled={presetTextureSync.status === "syncing"}
+                onClick={() => setPresetTextureModalOpen(false)}
+              >
+                {presetTextureSync.status === "syncing" ? "Applying…" : "Close"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {numericTransformOpen ? (
         <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/65 px-6 py-8 backdrop-blur-sm">
           <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/12 bg-[linear-gradient(180deg,rgba(20,26,42,0.98),rgba(10,14,24,0.99))] shadow-[0_24px_120px_rgba(0,0,0,0.58)]">

@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
-use crate::util::{generate_random_unit_vectors, study_universe_metadata, StudyUniverseMetadata};
 use crate::magnetization_textures::{sample_preset_texture, TextureSamplePoint};
+use crate::util::{generate_random_unit_vectors, study_universe_metadata, StudyUniverseMetadata};
 
 pub(crate) const AIR_OBJECT_SEGMENT_ID: &str = "__air__";
 
@@ -157,6 +157,22 @@ pub(crate) fn initial_vectors_for_magnet(
             mapping,
             texture_transform,
         }) => {
+            eprintln!(
+                "[fullmag-plan][mag-texture] sampling preset '{}' for magnet '{}' on mesh '{}' (nodes={}) mapping=({}/{}/{}) T=[{:+.3e},{:+.3e},{:+.3e}]m S=[{:+.3e},{:+.3e},{:+.3e}]",
+                preset_kind,
+                magnet_name,
+                mesh_name,
+                n_nodes,
+                mapping.space,
+                mapping.projection,
+                mapping.clamp_mode,
+                texture_transform.translation[0],
+                texture_transform.translation[1],
+                texture_transform.translation[2],
+                texture_transform.scale[0],
+                texture_transform.scale[1],
+                texture_transform.scale[2],
+            );
             let world = sample_points_world.ok_or_else(|| {
                 format!(
                     "magnet '{}' uses preset_texture '{}' but planner was not given sample points for mesh '{}'",
