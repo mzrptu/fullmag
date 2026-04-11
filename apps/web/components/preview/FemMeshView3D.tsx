@@ -473,7 +473,7 @@ function FemMeshView3DInner({
       objectViewMode,
       vectorDomainFilter: effectiveVectorDomainFilter,
       ferromagnetVisibilityMode,
-      selectedObjectId,
+      selectedObjectId: selectedObjectId ?? null,
       selectedEntityId,
       focusedEntityId,
       airSegmentVisible,
@@ -772,11 +772,11 @@ function FemMeshView3DInner({
   }, [faceAspectRatios, hoveredFace, qualityPerFace, wrapperFlags.enableHoverTooltip]);
   const applyToolbarRenderMode = useCallback((next: RenderMode) => {
     const preset = RENDER_MODE_DISPLAY_PRESETS[next];
-    const resetDisplayState =
-      FRONTEND_DIAGNOSTIC_FLAGS.femViewport.resetDisplayStateOnRenderModeChange;
+    const flags = FRONTEND_DIAGNOSTIC_FLAGS.femViewport;
+    const masterReset = flags.resetDisplayStateOnRenderModeChange;
 
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {
-      if (resetDisplayState) {
+      if (masterReset && flags.resetOpacityOnRenderModeChange) {
         onMeshPartViewStatePatch(toolbarStylePartIds, {
           renderMode: next,
           opacity: preset.opacity,
@@ -798,7 +798,7 @@ function FemMeshView3DInner({
       } else {
         setInternalRenderMode(next);
       }
-      if (resetDisplayState) {
+      if (masterReset && flags.resetOpacityOnRenderModeChange) {
         if (onOpacityChange) {
           onOpacityChange(preset.opacity);
         } else {
@@ -807,7 +807,7 @@ function FemMeshView3DInner({
       }
     }
 
-    if (!resetDisplayState) {
+    if (!masterReset) {
       return;
     }
     // D-05 fix: Only reset global viewport settings (clip, arrows, domain, shrink, quality)
@@ -817,38 +817,46 @@ function FemMeshView3DInner({
     if (!isGlobalScope) {
       return;
     }
-    if (onClipEnabledChange) {
-      onClipEnabledChange(preset.clipEnabled);
-    } else {
-      setInternalClipEnabled(preset.clipEnabled);
+    if (flags.resetClipOnRenderModeChange) {
+      if (onClipEnabledChange) {
+        onClipEnabledChange(preset.clipEnabled);
+      } else {
+        setInternalClipEnabled(preset.clipEnabled);
+      }
+      if (onClipAxisChange) {
+        onClipAxisChange(preset.clipAxis);
+      } else {
+        setInternalClipAxis(preset.clipAxis);
+      }
+      if (onClipPosChange) {
+        onClipPosChange(preset.clipPos);
+      } else {
+        setInternalClipPos(preset.clipPos);
+      }
     }
-    if (onClipAxisChange) {
-      onClipAxisChange(preset.clipAxis);
-    } else {
-      setInternalClipAxis(preset.clipAxis);
+    if (flags.resetVectorDomainOnRenderModeChange) {
+      if (onVectorDomainFilterChange) {
+        onVectorDomainFilterChange(preset.vectorDomainFilter);
+      } else {
+        setInternalVectorDomainFilter(preset.vectorDomainFilter);
+      }
+      if (onFerromagnetVisibilityModeChange) {
+        onFerromagnetVisibilityModeChange(preset.ferromagnetVisibilityMode);
+      } else {
+        setInternalFerromagnetVisibilityMode(preset.ferromagnetVisibilityMode);
+      }
     }
-    if (onClipPosChange) {
-      onClipPosChange(preset.clipPos);
-    } else {
-      setInternalClipPos(preset.clipPos);
+    if (flags.resetShrinkOnRenderModeChange) {
+      if (onShrinkFactorChange) {
+        onShrinkFactorChange(preset.shrinkFactor);
+      } else {
+        setInternalShrinkFactor(preset.shrinkFactor);
+      }
     }
-    if (onVectorDomainFilterChange) {
-      onVectorDomainFilterChange(preset.vectorDomainFilter);
-    } else {
-      setInternalVectorDomainFilter(preset.vectorDomainFilter);
+    if (flags.resetQualityOnRenderModeChange) {
+      setQualityProfile(preset.qualityProfile);
+      updateSharedPreviewMaxPoints(PREVIEW_MAX_POINTS_DEFAULT);
     }
-    if (onFerromagnetVisibilityModeChange) {
-      onFerromagnetVisibilityModeChange(preset.ferromagnetVisibilityMode);
-    } else {
-      setInternalFerromagnetVisibilityMode(preset.ferromagnetVisibilityMode);
-    }
-    if (onShrinkFactorChange) {
-      onShrinkFactorChange(preset.shrinkFactor);
-    } else {
-      setInternalShrinkFactor(preset.shrinkFactor);
-    }
-    setQualityProfile(preset.qualityProfile);
-    updateSharedPreviewMaxPoints(PREVIEW_MAX_POINTS_DEFAULT);
     setOpenPopover(null);
   }, [
     hasMeshParts,

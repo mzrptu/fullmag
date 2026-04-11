@@ -117,6 +117,16 @@ fn plane_coords(point: [f64; 3], plane: &str) -> [f64; 3] {
     }
 }
 
+/// Map a vector from plane-local (u, v, n) basis back to world (x, y, z).
+/// Inverse of `plane_coords` applied to vector components.
+fn plane_vec_to_world(mu: f64, mv: f64, mn: f64, plane: &str) -> [f64; 3] {
+    match plane {
+        "xz" => [mu, mn, mv],
+        "yz" => [mn, mu, mv],
+        _ => [mu, mv, mn],
+    }
+}
+
 fn rotate_point_by_quat(point: [f64; 3], q: [f64; 4]) -> [f64; 3] {
     let qvec = [q[0], q[1], q[2]];
     let t = scale(cross(qvec, point), 2.0);
@@ -255,10 +265,10 @@ fn eval_vortex(
     let polarity = parse_i64(params, "core_polarity", Some(1))?;
     let core_radius = parse_f64(params, "core_radius", Some(1e-9))?.max(1e-30);
     let r = (p[0] * p[0] + p[1] * p[1]).sqrt();
-    let mz = (polarity as f64) * (-(r / core_radius).powi(2)).exp();
-    let mx = -(circulation as f64) * phi.sin();
-    let my = (circulation as f64) * phi.cos();
-    Ok(normalize([mx, my, mz]))
+    let mn = (polarity as f64) * (-(r / core_radius).powi(2)).exp();
+    let mu = -(circulation as f64) * phi.sin();
+    let mv = (circulation as f64) * phi.cos();
+    Ok(normalize(plane_vec_to_world(mu, mv, mn, plane.as_str())))
 }
 
 fn skyrmion_theta(radius: f64, r: f64, wall_width: f64) -> f64 {
@@ -281,10 +291,10 @@ fn eval_skyrmion(
     let theta = skyrmion_theta(radius, r, wall_width);
     let phase = (chirality as f64) * phi + helicity;
     let sin_t = theta.sin();
-    let mx = sin_t * phase.cos();
-    let my = sin_t * phase.sin();
-    let mz = (core_polarity as f64) * theta.cos();
-    Ok(normalize([mx, my, mz]))
+    let mu = sin_t * phase.cos();
+    let mv = sin_t * phase.sin();
+    let mn = (core_polarity as f64) * theta.cos();
+    Ok(normalize(plane_vec_to_world(mu, mv, mn, plane.as_str())))
 }
 
 fn eval_domain_wall(params: &BTreeMap<String, Value>, point: [f64; 3]) -> Result<[f64; 3], String> {

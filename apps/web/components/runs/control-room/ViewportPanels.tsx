@@ -104,6 +104,109 @@ function offsetTextureTransform(
   };
 }
 
+/* ── Object-space ↔ world-space texture transform helpers ── */
+
+type Vec3 = [number, number, number];
+type Quat = [number, number, number, number]; // [x, y, z, w]
+
+function quatRotateVec3(q: Quat, v: Vec3): Vec3 {
+  const [qx, qy, qz, qw] = q;
+  // t = 2 * cross(q.xyz, v)
+  const tx = 2 * (qy * v[2] - qz * v[1]);
+  const ty = 2 * (qz * v[0] - qx * v[2]);
+  const tz = 2 * (qx * v[1] - qy * v[0]);
+  return [
+    v[0] + qw * tx + (qy * tz - qz * ty),
+    v[1] + qw * ty + (qz * tx - qx * tz),
+    v[2] + qw * tz + (qx * ty - qy * tx),
+  ];
+}
+
+function quatInverse(q: Quat): Quat {
+  return [-q[0], -q[1], -q[2], q[3]];
+}
+
+function quatMultiply(a: Quat, b: Quat): Quat {
+  return [
+    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+  ];
+}
+
+/**
+ * Convert a texture transform from object-local coordinates to world-space
+ * for gizmo display. Applies the full object transform (scale, rotation, translation).
+ */
+function textureTransformToWorld(
+  tex: PreviewTextureTransform3D,
+  objTransform: { translation: Vec3; rotation_quat: Quat; scale: Vec3 },
+): PreviewTextureTransform3D {
+  const { translation: objT, rotation_quat: objR, scale: objS } = objTransform;
+  const applyObjToPoint = (p: Vec3): Vec3 => {
+    // 1. scale
+    const scaled: Vec3 = [p[0] * objS[0], p[1] * objS[1], p[2] * objS[2]];
+    // 2. rotate
+    const rotated = quatRotateVec3(objR, scaled);
+    // 3. translate
+    return [rotated[0] + objT[0], rotated[1] + objT[1], rotated[2] + objT[2]];
+  };
+  // Compose rotation: world_quat = objR * tex.rotation_quat
+  const worldQuat = quatMultiply(objR, tex.rotation_quat);
+  // Compose scale: world_scale = objS * tex.scale
+  const worldScale: Vec3 = [
+    objS[0] * tex.scale[0],
+    objS[1] * tex.scale[1],
+    objS[2] * tex.scale[2],
+  ];
+  return {
+    translation: applyObjToPoint(tex.translation),
+    rotation_quat: worldQuat,
+    scale: worldScale,
+    pivot: applyObjToPoint(tex.pivot),
+  };
+}
+
+/**
+ * Convert a texture transform from world-space (gizmo result) back to object-local
+ * coordinates for storage. Applies the inverse of the full object transform.
+ */
+function textureTransformToLocal(
+  tex: PreviewTextureTransform3D,
+  objTransform: { translation: Vec3; rotation_quat: Quat; scale: Vec3 },
+): PreviewTextureTransform3D {
+  const { translation: objT, rotation_quat: objR, scale: objS } = objTransform;
+  const invR = quatInverse(objR);
+  const invS: Vec3 = [
+    objS[0] !== 0 ? 1 / objS[0] : 0,
+    objS[1] !== 0 ? 1 / objS[1] : 0,
+    objS[2] !== 0 ? 1 / objS[2] : 0,
+  ];
+  const removeObjFromPoint = (p: Vec3): Vec3 => {
+    // 1. un-translate
+    const untranslated: Vec3 = [p[0] - objT[0], p[1] - objT[1], p[2] - objT[2]];
+    // 2. un-rotate
+    const unrotated = quatRotateVec3(invR, untranslated);
+    // 3. un-scale
+    return [unrotated[0] * invS[0], unrotated[1] * invS[1], unrotated[2] * invS[2]];
+  };
+  // Decompose rotation: local_quat = invR * tex.rotation_quat
+  const localQuat = quatMultiply(invR, tex.rotation_quat);
+  // Decompose scale: local_scale = invS * tex.scale
+  const localScale: Vec3 = [
+    invS[0] * tex.scale[0],
+    invS[1] * tex.scale[1],
+    invS[2] * tex.scale[2],
+  ];
+  return {
+    translation: removeObjFromPoint(tex.translation),
+    rotation_quat: localQuat,
+    scale: localScale,
+    pivot: removeObjFromPoint(tex.pivot),
+  };
+}
+
 function ViewportChip({
   label,
   value,
@@ -506,8 +609,20 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
   }, [ctx.sceneDocument, ctx.selectedObjectId]);
   const activeTextureMappingSpace =
     selectedMagnetizationAsset?.mapping?.space === "world" ? "world" : "object";
-  const selectedObjectTranslation =
-    selectedSceneObject?.transform.translation ?? ([0, 0, 0] as [number, number, number]);
+  const selectedObjectTransform = useMemo(() => {
+    if (!selectedSceneObject) {
+      return {
+        translation: [0, 0, 0] as Vec3,
+        rotation_quat: [0, 0, 0, 1] as Quat,
+        scale: [1, 1, 1] as Vec3,
+      };
+    }
+    return {
+      translation: [...selectedSceneObject.transform.translation] as Vec3,
+      rotation_quat: [...selectedSceneObject.transform.rotation_quat] as Quat,
+      scale: [...selectedSceneObject.transform.scale] as Vec3,
+    };
+  }, [selectedSceneObject]);
   const activeTextureTransform =
     selectedMagnetizationAsset?.kind === "preset_texture" && ctx.activeTransformScope !== "object"
       ? (() => {
@@ -516,8 +631,8 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
             return base;
           }
           // In object-space mapping, we author texture transform in object-local coordinates.
-          // The viewport gizmo operates in world-space, so apply object translation for display.
-          return offsetTextureTransform(base, selectedObjectTranslation);
+          // The viewport gizmo operates in world-space, so apply full object transform for display.
+          return textureTransformToWorld(base, selectedObjectTransform);
         })()
       : null;
   const activeTexturePreviewProxy =
@@ -552,11 +667,11 @@ export const ViewportCanvasArea = memo(function ViewportCanvasArea() {
       const nextLocalTransform =
         selectedMagnetizationAsset?.mapping?.space === "world"
           ? next
-          : offsetTextureTransform(next, [
-              -selectedObject.transform.translation[0],
-              -selectedObject.transform.translation[1],
-              -selectedObject.transform.translation[2],
-            ]);
+          : textureTransformToLocal(next, {
+              translation: [...selectedObject.transform.translation] as Vec3,
+              rotation_quat: [...selectedObject.transform.rotation_quat] as Quat,
+              scale: [...selectedObject.transform.scale] as Vec3,
+            });
       return {
         ...previousScene,
         magnetization_assets: previousScene.magnetization_assets.map((asset) =>
