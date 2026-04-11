@@ -226,7 +226,7 @@ function FemMeshView3DInner({
   meshEntityViewState = {},
   onMeshPartViewStatePatch,
   visibleObjectIds,
-  airSegmentVisible = true,
+  airSegmentVisible = false,
   airSegmentOpacity = 28,
   focusObjectRequest = null,
   onAntennaTranslate,
@@ -488,6 +488,7 @@ function FemMeshView3DInner({
     arrowToolbarState,
     toolbarScopeLabel,
     fieldMagnitudeStats,
+    selectionScope,
   } = useFemToolbarModel({
     hasMeshParts,
     meshParts,
@@ -632,12 +633,10 @@ function FemMeshView3DInner({
       } else {
         onMeshPartViewStatePatch(toolbarStylePartIds, { renderMode: next });
       }
-      // D-05 fix: Only sync global meshRenderMode when toolbar acts on ALL visible
-      // parts (i.e. no selection). Scoped changes to a selected object must NOT
-      // overwrite the global default for the entire viewport.
-      const isGlobalScope = visibleLayers.length > 0 &&
-        toolbarStylePartIds.length === visibleLayers.length;
-      if (isGlobalScope) {
+      // D-05 fix: Only sync global meshRenderMode when toolbar operates at
+      // universe scope. Use canonical selection scope instead of length
+      // heuristic to avoid false positives in isolate mode.
+      if (selectionScope.kind === "universe") {
         onRenderModeChange?.(next);
       }
     } else {
@@ -659,10 +658,8 @@ function FemMeshView3DInner({
       return;
     }
     // D-05 fix: Only reset global viewport settings (clip, arrows, domain, shrink, quality)
-    // when the toolbar operates on the global scope, not on a scoped selection.
-    const isGlobalScope = !hasMeshParts || toolbarStylePartIds.length === 0 ||
-      toolbarStylePartIds.length === visibleLayers.length;
-    if (!isGlobalScope) {
+    // when the toolbar operates at universe scope, not on a scoped selection.
+    if (selectionScope.kind !== "universe") {
       return;
     }
     if (flags.resetClipOnRenderModeChange) {
@@ -717,9 +714,9 @@ function FemMeshView3DInner({
     onRenderModeChange,
     onShrinkFactorChange,
     onVectorDomainFilterChange,
+    selectionScope,
     toolbarStylePartIds,
     updateSharedPreviewMaxPoints,
-    visibleLayers,
   ]);
   const applyToolbarOpacity = useCallback((next: number) => {
     if (hasMeshParts && toolbarStylePartIds.length > 0 && onMeshPartViewStatePatch) {

@@ -3619,7 +3619,7 @@ fn fdm_pbc_with_exchange_is_rejected() {
 fn fdm_pbc_truncated_images_demag_is_rejected() {
     let mut ir = ProblemIR::bootstrap_example();
     ir.energy_terms = vec![EnergyTermIR::Demag {
-        method: "auto".to_string(),
+        realization: fullmag_ir::RequestedFemDemagIR::Auto,
     }];
     ir.pbc = Some(FdmPeriodicityIR {
         axes: [
